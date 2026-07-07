@@ -1,0 +1,2876 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Investing 종목/ETF 조회 · PyScript</title>
+
+<!-- PyScript (Pyodide 기반, 브라우저에서 파이썬 실행) -->
+<link rel="stylesheet" href="https://pyscript.net/releases/2024.11.1/core.css">
+<script type="module" src="https://pyscript.net/releases/2024.11.1/core.js"></script>
+
+<style>
+  :root { --bd:#d0d7de; --bg:#f6f8fa; --pri:#2962ff; --mut:#57606a;
+          --buy:#089981; --sell:#f23645; --hold:#787b86; }
+  * { box-sizing: border-box; }
+  body { font-family:"Segoe UI","Malgun Gothic",sans-serif; margin:0;
+         color:#1f2328; background:#fff; }
+  header { background:#131722; color:#fff; padding:14px 20px;
+    display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  header h1 { font-size:18px; margin:0; }
+  .fx-rate { font-size:14px; font-weight:600; color:#e6e8eb; white-space:nowrap; }
+  .fx-rate .up { color:#3fd1a2; }
+  .fx-rate .down { color:#ff6b6b; }
+  .hdr-right { display:flex; flex-direction:column; align-items:flex-end; gap:4px; }
+  .idx-bar { display:flex; flex-wrap:wrap; gap:3px 14px; justify-content:flex-end;
+    font-size:13px; font-weight:600; color:#e6e8eb; }
+  .idx-bar .idx b { font-weight:600; color:#aeb4bd; margin-right:4px; }
+  .idx-bar .up { color:#3fd1a2; }
+  .idx-bar .down { color:#ff6b6b; }
+  main { max-width:900px; margin:0 auto; padding:18px 20px 60px; }
+  fieldset { border:1px solid var(--bd); border-radius:8px; margin:0 0 14px;
+             padding:12px 14px; }
+  legend { font-weight:600; color:var(--mut); padding:0 6px; }
+  label { font-size:14px; }
+  input[type=text], select {
+    height:32px; padding:4px 8px; border:1px solid var(--bd); border-radius:6px;
+    font-size:14px; }
+  .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .row + .row { margin-top:10px; }
+  .grow { flex:1 1 220px; }
+  button { height:32px; padding:0 14px; border:1px solid var(--bd);
+    border-radius:6px; background:var(--bg); cursor:pointer; font-size:14px; }
+  button.primary { background:var(--pri); color:#fff; border-color:var(--pri); }
+  button:disabled { opacity:.5; cursor:default; }
+  #status { color:var(--mut); font-size:13px; margin-left:auto; }
+
+  .warn { color:#9a6700; background:#fff8c5; border:1px solid #eac54f;
+    border-radius:6px; padding:8px 10px; font-size:13px; margin:0 0 14px; }
+  .hint { color:var(--mut); font-size:12px; margin-top:8px; }
+
+  .card { border:1px solid var(--bd); border-radius:10px; margin-top:16px;
+    overflow:hidden; }
+  .card-head { background:#131722; color:#fff; padding:14px 18px; }
+  .card-head .name { font-size:17px; font-weight:600; }
+  .card-head .sym { font-size:13px; opacity:.75; margin-left:6px; }
+  .card-head .price { font-size:15px; margin-top:4px; }
+  .sec { padding:14px 18px; border-top:1px solid var(--bd); }
+  .sec h3 { font-size:14px; margin:0 0 10px; color:var(--mut);
+    text-transform:none; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:8px 20px; }
+  .kv { display:flex; justify-content:space-between; font-size:14px;
+    padding:3px 0; border-bottom:1px dashed #eaecef; }
+  .kv .k { color:var(--mut); }
+  .kv .v { font-weight:600; text-align:right; }
+  .up { color:var(--buy); }
+  .down { color:var(--sell); }
+  .rating { font-size:16px; font-weight:700; }
+  .rating.buy { color:var(--buy); }
+  .rating.sell { color:var(--sell); }
+  .rating.hold { color:var(--hold); }
+  .bar { display:flex; height:22px; border-radius:5px; overflow:hidden;
+    margin-top:8px; font-size:12px; color:#fff; }
+  .bar > div { display:flex; align-items:center; justify-content:center;
+    min-width:0; }
+  .bar .b-buy { background:var(--buy); }
+  .bar .b-hold { background:var(--hold); }
+  .bar .b-sell { background:var(--sell); }
+  .badge { display:inline-block; font-size:11px; font-weight:700; color:#fff;
+    background:var(--pri); border-radius:4px; padding:1px 6px; margin-left:8px;
+    vertical-align:middle; }
+  table.holdings { width:100%; border-collapse:collapse; font-size:13px;
+    margin-top:4px; }
+  table.holdings th, table.holdings td { padding:6px 8px;
+    border-bottom:1px solid #eaecef; text-align:left; white-space:nowrap; }
+  table.holdings th { color:var(--mut); font-weight:600; background:var(--bg);
+    position:sticky; top:0; }
+  table.holdings td.num, table.holdings th.num { text-align:right; }
+  table.holdings td.mono { font-family:Consolas,"Courier New",monospace; }
+  table.holdings tbody tr:hover { background:#f6f8fa; }
+  .table-wrap { overflow:auto; max-height:520px; border:1px solid var(--bd);
+    border-radius:8px; }
+  .fin-controls { display:flex; gap:16px; align-items:center; flex-wrap:wrap;
+    margin-bottom:10px; }
+  .fin-controls select { min-width:200px; }
+  .fin-quick { color:var(--mut); font-size:13px; }
+  .fin-quick button { height:26px; padding:0 8px; margin-left:4px; font-size:12px; }
+  .fin-years { display:flex; flex-wrap:wrap; gap:4px 12px; margin-bottom:12px; }
+  .fin-years label { font-size:12px; color:var(--mut); display:inline-flex;
+    align-items:center; gap:3px; cursor:pointer; }
+  .fin-chart { border:1px solid var(--bd); border-radius:8px; padding:8px;
+    margin-bottom:12px; background:#fff; }
+  .chart-svg { width:100%; height:auto; display:block; }
+  .chart-svg .bar-rect { fill:var(--pri); fill-opacity:.16; }
+  .chart-svg .line-path { stroke:var(--pri); stroke-width:2;
+    stroke-linejoin:round; stroke-linecap:round; }
+  .chart-svg .line-dot { fill:var(--pri); }
+  .chart-svg .ax-y { fill:var(--mut); font-size:11px; text-anchor:end; }
+  .chart-svg .ax-x { fill:var(--mut); font-size:11px; text-anchor:middle; }
+  .chart-svg .pt-val { fill:#1f2328; font-size:10px; text-anchor:middle; }
+  .fin-table-wrap { overflow:auto; max-height:440px; border:1px solid var(--bd);
+    border-radius:8px; }
+  .fin-table { width:100%; border-collapse:collapse; font-size:13px; }
+  .fin-table th, .fin-table td { padding:5px 8px; border-bottom:1px solid #eaecef;
+    text-align:right; white-space:nowrap; }
+  .fin-table th:first-child, .fin-table td:first-child { text-align:left;
+    position:sticky; left:0; background:#fff; }
+  .fin-table thead th { color:var(--mut); background:var(--bg);
+    position:sticky; top:0; }
+  .fin-table tr.sel-metric td { background:#eef3ff; font-weight:600; }
+  @media (max-width:640px){ .grid{ grid-template-columns:1fr; } }
+
+  .tabs { display:flex; gap:4px; border-bottom:2px solid var(--bd);
+    margin:0 0 16px; }
+  .tab-btn { border:1px solid var(--bd); border-bottom:none; background:var(--bg);
+    padding:9px 16px; border-radius:8px 8px 0 0; cursor:pointer; font-size:14px;
+    color:var(--mut); margin-bottom:-2px; }
+  .tab-btn.active { background:#fff; color:#1f2328; font-weight:600;
+    border-bottom:2px solid #fff; }
+  .tab-panel { display:none; }
+  .tab-panel.active { display:block; }
+  .macro-note { color:var(--mut); font-size:12px; margin-top:8px; line-height:1.5; }
+  .macro-note a { color:var(--pri); }
+  table.cycle { width:100%; border-collapse:collapse; font-size:13px;
+    margin-top:4px; color:#1f2328; }
+  table.cycle caption { text-align:left; font-size:13px; font-weight:600;
+    color:var(--mut); padding:0 0 6px; }
+  table.cycle th, table.cycle td { padding:7px 10px; border:1px solid var(--bd);
+    text-align:center; white-space:nowrap; }
+  table.cycle thead th { background:var(--bg); color:var(--mut); font-weight:600; }
+  table.cycle tbody th { background:var(--bg); text-align:left; font-weight:700; }
+  table.cycle td.up { color:var(--buy); font-weight:600; }
+  table.cycle td.down { color:var(--sell); font-weight:600; }
+  table.cycle td.flat { color:var(--hold); font-weight:600; }
+  table.holdings tbody tr.macro-row { cursor:pointer; }
+  table.holdings tbody tr.macro-sel { background:#eef3ff; }
+  table.holdings tbody tr.macro-sel:hover { background:#e4ecff; }
+  .macro-freq.active, .macro-mode.active { background:var(--pri); color:#fff; border-color:var(--pri); }
+  .guru-list { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
+  .guru-list:empty { display:none; }
+  .guru-item { border:1px solid var(--bd); background:var(--bg); border-radius:8px;
+    padding:7px 11px; cursor:pointer; font-size:13px; line-height:1.35; text-align:left; }
+  .guru-item:hover { background:#eef3ff; border-color:var(--pri); }
+  .guru-item.sel { background:var(--pri); color:#fff; border-color:var(--pri); }
+  .guru-item .g-name { font-weight:600; }
+  .guru-item .g-firm { color:var(--mut); font-size:11px; }
+  .guru-item.sel .g-firm { color:#dbe4ff; }
+  table.holdings th.sortable { cursor:pointer; user-select:none; }
+  table.holdings th.sortable:hover { color:#1f2328; }
+  .sort-ind { color:#b0b6bd; font-size:11px; }
+  .sort-ind.on { color:var(--pri); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Investing Data</h1>
+  <div class="hdr-right">
+    <span id="indices" class="idx-bar">지수 …</span>
+    <span id="fxrate" class="fx-rate">USD/KRW …</span>
+  </div>
+</header>
+<main>
+  <fieldset>
+    <legend>설정</legend>
+    <div class="row">
+      <input type="text" id="proxy" class="grow"
+             value="https://investing-proxy.sw3855.workers.dev/?url="
+             placeholder="CORS 프록시 URL 접두어 (예: https://tv-proxy.계정.workers.dev/?url=)">
+    </div>
+  </fieldset>
+
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="stock">종목</button>
+    <button class="tab-btn" data-tab="macro">경제지표</button>
+    <button class="tab-btn" data-tab="guru">13F</button>
+  </div>
+
+  <div class="tab-panel active" id="tab-stock">
+    <fieldset>
+      <legend>조회</legend>
+      <div class="row">
+        <input type="text" id="ticker" class="grow"
+               placeholder="티커 (개별종목: AAPL, TSLA · ETF: QQQ, SPY, QQQA · 또는 NASDAQ:MSFT)">
+        <label>거래소:
+          <input type="text" id="exchange" style="width:120px"
+                 placeholder="자동(선택)">
+        </label>
+        <label>언어:
+          <select id="lang">
+            <option value="en">en</option>
+            <option value="ko">ko</option>
+          </select>
+        </label>
+        <button class="primary" id="lookupBtn" disabled>조회</button>
+      </div>
+      <div class="row">
+        <span id="status"></span>
+      </div>
+    </fieldset>
+
+    <div id="result"></div>
+  </div>
+
+  <div class="tab-panel" id="tab-macro">
+    <fieldset>
+      <legend>FRED 설정 · 미국 매크로 경제지표</legend>
+      <div class="row">
+        <input type="text" id="fredKey" class="grow"
+               value="95dccb1b1f992d3759fc48b757194ee9"
+               placeholder="FRED API 키 (예: abcdef0123456789abcdef0123456789)">
+        <button class="primary" id="macroBtn" disabled>조회</button>
+      </div>
+      <div class="row">
+        <span id="macro-status"></span>
+      </div>
+      <div class="row">
+        <span class="fin-quick">분류:
+          <button type="button" class="macro-mode active" data-mode="normal">NORMAL</button>
+          <button type="button" class="macro-mode" data-mode="custom">CUSTOM</button>
+        </span>
+      </div>
+      <div class="macro-note" id="cycle-note" style="display:none">
+        <table class="cycle">
+          <caption>경기순환 국면별 지표 방향</caption>
+          <thead>
+            <tr>
+              <th>지표</th>
+              <th>회복</th>
+              <th>성장</th>
+              <th>둔화</th>
+              <th>침체</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th>선행지표</th>
+              <td class="up">반등</td>
+              <td class="up">상승</td>
+              <td class="down">하락</td>
+              <td class="down">하락</td>
+            </tr>
+            <tr>
+              <th>동행지표</th>
+              <td class="down">바닥</td>
+              <td class="up">상승</td>
+              <td class="flat">전환</td>
+              <td class="down">하락</td>
+            </tr>
+            <tr>
+              <th>후행지표</th>
+              <td class="down">하락</td>
+              <td class="up">상승</td>
+              <td class="up">상승</td>
+              <td class="down">하락</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </fieldset>
+
+    <div id="macro-chart"></div>
+    <div id="macro-result"></div>
+  </div>
+
+  <div class="tab-panel" id="tab-guru">
+    <fieldset>
+      <legend>13F 대가(Superinvestor) 검색 · SEC EDGAR</legend>
+      <div class="row">
+        <input type="text" id="guru-search" class="grow"
+               placeholder="대가 / 운용사 입력">
+      </div>
+      <div class="row">
+        <span id="guru-status"></span>
+      </div>
+      <div id="guru-list" class="guru-list"></div>
+    </fieldset>
+
+    <div id="guru-result"></div>
+  </div>
+</main>
+
+<!-- ===================== PyScript (Python) ===================== -->
+<script type="py">
+# -*- coding: utf-8 -*-
+"""
+CheckInvestingData.py 의 기능을 PyScript(Pyodide)로 이식한 버전.
+
+브라우저에서 파이썬을 직접 실행한다. requests 는 Pyodide 에서 쓸 수 없으므로
+네트워크 호출은 pyodide.http.pyfetch 로 대체했다. 심볼 해석/등급 라벨/포맷 등
+순수 로직은 원본 파이썬 코드를 그대로 옮겼다.
+"""
+
+import json
+import re
+import asyncio
+from datetime import datetime, timezone
+from urllib.parse import urlencode
+
+from pyodide.http import pyfetch
+from pyscript import document, window, when
+from pyscript.ffi import create_proxy
+import js
+
+
+# ===================== 원본 CheckInvestingData.py 이식부 =====================
+
+class InvestingApiError(Exception):
+    """Investing API 호출 실패를 알린다."""
+
+
+SYMBOL_SEARCH_URL = "https://symbol-search.tradingview.com/symbol_search/"
+SCANNER_SYMBOL_URL = "https://scanner.tradingview.com/symbol"
+TV_BASE = "https://www.tradingview.com"
+
+FALLBACK_EXCHANGES = [
+    "NASDAQ", "NYSE", "AMEX", "OTC",
+    "KRX", "LSE", "TSX", "TSXV",
+    "XETR", "EURONEXT", "HKEX", "TSE", "SSE", "SZSE", "BSE", "NSE",
+]
+
+FIELDS = [
+    "description",
+    "currency",
+    "fundamental_currency_code",
+    "close",
+    "recommendation_mark",
+    "recommendation_total",
+    "recommendation_buy",
+    "recommendation_hold",
+    "recommendation_sell",
+    "price_target_average",
+    "price_target_median",
+    "price_target_high",
+    "price_target_low",
+    "price_target_1y",
+    "earnings_per_share_basic_ttm",
+    "earnings_per_share_forecast_next_fq",
+    "earnings_per_share_forecast_next_fy",
+    "total_revenue",
+    "revenue_forecast_next_fq",
+    "revenue_forecast_next_fy",
+    "earnings_release_next_date",
+]
+
+# 현재 시점 평가비율(밸류에이션) 지표 - Investing는 과거 연도별 배열을 제공하지 않는다.
+VALUATION_FIELDS = [
+    "price_earnings_ttm",
+    "price_sales_ratio",
+    "price_book_fq",
+    "enterprise_value_ebitda_ttm",
+    "price_free_cash_flow_ttm",
+    "price_earnings_growth_ttm",
+    "dividends_yield_current",
+]
+
+# 연도별 재무 히스토리(_fy_h 접미사) - 최신 연도부터 과거 순서의 배열을 반환한다.
+FIN_HISTORY_FIELDS = [
+    "fiscal_period_fy_h",
+    "total_revenue_fy_h",
+    "gross_profit_fy_h",
+    "net_income_fy_h",
+    "ebitda_fy_h",
+    "free_cash_flow_fy_h",
+    "earnings_per_share_basic_fy_h",
+    "dps_common_stock_prim_issue_fy_h",
+    "total_assets_fy_h",
+    "total_debt_fy_h",
+]
+
+# 펀더멘털(보고 통화)로 제공되는 금액 필드 - 거래소 통화로 환산 대상
+FUNDAMENTAL_MONEY_FIELDS = [
+    "price_target_average", "price_target_median", "price_target_high",
+    "price_target_low", "price_target_1y",
+    "earnings_per_share_basic_ttm", "earnings_per_share_forecast_next_fq",
+    "earnings_per_share_forecast_next_fy",
+    "total_revenue", "revenue_forecast_next_fq", "revenue_forecast_next_fy",
+]
+
+# 연도별 재무 히스토리 중 금액(보고 통화) 배열 - 환산 대상
+FUNDAMENTAL_HISTORY_MONEY_FIELDS = [
+    "total_revenue_fy_h", "gross_profit_fy_h", "net_income_fy_h",
+    "ebitda_fy_h", "free_cash_flow_fy_h", "earnings_per_share_basic_fy_h",
+    "dps_common_stock_prim_issue_fy_h", "total_assets_fy_h", "total_debt_fy_h",
+]
+
+
+def strip_tags(text):
+    """검색 하이라이트용 <em> 등 HTML 태그 제거."""
+    return re.sub(r"<[^>]+>", "", text or "")
+
+
+def _proxied(url):
+    """CORS 프록시 접두어가 설정돼 있으면 URL 을 감싼다. (KOSIS HTML 과 동일)"""
+    prefix = document.querySelector("#proxy").value.strip()
+    if not prefix:
+        return url
+    if prefix.endswith("=") or prefix.endswith("?"):
+        return prefix + str(js.encodeURIComponent(url))
+    return prefix + url
+
+
+async def _get_json(url, params):
+    """pyfetch 로 GET 호출 후 JSON 을 반환. (requests 대체)"""
+    full = url + "?" + urlencode(params)
+    try:
+        resp = await pyfetch(_proxied(full), method="GET")
+    except Exception as exc:  # 네트워크/CORS 오류
+        raise InvestingApiError(
+            "네트워크 요청 실패(브라우저 CORS 제한일 수 있습니다). "
+            "Cloudflare Worker CORS 프록시를 설정했는지 확인하세요.\n상세: %s" % exc
+        )
+    if resp.status >= 400:
+        raise InvestingApiError("HTTP %s 응답" % resp.status)
+    text = await resp.string()
+    try:
+        return json.loads(text)
+    except ValueError:
+        raise InvestingApiError("JSON 이 아닌 응답을 받았습니다: %s" % text[:200])
+
+
+async def _get_text(url):
+    """pyfetch 로 GET 호출 후 응답 본문(문자열)을 그대로 반환."""
+    try:
+        resp = await pyfetch(_proxied(url), method="GET")
+    except Exception as exc:  # 네트워크/CORS 오류
+        raise InvestingApiError(
+            "네트워크 요청 실패(브라우저 CORS 제한일 수 있습니다). "
+            "Cloudflare Worker CORS 프록시를 설정했는지 확인하세요.\n상세: %s" % exc
+        )
+    if resp.status >= 400:
+        raise InvestingApiError("HTTP %s 응답" % resp.status)
+    return await resp.string()
+
+
+def _extract_array(text, key):
+    """텍스트에서 "key":[ ... ] 형태의 JSON 배열을 괄호 균형으로 추출해 파싱."""
+    p = text.find('"%s":' % key)
+    if p == -1:
+        return None
+    start = text.find("[", p)
+    if start == -1:
+        return None
+    depth = 0
+    for i in range(start, len(text)):
+        c = text[i]
+        if c == "[":
+            depth += 1
+        elif c == "]":
+            depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(text[start:i + 1])
+                except ValueError:
+                    return None
+    return None
+
+
+async def search_symbol(ticker, lang="en"):
+    """티커로 Investing 심볼 검색. (full_symbol, description) 반환, 실패 시 None."""
+    params = {
+        "text": ticker, "hl": 0, "lang": lang, "type": "", "domain": "production",
+    }
+    try:
+        data = await _get_json(SYMBOL_SEARCH_URL, params)
+    except InvestingApiError:
+        return None
+
+    if isinstance(data, dict):
+        items = data.get("symbols", [])
+    else:
+        items = data
+    if not items:
+        return None
+
+    ticker_upper = ticker.upper()
+
+    def build(item):
+        symbol = strip_tags(item.get("symbol", "")).upper()
+        prefix = item.get("prefix") or item.get("exchange") or ""
+        prefix = strip_tags(prefix).upper()
+        if not symbol or not prefix:
+            return None
+        desc = strip_tags(item.get("description", ""))
+        return "%s:%s" % (prefix, symbol), desc
+
+    for item in items:
+        built = build(item)
+        if built and built[0].split(":", 1)[1] == ticker_upper:
+            return built
+    for item in items:
+        built = build(item)
+        if built:
+            return built
+    return None
+
+
+async def fetch_forecast(full_symbol):
+    """scanner API에서 전망 데이터를 가져옴. dict 반환, 실패 시 None."""
+    params = {
+        "symbol": full_symbol, "fields": ",".join(FIELDS), "no_404": "true",
+    }
+    try:
+        data = await _get_json(SCANNER_SYMBOL_URL, params)
+    except InvestingApiError:
+        return None
+    if not isinstance(data, dict) or data.get("s") == "error":
+        return None
+    if not any(v is not None for v in data.values()):
+        return None
+    return data
+
+
+async def fetch_valuation(full_symbol):
+    """현재 평가비율(PER/PBR/PSR 등)을 조회. dict 반환, 실패 시 None."""
+    params = {
+        "symbol": full_symbol, "fields": ",".join(VALUATION_FIELDS),
+        "no_404": "true",
+    }
+    try:
+        data = await _get_json(SCANNER_SYMBOL_URL, params)
+    except InvestingApiError:
+        return None
+    if not isinstance(data, dict) or data.get("s") == "error":
+        return None
+    return data
+
+
+async def fetch_financials(full_symbol):
+    """연도별 재무 히스토리 배열을 조회. dict(각 값이 리스트) 반환, 실패 시 None."""
+    params = {
+        "symbol": full_symbol, "fields": ",".join(FIN_HISTORY_FIELDS),
+        "no_404": "true",
+    }
+    try:
+        data = await _get_json(SCANNER_SYMBOL_URL, params)
+    except InvestingApiError:
+        return None
+    if not isinstance(data, dict) or data.get("s") == "error":
+        return None
+    return data
+
+
+async def fetch_fx_rate(from_ccy, to_ccy):
+    """from_ccy -> to_ccy 환율(1 from = ? to)을 조회. 실패 시 None."""
+    if not from_ccy or not to_ccy:
+        return None
+    if from_ccy == to_ccy:
+        return 1.0
+
+    async def _close(sym):
+        params = {"symbol": sym, "fields": "close", "no_404": "true"}
+        try:
+            d = await _get_json(SCANNER_SYMBOL_URL, params)
+        except InvestingApiError:
+            return None
+        if isinstance(d, dict) and isinstance(d.get("close"), (int, float)):
+            return d["close"]
+        return None
+
+    for prefix in ("FX_IDC", "FX"):
+        rate = await _close("%s:%s%s" % (prefix, from_ccy, to_ccy))
+        if rate:
+            return rate
+    # 직접 통화쌍이 없으면 역방향으로 조회 후 역수를 사용
+    for prefix in ("FX_IDC", "FX"):
+        inv = await _close("%s:%s%s" % (prefix, to_ccy, from_ccy))
+        if inv:
+            return 1.0 / inv
+    return None
+
+
+def _convert_fundamentals(data, financials, rate):
+    """펀더멘털(보고 통화) 금액 필드를 거래소 통화로 환산(제자리 수정)."""
+    if not rate or rate == 1.0:
+        return
+    for key in FUNDAMENTAL_MONEY_FIELDS:
+        v = data.get(key)
+        if isinstance(v, (int, float)):
+            data[key] = v * rate
+    if financials:
+        for key in FUNDAMENTAL_HISTORY_MONEY_FIELDS:
+            arr = financials.get(key)
+            if isinstance(arr, list):
+                financials[key] = [
+                    x * rate if isinstance(x, (int, float)) else x for x in arr
+                ]
+
+
+async def resolve_symbol(ticker, exchange=None, lang="en"):
+    """입력 티커를 'EXCHANGE:TICKER' 전체 심볼로 해석."""
+    if ":" in ticker:
+        return ticker.upper()
+    if exchange:
+        return "%s:%s" % (exchange.upper(), ticker.upper())
+    found = await search_symbol(ticker, lang=lang)
+    if found:
+        return found[0]
+    return None
+
+
+async def fetch_symbol_meta(full_symbol):
+    """심볼의 기본 정보(type/description/close 등)를 조회. dict 반환, 실패 시 None.
+
+    type == 'fund' (typespecs 에 'etf') 이면 ETF, 'stock' 이면 개별종목.
+    """
+    params = {
+        "symbol": full_symbol,
+        "fields": "type,typespecs,description,close,currency",
+        "no_404": "true",
+    }
+    try:
+        data = await _get_json(SCANNER_SYMBOL_URL, params)
+    except InvestingApiError:
+        return None
+    if not isinstance(data, dict) or data.get("s") == "error":
+        return None
+    if not any(v is not None for v in data.values()):
+        return None
+    return data
+
+
+async def fetch_holdings(full_symbol):
+    """ETF 보유종목(top_holdings) 리스트를 조회. (holdings, report_ts) 반환.
+
+    Investing 의 ETF holdings 페이지는 보유종목을 페이지 본문에 JSON 으로
+    렌더링한다. CORS 프록시(Worker)는 Accept: application/json 을 붙이므로
+    응답이 { ... "render_results": {"react_content": "...top_holdings..."} }
+    형태의 JSON 래퍼로 온다. 프록시 없이 직접 접근하면 HTML 로 온다.
+    두 경우 모두 top_holdings 배열을 추출한다.
+    """
+    exchange, _, ticker = full_symbol.partition(":")
+    url = "%s/symbols/%s-%s/holdings/" % (TV_BASE, exchange, ticker)
+    try:
+        text = await _get_text(url)
+    except InvestingApiError:
+        return None, None
+
+    source = text
+    try:
+        doc = json.loads(text)
+        react = (doc.get("render_results") or {}).get("react_content")
+        if react:
+            source = react
+    except ValueError:
+        pass  # 직접 접근 시 HTML 이므로 원문 그대로 사용
+
+    holdings = _extract_array(source, "top_holdings")
+    report_ts = None
+    m = re.search(r'"holding_report_date":(\d+)', source)
+    if m:
+        report_ts = int(m.group(1))
+    return holdings, report_ts
+
+
+async def lookup(ticker, exchange=None, lang="en"):
+    """티커를 해석하고 종류를 판별해 조회한다.
+
+    반환: (kind, full_symbol, payload)
+      kind == "stock" -> payload 는 전망(forecast) data(dict)
+      kind == "etf"   -> payload 는 {"meta", "holdings", "report_ts"}
+      kind == "notfound" / "nodata" -> 실패
+    """
+    full_symbol = await resolve_symbol(ticker, exchange, lang)
+    if full_symbol is None:
+        return "notfound", None, None
+
+    meta = await fetch_symbol_meta(full_symbol)
+
+    # 자동 탐색 실패 시 주요 거래소를 순회하며 재시도
+    if meta is None and ":" not in ticker and not exchange:
+        for ex in FALLBACK_EXCHANGES:
+            candidate = "%s:%s" % (ex, ticker.upper())
+            meta = await fetch_symbol_meta(candidate)
+            if meta is not None:
+                full_symbol = candidate
+                break
+
+    if meta is None:
+        return "nodata", full_symbol, None
+
+    typespecs = meta.get("typespecs") or []
+    is_etf = meta.get("type") == "fund" or "etf" in typespecs
+
+    if is_etf:
+        holdings, report_ts = await fetch_holdings(full_symbol)
+        payload = {"meta": meta, "holdings": holdings, "report_ts": report_ts}
+        return "etf", full_symbol, payload
+
+    data = await fetch_forecast(full_symbol)
+    if data is None:
+        return "nodata", full_symbol, None
+    valuation = await fetch_valuation(full_symbol)
+    financials = await fetch_financials(full_symbol)
+
+    # 펀더멘털 지표(매출·EPS·목표주가 등)는 보고 통화로 제공되므로
+    # 거래소 통화(주가 통화)와 다르면 환율로 환산해 통일한다.
+    trade_ccy = data.get("currency")
+    fund_ccy = data.get("fundamental_currency_code")
+    fx = None
+    if trade_ccy and fund_ccy and trade_ccy != fund_ccy:
+        rate = await fetch_fx_rate(fund_ccy, trade_ccy)
+        if rate:
+            _convert_fundamentals(data, financials, rate)
+            fx = {"from": fund_ccy, "to": trade_ccy, "rate": rate}
+
+    payload = {
+        "forecast": data, "valuation": valuation, "financials": financials,
+        "fx": fx,
+    }
+    return "stock", full_symbol, payload
+
+
+def rating_label(mark):
+    """recommendation_mark(1=적극매수 ~ 5=적극매도)를 한글 라벨로 변환."""
+    if mark is None:
+        return "정보 없음", "hold"
+    if mark <= 1.5:
+        return "적극 매수 (Strong Buy)", "buy"
+    if mark <= 2.5:
+        return "매수 (Buy)", "buy"
+    if mark <= 3.5:
+        return "중립 (Neutral)", "hold"
+    if mark <= 4.5:
+        return "매도 (Sell)", "sell"
+    return "적극 매도 (Strong Sell)", "sell"
+
+
+def fmt_num(value, digits=2):
+    if value is None:
+        return "-"
+    return "{:,.{d}f}".format(value, d=digits)
+
+
+def fmt_large(value, currency=""):
+    """큰 금액을 T/B/M 단위로 축약."""
+    if value is None:
+        return "-"
+    sign = "-" if value < 0 else ""
+    v = abs(value)
+    suffix = (" " + currency).rstrip()
+    if v >= 1e12:
+        return "{}{:,.2f}T{}".format(sign, v / 1e12, suffix)
+    if v >= 1e9:
+        return "{}{:,.2f}B{}".format(sign, v / 1e9, suffix)
+    if v >= 1e6:
+        return "{}{:,.2f}M{}".format(sign, v / 1e6, suffix)
+    return "{}{:,.2f}{}".format(sign, v, suffix)
+
+
+def fmt_date(ts):
+    if ts is None:
+        return "-"
+    try:
+        return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
+    except (OverflowError, OSError, ValueError):
+        return "-"
+
+
+# ===================== 화면 렌더링 =====================
+
+def _esc(s):
+    s = "" if s is None else str(s)
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _kv(k, v, cls=""):
+    return '<div class="kv"><span class="k">%s</span><span class="v %s">%s</span></div>' % (
+        _esc(k), cls, _esc(v),
+    )
+
+
+def _upside(target, close):
+    """(표시 문자열, css class) 반환."""
+    if target is None or not close:
+        return "", ""
+    pct = (target - close) / close * 100
+    cls = "up" if pct >= 0 else "down"
+    return "%+.2f%%" % pct, cls
+
+
+def render_report(full_symbol, payload):
+    if isinstance(payload, dict) and "forecast" in payload:
+        data = payload.get("forecast") or {}
+        valuation = payload.get("valuation")
+        financials = payload.get("financials")
+        fx = payload.get("fx")
+    else:
+        data = payload
+        valuation = None
+        financials = None
+        fx = None
+
+    cur = data.get("currency") or ""
+    desc = data.get("description") or full_symbol
+    close = data.get("close")
+
+    mark = data.get("recommendation_mark")
+    total = data.get("recommendation_total")
+    buy = data.get("recommendation_buy")
+    hold = data.get("recommendation_hold")
+    sell = data.get("recommendation_sell")
+    label, rcls = rating_label(mark)
+
+    avg = data.get("price_target_average")
+    high = data.get("price_target_high")
+    low = data.get("price_target_low")
+
+    html = []
+    html.append('<div class="card">')
+
+    # 헤더
+    html.append('<div class="card-head">')
+    html.append('<div><span class="name">%s</span>'
+                '<span class="sym">[%s]</span></div>' % (_esc(desc), _esc(full_symbol)))
+    if close is not None:
+        html.append('<div class="price">현재가 %s %s</div>'
+                    % (_esc(fmt_num(close)), _esc(cur)))
+    html.append('</div>')
+
+    # 애널리스트 추천 등급
+    html.append('<div class="sec"><h3>애널리스트 추천 등급</h3>')
+    extra = ""
+    if mark is not None:
+        extra = "  (mark=%s)" % fmt_num(mark)
+    html.append('<div class="rating %s">%s<span style="font-size:13px;'
+                'font-weight:400;color:#57606a">%s</span></div>'
+                % (rcls, _esc(label), _esc(extra)))
+    if total is not None:
+        html.append('<div class="hint">애널리스트 %d 명</div>' % int(total))
+
+    # 매수/중립/매도 분포 막대
+    b = buy or 0
+    h = hold or 0
+    s = sell or 0
+    tot = b + h + s
+    if tot > 0:
+        html.append('<div class="bar">')
+        for cnt, cls, name in ((b, "b-buy", "매수"), (h, "b-hold", "중립"),
+                               (s, "b-sell", "매도")):
+            if cnt > 0:
+                pct = cnt / tot * 100
+                html.append('<div class="%s" style="width:%.1f%%">%s %d</div>'
+                            % (cls, pct, name, cnt))
+        html.append('</div>')
+    else:
+        html.append(_kv("매수 / 중립 / 매도",
+                        "%s / %s / %s" % (buy if buy is not None else "-",
+                                          hold if hold is not None else "-",
+                                          sell if sell is not None else "-")))
+    html.append('</div>')
+
+    # 목표 주가
+    html.append('<div class="sec"><h3>목표 주가</h3><div class="grid">')
+    html.append(_kv("현재가", "%s %s" % (fmt_num(close), cur)))
+    for name, tgt in (("최고가", high), ("평균가", avg), ("최저가", low)):
+        up_txt, up_cls = _upside(tgt, close)
+        val = "%s %s" % (fmt_num(tgt), cur)
+        if up_txt:
+            val += "  (%s)" % up_txt
+        html.append(_kv(name, val, up_cls))
+    html.append('</div></div>')
+
+    # 실적 추정치
+    eps_ttm = data.get("earnings_per_share_basic_ttm")
+    eps_fq = data.get("earnings_per_share_forecast_next_fq")
+    eps_fy = data.get("earnings_per_share_forecast_next_fy")
+    rev_ttm = data.get("total_revenue")
+    rev_fq = data.get("revenue_forecast_next_fq")
+    rev_fy = data.get("revenue_forecast_next_fy")
+    next_earn = data.get("earnings_release_next_date")
+
+    html.append('<div class="sec"><h3>실적 추정치</h3><div class="grid">')
+    html.append(_kv("EPS (최근 TTM)", "%s %s" % (fmt_num(eps_ttm), cur)))
+    html.append(_kv("EPS 전망 (다음 분기)", "%s %s" % (fmt_num(eps_fq), cur)))
+    html.append(_kv("EPS 전망 (다음 회계연도)", "%s %s" % (fmt_num(eps_fy), cur)))
+    html.append(_kv("매출 (최근 TTM)", fmt_large(rev_ttm, cur)))
+    html.append(_kv("매출 전망 (다음 분기)", fmt_large(rev_fq, cur)))
+    html.append(_kv("매출 전망 (다음 회계연도)", fmt_large(rev_fy, cur)))
+    html.append(_kv("다음 실적 발표 예정일", fmt_date(next_earn)))
+    html.append('</div></div>')
+
+    # 현재 평가비율 (과거 연도별은 Investing 가 제공하지 않아 현재값만 표시)
+    if valuation:
+        def rv(key, suffix=" 배"):
+            v = valuation.get(key)
+            return "%s%s" % (fmt_num(v), suffix) if v is not None else "-"
+        html.append('<div class="sec"><h3>평가비율 (현재)</h3><div class="grid">')
+        html.append(_kv("PER (P/E · TTM)", rv("price_earnings_ttm")))
+        html.append(_kv("PSR (P/S)", rv("price_sales_ratio")))
+        html.append(_kv("PBR (P/B)", rv("price_book_fq")))
+        html.append(_kv("EV / EBITDA", rv("enterprise_value_ebitda_ttm")))
+        html.append(_kv("P / FCF", rv("price_free_cash_flow_ttm")))
+        html.append(_kv("PEG", rv("price_earnings_growth_ttm", "")))
+        html.append(_kv("배당수익률", rv("dividends_yield_current", " %")))
+        html.append('</div><div class="hint">Investing 가 과거 연도별 평가비율은 '
+                    '제공하지 않아 현재 값만 표시합니다. 연도별 지표는 아래 표·차트를 '
+                    '참고하세요.</div></div>')
+
+    src = "출처: Investing (전망 / Forecast)"
+    if fx:
+        src += (" · 펀더멘털 지표(매출·EPS·목표주가 등)는 보고 통화 %s 를 "
+                "거래소 통화 %s 로 환산해 표시 (환율 1 %s = %s %s)"
+                % (_esc(fx["from"]), _esc(fx["to"]), _esc(fx["from"]),
+                   fmt_num(fx["rate"], 2), _esc(fx["to"])))
+    html.append('<div class="sec"><div class="hint">%s</div></div>' % src)
+    html.append('</div>')
+
+    html.append('<div id="fin-section"></div>')
+
+    document.querySelector("#result").innerHTML = "".join(html)
+    init_financials(full_symbol, financials, cur)
+
+
+def render_holdings(full_symbol, meta, holdings, report_ts):
+    cur = meta.get("currency") or ""
+    desc = meta.get("description") or full_symbol
+    close = meta.get("close")
+
+    html = []
+    html.append('<div class="card">')
+
+    # 헤더
+    html.append('<div class="card-head">')
+    html.append('<div><span class="name">%s</span>'
+                '<span class="sym">[%s]</span>'
+                '<span class="badge">ETF</span></div>'
+                % (_esc(desc), _esc(full_symbol)))
+    if close is not None:
+        html.append('<div class="price">현재가 %s %s</div>'
+                    % (_esc(fmt_num(close)), _esc(cur)))
+    html.append('</div>')
+
+    # 보유종목
+    html.append('<div class="sec"><h3>보유종목 (Holdings)</h3>')
+    if not holdings:
+        html.append('<div class="hint">보유종목 데이터를 가져오지 못했습니다. '
+                    '(일부 ETF는 구성종목 정보를 제공하지 않거나, 프록시 설정이 '
+                    '필요할 수 있습니다.)</div>')
+    else:
+        meta_line = "상위 %d 종목" % len(holdings)
+        if report_ts:
+            meta_line = "기준일 %s · " % fmt_date(report_ts) + meta_line
+        html.append('<div class="hint">%s</div>' % _esc(meta_line))
+
+        html.append('<div class="table-wrap"><table class="holdings"><thead><tr>'
+                    '<th>#</th><th>심볼</th><th>종목명</th>'
+                    '<th class="num">비중</th><th class="num">평가액</th>'
+                    '<th class="num">보유주식수</th>'
+                    '<th class="num">주식수 1M</th></tr></thead><tbody>')
+        for i, h in enumerate(holdings, 1):
+            sym = h.get("symbol") or "-"
+            name = h.get("name") or "-"
+            weight = h.get("weight")
+            mv = h.get("market_value")
+            shares = h.get("shares")
+            chg = h.get("shares_change_1m_pct")
+
+            weight_txt = "%.2f%%" % weight if weight is not None else "-"
+            shares_txt = fmt_num(shares, 0) if shares is not None else "-"
+            chg_txt, chg_cls = "-", ""
+            if chg is not None:
+                chg_cls = "up" if chg >= 0 else "down"
+                chg_txt = "%+.2f%%" % chg
+
+            html.append('<tr>'
+                        '<td>%d</td><td class="mono">%s</td><td>%s</td>'
+                        '<td class="num">%s</td><td class="num">%s</td>'
+                        '<td class="num">%s</td><td class="num %s">%s</td>'
+                        '</tr>'
+                        % (i, _esc(sym), _esc(name), _esc(weight_txt),
+                           _esc(fmt_large(mv, cur)), _esc(shares_txt),
+                           chg_cls, _esc(chg_txt)))
+        html.append('</tbody></table></div>')
+    html.append('</div>')
+
+    html.append('<div class="sec"><div class="hint">출처: Investing (ETF Holdings) · '
+                '표시되는 보유종목은 상위 종목 기준입니다.</div></div>')
+    html.append('</div>')
+
+    document.querySelector("#result").innerHTML = "".join(html)
+
+
+# ===================== 연도별 지표 (표 + 막대/꺾은선 차트) =====================
+
+_FIN_STATE = {}
+_PROXIES = []
+
+
+def _bind(el, event, handler):
+    """DOM 요소에 이벤트 핸들러를 바인딩(프록시는 GC 방지를 위해 보관)."""
+    if el is None:
+        return
+    proxy = create_proxy(handler)
+    _PROXIES.append(proxy)
+    el.addEventListener(event, proxy)
+
+
+def _build_financial_metrics(fin):
+    """재무 히스토리 배열에서 연도별 지표 목록을 만든다. (years, metrics) 반환.
+
+    배열은 최신→과거 순이므로 뒤집어 과거→최신(연대순)으로 정렬한다.
+    """
+    years = list(reversed(fin.get("fiscal_period_fy_h") or []))
+    n = len(years)
+
+    def arr(key):
+        v = list(reversed(fin.get(key) or []))
+        return [v[i] if i < len(v) else None for i in range(n)]
+
+    rev = arr("total_revenue_fy_h")
+    gp = arr("gross_profit_fy_h")
+    ni = arr("net_income_fy_h")
+    ebitda = arr("ebitda_fy_h")
+    fcf = arr("free_cash_flow_fy_h")
+    eps = arr("earnings_per_share_basic_fy_h")
+    dps = arr("dps_common_stock_prim_issue_fy_h")
+    assets = arr("total_assets_fy_h")
+    debt = arr("total_debt_fy_h")
+
+    def ratio(a, b, scale=1.0):
+        out = []
+        for x, y in zip(a, b):
+            if x is None or y is None or y == 0:
+                out.append(None)
+            else:
+                out.append(x / y * scale)
+        return out
+
+    def growth(a):
+        out = [None]
+        for i in range(1, len(a)):
+            p, c = a[i - 1], a[i]
+            if p is None or c is None or p == 0:
+                out.append(None)
+            else:
+                out.append((c - p) / abs(p) * 100.0)
+        return out
+
+    metrics = [
+        {"key": "revenue", "label": "매출 (Revenue)", "kind": "money", "values": rev},
+        {"key": "net_income", "label": "순이익 (Net Income)", "kind": "money", "values": ni},
+        {"key": "gross_profit", "label": "매출총이익 (Gross Profit)", "kind": "money", "values": gp},
+        {"key": "ebitda", "label": "EBITDA", "kind": "money", "values": ebitda},
+        {"key": "fcf", "label": "잉여현금흐름 (FCF)", "kind": "money", "values": fcf},
+        {"key": "eps", "label": "EPS (기본)", "kind": "cur", "values": eps},
+        {"key": "dps", "label": "주당배당금 (DPS)", "kind": "cur", "values": dps},
+        {"key": "assets", "label": "총자산 (Total Assets)", "kind": "money", "values": assets},
+        {"key": "debt", "label": "총부채 (Total Debt)", "kind": "money", "values": debt},
+        {"key": "gross_margin", "label": "매출총이익률 (%)", "kind": "pct", "values": ratio(gp, rev, 100.0)},
+        {"key": "net_margin", "label": "순이익률 (%)", "kind": "pct", "values": ratio(ni, rev, 100.0)},
+        {"key": "ebitda_margin", "label": "EBITDA 마진 (%)", "kind": "pct", "values": ratio(ebitda, rev, 100.0)},
+        {"key": "fcf_margin", "label": "FCF 마진 (%)", "kind": "pct", "values": ratio(fcf, rev, 100.0)},
+        {"key": "debt_assets", "label": "부채/자산 (%)", "kind": "pct", "values": ratio(debt, assets, 100.0)},
+        {"key": "rev_growth", "label": "매출성장률 YoY (%)", "kind": "pct", "values": growth(rev)},
+        {"key": "ni_growth", "label": "순이익성장률 YoY (%)", "kind": "pct", "values": growth(ni)},
+    ]
+    return years, metrics
+
+
+def _get_metric(key):
+    for m in _FIN_STATE.get("metrics", []):
+        if m["key"] == key:
+            return m
+    metrics = _FIN_STATE.get("metrics") or [None]
+    return metrics[0]
+
+
+def _metric_axis_fmt(kind, v):
+    """차트 축·포인트용 간결 포맷."""
+    if v is None:
+        return "-"
+    if kind == "money":
+        return fmt_large(v)
+    if kind == "pct":
+        return "%s%%" % fmt_num(v, 1)
+    return fmt_num(v, 2)
+
+
+def _metric_cell_fmt(kind, v, cur):
+    """표 셀용 포맷(통화·단위 포함)."""
+    if v is None:
+        return "-"
+    if kind == "money":
+        return fmt_large(v, cur)
+    if kind == "pct":
+        return "%s%%" % fmt_num(v, 2)
+    if kind == "cur":
+        return "%s %s" % (fmt_num(v, 2), cur)
+    return fmt_num(v, 2)
+
+
+def _fin_chart_svg(metric, sel_years, cur):
+    """선택 지표를 막대그래프 + 꺾은선그래프로 겹쳐 그린 SVG 를 반환."""
+    years = _FIN_STATE.get("years", [])
+    vmap = dict(zip(years, metric["values"]))
+    data = [(y, vmap.get(y)) for y in sel_years]
+    vals = [v for _, v in data if v is not None]
+    if not sel_years or not vals:
+        return '<div class="hint">차트를 표시할 데이터가 없습니다. (연도를 선택하세요)</div>'
+
+    vmax = max(vals)
+    vmin = min(vals)
+    if vmin > 0:
+        vmin = 0.0
+    if vmax < 0:
+        vmax = 0.0
+    if vmax == vmin:
+        vmax = vmin + 1.0
+
+    W, H = 760.0, 300.0
+    padL, padR, padT, padB = 66.0, 18.0, 22.0, 40.0
+    plot_w = W - padL - padR
+    plot_h = H - padT - padB
+    n = len(data)
+    kind = metric["kind"]
+
+    def X(i):
+        return padL + plot_w * ((i + 0.5) / n)
+
+    def Y(v):
+        return padT + (vmax - v) / (vmax - vmin) * plot_h
+
+    parts = ['<svg viewBox="0 0 %g %g" class="chart-svg" '
+             'preserveAspectRatio="xMidYMid meet">' % (W, H)]
+
+    if vmin < 0 < vmax:
+        grid_vals = [vmax, 0.0, vmin]
+    else:
+        grid_vals = [vmax, (vmax + vmin) / 2.0, vmin]
+    for gv in grid_vals:
+        gy = Y(gv)
+        parts.append('<line x1="%g" y1="%g" x2="%g" y2="%g" stroke="#eaecef"/>'
+                     % (padL, gy, W - padR, gy))
+        parts.append('<text x="%g" y="%g" class="ax-y">%s</text>'
+                     % (padL - 8, gy + 4, _esc(_metric_axis_fmt(kind, gv))))
+
+    y0 = Y(0.0)
+    bar_w = plot_w / n * 0.55
+    # 막대그래프
+    for i, (yr, v) in enumerate(data):
+        if v is None:
+            continue
+        cx = X(i)
+        top = Y(v)
+        by = min(top, y0)
+        bh = abs(top - y0)
+        parts.append('<rect x="%g" y="%g" width="%g" height="%g" rx="3" '
+                     'class="bar-rect"/>' % (cx - bar_w / 2, by, bar_w, max(bh, 0.5)))
+
+    # 꺾은선그래프 (동일 값 위에 겹침)
+    pts = ["%g,%g" % (X(i), Y(v)) for i, (yr, v) in enumerate(data) if v is not None]
+    if len(pts) >= 2:
+        parts.append('<polyline points="%s" class="line-path" fill="none"/>'
+                     % " ".join(pts))
+    for i, (yr, v) in enumerate(data):
+        if v is None:
+            continue
+        parts.append('<circle cx="%g" cy="%g" r="3.5" class="line-dot"/>'
+                     % (X(i), Y(v)))
+        parts.append('<text x="%g" y="%g" class="pt-val">%s</text>'
+                     % (X(i), Y(v) - 8, _esc(_metric_axis_fmt(kind, v))))
+
+    # x축 연도 라벨
+    for i, (yr, v) in enumerate(data):
+        parts.append('<text x="%g" y="%g" class="ax-x">%s</text>'
+                     % (X(i), H - padB + 22, _esc(str(yr))))
+
+    parts.append('</svg>')
+    return "".join(parts)
+
+
+def _fin_table(metrics, sel_years, cur):
+    if not sel_years:
+        return '<div class="hint">표시할 연도를 선택하세요.</div>'
+    years = _FIN_STATE.get("years", [])
+    idx = {y: i for i, y in enumerate(years)}
+    html = ['<div class="fin-table-wrap"><table class="fin-table"><thead><tr>'
+            '<th>지표</th>']
+    for y in sel_years:
+        html.append('<th>%s</th>' % _esc(str(y)))
+    html.append('</tr></thead><tbody>')
+    for m in metrics:
+        rowcls = ' class="sel-metric"' if m["key"] == _FIN_STATE.get("metric") else ''
+        html.append('<tr%s><td>%s</td>' % (rowcls, _esc(m["label"])))
+        for y in sel_years:
+            v = m["values"][idx[y]] if y in idx else None
+            html.append('<td>%s</td>' % _esc(_metric_cell_fmt(m["kind"], v, cur)))
+        html.append('</tr>')
+    html.append('</tbody></table></div>')
+    return "".join(html)
+
+
+def refresh_financials():
+    """현재 상태(_FIN_STATE)로 연도별 지표 섹션 전체를 다시 그리고 이벤트를 바인딩."""
+    st = _FIN_STATE
+    years = st.get("years", [])
+    metrics = st.get("metrics", [])
+    sel = st.get("sel_years", set())
+    cur = st.get("currency", "")
+    sel_years = [y for y in years if y in sel]  # 연대순
+    metric = _get_metric(st.get("metric"))
+
+    html = ['<div class="card"><div class="sec"><h3>연도별 지표</h3>']
+
+    # 컨트롤: 지표 선택 + 연도 빠른선택
+    html.append('<div class="fin-controls">')
+    html.append('<label>지표: <select id="fin-metric">')
+    for m in metrics:
+        sel_attr = ' selected' if m["key"] == st.get("metric") else ''
+        html.append('<option value="%s"%s>%s</option>'
+                    % (m["key"], sel_attr, _esc(m["label"])))
+    html.append('</select></label>')
+    html.append('<span class="fin-quick">표시 연도: '
+                '<button type="button" data-yq="5">최근5</button>'
+                '<button type="button" data-yq="10">최근10</button>'
+                '<button type="button" data-yq="all">전체</button></span>')
+    html.append('</div>')
+
+    # 연도 체크박스
+    html.append('<div class="fin-years">')
+    for y in years:
+        chk = ' checked' if y in sel else ''
+        html.append('<label><input type="checkbox" class="fin-year" value="%s"%s>%s</label>'
+                    % (y, chk, y))
+    html.append('</div>')
+
+    # 차트(막대 + 꺾은선)
+    html.append('<div class="fin-chart">%s</div>'
+                % _fin_chart_svg(metric, sel_years, cur))
+
+    # 표
+    html.append(_fin_table(metrics, sel_years, cur))
+    html.append('<div class="hint">출처: Investing · 연도별 재무 데이터에서 '
+                '계산한 지표입니다. 선택한 지표는 표에서 강조됩니다.</div>')
+    html.append('</div></div>')
+
+    document.querySelector("#fin-section").innerHTML = "".join(html)
+    _bind_financials()
+
+    # 표의 가로 스크롤을 우측 끝(최신 연도)으로 이동
+    wrap = document.querySelector("#fin-section .fin-table-wrap")
+    if wrap is not None:
+        wrap.scrollLeft = wrap.scrollWidth
+
+
+def _bind_financials():
+    _bind(document.querySelector("#fin-metric"), "change", _on_metric_change)
+    boxes = document.querySelectorAll(".fin-year")
+    for i in range(boxes.length):
+        _bind(boxes.item(i), "change", _on_year_toggle)
+    quick = document.querySelectorAll("[data-yq]")
+    for i in range(quick.length):
+        _bind(quick.item(i), "click", _on_year_quick)
+
+
+def _on_metric_change(evt):
+    _FIN_STATE["metric"] = document.querySelector("#fin-metric").value
+    refresh_financials()
+
+
+def _on_year_toggle(evt):
+    cb = evt.target
+    try:
+        y = int(cb.value)
+    except ValueError:
+        return
+    if cb.checked:
+        _FIN_STATE["sel_years"].add(y)
+    else:
+        _FIN_STATE["sel_years"].discard(y)
+    refresh_financials()
+
+
+def _on_year_quick(evt):
+    q = evt.target.getAttribute("data-yq")
+    years = _FIN_STATE.get("years", [])
+    if q == "all":
+        sel = set(years)
+    elif q == "5":
+        sel = set(years[-5:])
+    else:
+        sel = set(years[-10:])
+    _FIN_STATE["sel_years"] = sel
+    refresh_financials()
+
+
+def init_financials(full_symbol, fin, currency):
+    """연도별 지표 섹션을 초기화한다. 데이터가 없으면 안내 문구를 표시."""
+    container = document.querySelector("#fin-section")
+    if container is None:
+        return
+    if not fin or not (fin.get("fiscal_period_fy_h")):
+        container.innerHTML = ('<div class="card"><div class="sec">'
+                               '<h3>연도별 지표</h3><div class="hint">'
+                               '이 종목은 연도별 재무 데이터를 제공하지 않습니다.'
+                               '</div></div></div>')
+        return
+    years, metrics = _build_financial_metrics(fin)
+    recent = years[-10:] if len(years) > 10 else years
+    _FIN_STATE.clear()
+    _FIN_STATE.update({
+        "symbol": full_symbol,
+        "currency": currency or "",
+        "years": years,
+        "metrics": metrics,
+        "sel_years": set(recent),
+        "metric": metrics[0]["key"] if metrics else None,
+    })
+    refresh_financials()
+
+
+def _set_status(msg):
+    document.querySelector("#status").textContent = msg
+
+
+def _set_busy(busy):
+    document.querySelector("#lookupBtn").disabled = busy
+
+
+# ===================== 미국 매크로 경제지표 (FRED) =====================
+
+FRED_OBS_URL = "https://api.stlouisfed.org/fred/series/observations"
+
+# DBnomics: ISM PMI 등 거시경제 지표 시계열 (API 키 불필요, 무료).
+# CORS 프록시(investing-proxy-worker.js)가 api.db.nomics.world 도 허용해야 한다.
+DBNOMICS_BASE = "https://api.db.nomics.world/v22"
+
+# 카테고리 표시 순서
+MACRO_CATEGORIES = ["성장", "물가", "고용", "금리", "소비·심리", "주택"]
+
+# 표시할 지표. units 는 FRED 변환(pc1=전년동기 %, chg=전기대비 증감).
+#   dec=소수 자릿수, unit=표시 단위 문자열
+MACRO_INDICATORS = [
+    {"series": "A191RL1Q225SBEA", "label": "실질 GDP 성장률 (연율·전분기)",
+     "cat": "성장", "custom": "후행", "units": "", "dec": 1, "unit": "%"},
+    {"series": "INDPRO", "label": "산업생산 (전년동월)",
+     "cat": "성장", "custom": "동행", "units": "pc1", "dec": 2, "unit": "%"},
+    {"series": "ISM_PMI", "source": "db",
+     "db_provider": "ISM", "db_dataset": "pmi", "db_series": "pm",
+     "vmin": 25, "vmax": 85, "baseline": 50,
+     "label": "ISM 제조업 PMI", "cat": "성장", "custom": "선행",
+     "units": "", "dec": 1, "unit": ""},
+
+    {"series": "CPIAUCSL", "label": "소비자물가 CPI (전년동월)",
+     "cat": "물가", "custom": "후행", "units": "pc1", "dec": 2, "unit": "%"},
+    {"series": "CPILFESL", "label": "근원 CPI (전년동월)",
+     "cat": "물가", "units": "pc1", "dec": 2, "unit": "%"},
+    {"series": "PCEPI", "label": "PCE 물가 (전년동월)",
+     "cat": "물가", "units": "pc1", "dec": 2, "unit": "%"},
+    {"series": "PPIACO", "label": "생산자물가 PPI (전년동월)",
+     "cat": "물가", "custom": "선행", "units": "pc1", "dec": 2, "unit": "%"},
+
+    {"series": "UNRATE", "label": "실업률",
+     "cat": "고용", "custom": "후행", "units": "", "dec": 1, "unit": "%"},
+    {"series": "PAYEMS", "label": "비농업 고용 (전월대비 증감)",
+     "cat": "고용", "custom": "동행", "units": "chg", "dec": 0, "unit": "천 명"},
+    {"series": "CIVPART", "label": "경제활동참가율",
+     "cat": "고용", "units": "", "dec": 1, "unit": "%"},
+    {"series": "CES0500000003", "label": "시간당 평균임금 (전년동월)",
+     "cat": "고용", "units": "pc1", "dec": 2, "unit": "%"},
+
+    {"series": "FEDFUNDS", "label": "연방기금금리 (실효)",
+     "cat": "금리", "units": "", "dec": 2, "unit": "%"},
+    {"series": "DGS10", "label": "10년 국채수익률",
+     "cat": "금리", "units": "", "dec": 2, "unit": "%"},
+    {"series": "DGS2", "label": "2년 국채수익률",
+     "cat": "금리", "units": "", "dec": 2, "unit": "%"},
+
+    {"series": "UMCSENT", "label": "소비자심리지수 (미시간대)",
+     "cat": "소비·심리", "custom": "선행", "units": "", "dec": 1, "unit": ""},
+    {"series": "RSAFS", "label": "소매판매 (전년동월)",
+     "cat": "소비·심리", "custom": "동행", "units": "pc1", "dec": 2, "unit": "%"},
+
+    {"series": "HOUST", "label": "주택착공 (연율)",
+     "cat": "주택", "units": "", "dec": 0, "unit": "천 호"},
+    {"series": "MORTGAGE30US", "label": "30년 모기지 금리",
+     "cat": "주택", "units": "", "dec": 2, "unit": "%"},
+    {"series": "CSUSHPINSA", "label": "주택가격 Case-Shiller (전년동월)",
+     "cat": "주택", "units": "pc1", "dec": 2, "unit": "%"},
+]
+
+# CUSTOM 분류(경기 선·동·후행) 표시 순서
+MACRO_CUSTOM_GROUPS = ["선행", "동행", "후행"]
+_CUSTOM_GROUP_LABEL = {"선행": "선행지표", "동행": "동행지표", "후행": "후행지표"}
+
+# 메크로 표시 상태(분류 모드) 및 마지막 조회 결과 캐시
+_MACRO_MODE = {"mode": "normal"}
+_MACRO_LAST = {"rows": None}
+
+
+async def fetch_fred_series(ind, api_key):
+    """FRED 관측치를 조회해 최근 2개 유효값을 반환. 실패 시 None."""
+    params = {
+        "series_id": ind["series"], "api_key": api_key, "file_type": "json",
+        "sort_order": "desc", "limit": 12,
+    }
+    if ind.get("units"):
+        params["units"] = ind["units"]
+    try:
+        data = await _get_json(FRED_OBS_URL, params)
+    except InvestingApiError:
+        return None
+    obs = data.get("observations") if isinstance(data, dict) else None
+    if not obs:
+        return None
+    nums = []
+    for o in obs:
+        s = o.get("value")
+        if s in (None, ".", ""):
+            continue
+        try:
+            f = float(s)
+        except (ValueError, TypeError):
+            continue
+        nums.append((o.get("date"), f))
+        if len(nums) >= 2:
+            break
+    if not nums:
+        return None
+    date0, v0 = nums[0]
+    v1 = nums[1][1] if len(nums) > 1 else None
+    return {"date": date0, "value": v0, "prev": v1}
+
+
+async def fetch_tv_econ(ind):
+    """TradingView 경제 심볼(ISM PMI 등)의 현재값·변화를 조회. 실패 시 None."""
+    params = {
+        "symbol": ind["tvsymbol"], "fields": "close,change_abs", "no_404": "true",
+    }
+    try:
+        d = await _get_json(SCANNER_SYMBOL_URL, params)
+    except InvestingApiError:
+        return None
+    if not isinstance(d, dict) or not isinstance(d.get("close"), (int, float)):
+        return None
+    close = d["close"]
+    chg_abs = d.get("change_abs")
+    prev = close - chg_abs if isinstance(chg_abs, (int, float)) else None
+    return {"date": None, "value": close, "prev": prev}
+
+
+def _dbnomics_series_url(ind):
+    """DBnomics 단일 시리즈 URL 을 구성. (예: .../ISM/pmi/pm)"""
+    return "%s/series/%s/%s/%s" % (
+        DBNOMICS_BASE, ind["db_provider"], ind["db_dataset"], ind["db_series"])
+
+
+async def _dbnomics_points(ind):
+    """DBnomics 시리즈를 (period, value) 연대순 리스트로 반환. 실패 시 None."""
+    try:
+        data = await _get_json(_dbnomics_series_url(ind),
+                               {"observations": "1", "format": "json"})
+    except InvestingApiError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    series = data.get("series") or {}
+    docs = series.get("docs") or []
+    if not docs:
+        return None
+    doc = docs[0]
+    periods = doc.get("period") or []
+    values = doc.get("value") or []
+    # 지표에 vmin/vmax 가 설정된 경우, 현실적 범위 밖의 값은 버린다.
+    # (DBnomics ISM 피드가 간헐 깨진 값(예: PMI 10.x)을 내보내는 경우 방지)
+    vmin = ind.get("vmin")
+    vmax = ind.get("vmax")
+    pts = []
+    for i in range(min(len(periods), len(values))):
+        v = values[i]
+        if not isinstance(v, (int, float)):
+            continue
+        fv = float(v)
+        if vmin is not None and fv < vmin:
+            continue
+        if vmax is not None and fv > vmax:
+            continue
+        pts.append((periods[i], fv))
+    return pts
+
+
+async def fetch_dbnomics_series(ind):
+    """DBnomics 시리즈의 최근 2개 유효값을 반환. 실패 시 None. (FRED 와 동일 형식)"""
+    pts = await _dbnomics_points(ind)
+    if not pts:
+        return None
+    date0, v0 = pts[-1]
+    v1 = pts[-2][1] if len(pts) >= 2 else None
+    return {"date": date0, "value": v0, "prev": v1}
+
+
+async def fetch_dbnomics_chart(ind, freq="q"):
+    """DBnomics 월별 시계열을 주기(월/분기/연도)에 맞게 반환 [(라벨, 값)]."""
+    pts = await _dbnomics_points(ind)
+    if not pts:
+        return None
+    meta = FREQ_META.get(freq, FREQ_META["q"])
+    limit = meta["limit"]
+    if freq == "m":
+        # 월별 원본을 그대로 사용
+        out = []
+        for period, v in pts:
+            try:
+                y_str, m_str = period.split("-")[:2]
+                label = "'%s.%s" % (y_str[2:], m_str)
+            except (ValueError, AttributeError):
+                label = period
+            out.append((label, v))
+        if len(out) > limit:
+            out = out[-limit:]
+        return out
+    groups = {}
+    order = []
+    for period, v in pts:
+        try:
+            y_str, m_str = period.split("-")[:2]
+            y, m = int(y_str), int(m_str)
+        except (ValueError, AttributeError):
+            continue
+        if freq == "a":
+            key = "%04d" % y
+            label = "%04d" % y
+        else:
+            q = (m - 1) // 3 + 1
+            key = "%04d-Q%d" % (y, q)
+            label = "'%s Q%d" % (("%04d" % y)[2:], q)
+        if key not in groups:
+            groups[key] = [label, 0.0, 0]
+            order.append(key)
+        groups[key][1] += v
+        groups[key][2] += 1
+    out = []
+    for key in order:
+        label, total, cnt = groups[key]
+        out.append((label, total / cnt if cnt else None))
+    limit = meta["limit"]
+    if len(out) > limit:
+        out = out[-limit:]
+    return out
+
+
+async def _fetch_one_macro(ind, api_key):
+    """지표 소스(fred/tv/db)에 맞게 한 개 조회."""
+    src = ind.get("source")
+    if src == "tv":
+        return await fetch_tv_econ(ind)
+    if src == "db":
+        return await fetch_dbnomics_series(ind)
+    return await fetch_fred_series(ind, api_key)
+
+
+async def fetch_all_macro(api_key):
+    """모든 지표를 병렬로 조회해 [(ind, result), ...] 반환."""
+    tasks = [_fetch_one_macro(ind, api_key) for ind in MACRO_INDICATORS]
+    results = await asyncio.gather(*tasks)
+    return list(zip(MACRO_INDICATORS, results))
+
+
+def _macro_fmt(ind, v):
+    if v is None:
+        return "-"
+    txt = "{:,.{d}f}".format(v, d=ind.get("dec", 2))
+    unit = ind.get("unit", "")
+    return (txt + " " + unit).strip() if unit else txt
+
+
+def _macro_delta(ind, d):
+    txt = "{:+,.{d}f}".format(d, d=ind.get("dec", 2))
+    unit = ind.get("unit", "")
+    return (txt + " " + unit).strip() if unit else txt
+
+
+def render_macro(rows, mode=None):
+    """지표를 분류(NORMAL/CUSTOM)별 표로 렌더링."""
+    if mode is None:
+        mode = _MACRO_MODE.get("mode", "normal")
+    _MACRO_MODE["mode"] = mode
+    _MACRO_LAST["rows"] = rows
+
+    if mode == "custom":
+        groups = MACRO_CUSTOM_GROUPS
+        title = "미국 매크로 경제지표 · CUSTOM (경기 선·동·후행)"
+    else:
+        groups = MACRO_CATEGORIES
+        title = "미국 매크로 경제지표 · NORMAL"
+
+    html = ['<div class="card">']
+    html.append('<div class="card-head"><div>'
+                '<span class="name">%s</span>'
+                '<span class="sym">[FRED · ISM(DBnomics)]</span></div></div>'
+                % _esc(title))
+    for g in groups:
+        if mode == "custom":
+            items = [(ind, r) for ind, r in rows if ind.get("custom") == g]
+            head = _CUSTOM_GROUP_LABEL.get(g, g)
+        else:
+            items = [(ind, r) for ind, r in rows if ind.get("cat") == g]
+            head = g
+        if not items:
+            continue
+        html.append('<div class="sec"><h3>%s</h3>' % _esc(head))
+        html.append('<div class="table-wrap"><table class="holdings"><thead><tr>'
+                    '<th>지표</th><th class="num">현재값</th>'
+                    '<th class="num">이전값</th><th class="num">변화</th>'
+                    '<th class="num">기준일</th></tr></thead><tbody>')
+        for ind, r in items:
+            if not r or r.get("value") is None:
+                html.append('<tr class="macro-row" data-series="%s">'
+                            '<td>%s</td><td class="num">-</td>'
+                            '<td class="num">-</td><td class="num">-</td>'
+                            '<td class="num">-</td></tr>'
+                            % (_esc(ind["series"]), _esc(ind["label"])))
+                continue
+            cur_txt = _macro_fmt(ind, r.get("value"))
+            prev = r.get("prev")
+            prev_txt = _macro_fmt(ind, prev) if prev is not None else "-"
+            chg_txt = _macro_delta(ind, r["value"] - prev) if prev is not None else "-"
+            html.append('<tr class="macro-row" data-series="%s">'
+                        '<td>%s</td><td class="num">%s</td>'
+                        '<td class="num">%s</td><td class="num">%s</td>'
+                        '<td class="num">%s</td></tr>'
+                        % (_esc(ind["series"]), _esc(ind["label"]), _esc(cur_txt),
+                           _esc(prev_txt), _esc(chg_txt), _esc(r.get("date") or "-")))
+        html.append('</tbody></table></div></div>')
+    html.append('<div class="sec"><div class="hint">출처: FRED (St. Louis Fed) · '
+                'ISM PMI 는 DBnomics(ISM) 피드. 전년동월/전월 증감은 변환값'
+                '입니다. ISM PMI 는 비정상값을 걸러 마지막 정상 관측월 기준으로 '
+                '표시하므로 기준일이 최신월과 다를 수 있습니다. '
+                '지표 행을 클릭하면 위에 차트가 표시됩니다.'
+                '</div></div>')
+    html.append('</div>')
+    document.querySelector("#macro-result").innerHTML = "".join(html)
+    document.querySelector("#macro-chart").innerHTML = (
+        '<div class="card"><div class="sec"><div class="hint">'
+        '아래 지표 행을 클릭하면 차트가 여기에 표시됩니다.'
+        '</div></div></div>')
+    _bind_macro_rows()
+
+
+def _q_label(d):
+    """FRED 날짜(YYYY-MM-DD)를 '24 Q1 형식 분기 라벨로 변환."""
+    try:
+        y, m, _ = d.split("-")
+        q = (int(m) - 1) // 3 + 1
+        return "'%s Q%d" % (y[2:], q)
+    except (ValueError, AttributeError):
+        return d or ""
+
+
+# 차트 주기(월/분기/연도) 메타. fred=FRED frequency 코드, limit=조회 개수
+FREQ_META = {
+    "m": {"fred": "m", "limit": 36, "label": "월"},
+    "q": {"fred": "q", "limit": 24, "label": "분기"},
+    "a": {"fred": "a", "limit": 20, "label": "연도"},
+}
+
+# 현재 선택된 차트 상태(지표 · 주기)
+_MACRO_CHART = {"series": None, "freq": "q"}
+
+
+def _freq_label(d, freq):
+    """주기에 맞게 카테고리축 라벨 생성. 연도=YYYY, 분기='YY Qn, 월='YY.MM."""
+    try:
+        y, m, _ = d.split("-")
+        if freq == "a":
+            return y
+        if freq == "m":
+            return "'%s.%s" % (y[2:], m)
+        q = (int(m) - 1) // 3 + 1
+        return "'%s Q%d" % (y[2:], q)
+    except (ValueError, AttributeError):
+        return d or ""
+
+
+async def fetch_fred_chart(ind, api_key, freq="q"):
+    """주기(분기/연도) 단위 관측치를 조회해 [(라벨, 값), ...] (연대순) 반환."""
+    meta = FREQ_META.get(freq, FREQ_META["q"])
+    params = {
+        "series_id": ind["series"], "api_key": api_key, "file_type": "json",
+        "sort_order": "desc", "limit": meta["limit"],
+        "frequency": meta["fred"], "aggregation_method": "avg",
+    }
+    if ind.get("units"):
+        params["units"] = ind["units"]
+    try:
+        data = await _get_json(FRED_OBS_URL, params)
+    except InvestingApiError:
+        return None
+    obs = data.get("observations") if isinstance(data, dict) else None
+    if not obs:
+        return None
+    pts = []
+    for o in obs:  # 최신→과거 순서
+        s = o.get("value")
+        val = None
+        if s not in (None, ".", ""):
+            try:
+                val = float(s)
+            except (ValueError, TypeError):
+                val = None
+        pts.append((_freq_label(o.get("date"), freq), val))
+    pts.reverse()  # 과거→최신(연대순)
+    return pts
+
+
+def _macro_chart_svg(ind, points):
+    """분기별 시계열을 막대+꺾은선 그래프 SVG 로 반환. points=[(라벨, 값)]."""
+    data = points or []
+    vals = [v for _, v in data if v is not None]
+    if not vals:
+        return '<div class="hint">차트를 표시할 데이터가 없습니다.</div>'
+
+    baseline = ind.get("baseline")
+    vmax = max(vals)
+    vmin = min(vals)
+    if baseline is not None:
+        # 기준선(예: PMI 50)이 있는 레벨 지표는 0 강제 대신 값+기준선 범위에 여백을 둔다.
+        vmax = max(vmax, baseline)
+        vmin = min(vmin, baseline)
+        pad = (vmax - vmin) * 0.15 or 1.0
+        vmax += pad
+        vmin -= pad
+        zero = baseline
+    else:
+        if vmin > 0:
+            vmin = 0.0
+        if vmax < 0:
+            vmax = 0.0
+        zero = 0.0
+    if vmax == vmin:
+        vmax = vmin + 1.0
+
+    W, H = 820.0, 320.0
+    padL, padR, padT, padB = 66.0, 18.0, 22.0, 46.0
+    plot_w = W - padL - padR
+    plot_h = H - padT - padB
+    n = len(data)
+    dec = ind.get("dec", 2)
+
+    def X(i):
+        return padL + plot_w * ((i + 0.5) / n)
+
+    def Y(v):
+        return padT + (vmax - v) / (vmax - vmin) * plot_h
+
+    def axfmt(v):
+        return "-" if v is None else "{:,.{d}f}".format(v, d=dec)
+
+    parts = ['<svg viewBox="0 0 %g %g" class="chart-svg" '
+             'preserveAspectRatio="xMidYMid meet">' % (W, H)]
+
+    if baseline is not None:
+        grid_vals = [vmax, baseline, vmin]
+    elif vmin < 0 < vmax:
+        grid_vals = [vmax, 0.0, vmin]
+    else:
+        grid_vals = [vmax, (vmax + vmin) / 2.0, vmin]
+    for gv in grid_vals:
+        gy = Y(gv)
+        parts.append('<line x1="%g" y1="%g" x2="%g" y2="%g" stroke="#eaecef"/>'
+                     % (padL, gy, W - padR, gy))
+        parts.append('<text x="%g" y="%g" class="ax-y">%s</text>'
+                     % (padL - 8, gy + 4, _esc(axfmt(gv))))
+
+    # 기준선(PMI 50 등) 강조 표시
+    if baseline is not None:
+        gy = Y(baseline)
+        parts.append('<line x1="%g" y1="%g" x2="%g" y2="%g" '
+                     'stroke="#f23645" stroke-width="1.3" stroke-dasharray="6 4"/>'
+                     % (padL, gy, W - padR, gy))
+        parts.append('<text x="%g" y="%g" class="ax-y" '
+                     'style="fill:#f23645;font-weight:700">%s</text>'
+                     % (W - padR - 2, gy - 4, _esc(axfmt(baseline))))
+
+    y0 = Y(zero)
+    bar_w = plot_w / n * 0.55
+    for i, (lb, v) in enumerate(data):
+        if v is None:
+            continue
+        cx = X(i)
+        top = Y(v)
+        by = min(top, y0)
+        bh = abs(top - y0)
+        parts.append('<rect x="%g" y="%g" width="%g" height="%g" rx="3" '
+                     'class="bar-rect"/>' % (cx - bar_w / 2, by, bar_w, max(bh, 0.5)))
+
+    pts = ["%g,%g" % (X(i), Y(v)) for i, (lb, v) in enumerate(data) if v is not None]
+    if len(pts) >= 2:
+        parts.append('<polyline points="%s" class="line-path" fill="none"/>'
+                     % " ".join(pts))
+    step = 1 if n <= 16 else (n // 16 + 1)
+    for i, (lb, v) in enumerate(data):
+        if v is None:
+            continue
+        parts.append('<circle cx="%g" cy="%g" r="3.5" class="line-dot"/>'
+                     % (X(i), Y(v)))
+        if i % step == 0 or i == n - 1:
+            parts.append('<text x="%g" y="%g" class="pt-val">%s</text>'
+                         % (X(i), Y(v) - 8, _esc(axfmt(v))))
+
+    for i, (lb, v) in enumerate(data):
+        if i % step != 0 and i != n - 1:
+            continue
+        parts.append('<text x="%g" y="%g" class="ax-x">%s</text>'
+                     % (X(i), H - padB + 24, _esc(lb)))
+
+    parts.append('</svg>')
+    return "".join(parts)
+
+
+def _highlight_macro_row(series):
+    rows = document.querySelectorAll("#macro-result tr[data-series]")
+    for i in range(rows.length):
+        tr = rows.item(i)
+        if tr.getAttribute("data-series") == series:
+            tr.classList.add("macro-sel")
+        else:
+            tr.classList.remove("macro-sel")
+
+
+async def _show_macro_chart(series, freq=None):
+    """선택한 지표의 차트를 주기(분기/연도)에 맞게 조회·렌더링."""
+    ind = None
+    for x in MACRO_INDICATORS:
+        if x["series"] == series:
+            ind = x
+            break
+    if ind is None:
+        return
+    if ind.get("source") == "tv":
+        _highlight_macro_row(series)
+        _show_tv_econ_chart(ind)
+        return
+    if freq not in FREQ_META:
+        freq = _MACRO_CHART.get("freq", "q")
+    _MACRO_CHART["series"] = series
+    _MACRO_CHART["freq"] = freq
+    box = document.querySelector("#macro-chart")
+    is_db = ind.get("source") == "db"
+    key = document.querySelector("#fredKey").value.strip()
+    if not is_db and not key:
+        box.innerHTML = ('<div class="card"><div class="sec"><div class="hint">'
+                         'FRED API 키를 먼저 입력하세요.</div></div></div>')
+        return
+    _highlight_macro_row(series)
+    box.innerHTML = ('<div class="card"><div class="sec"><h3>%s</h3>'
+                     '<div class="hint">차트를 불러오는 중...</div></div></div>'
+                     % _esc(ind["label"]))
+    try:
+        if is_db:
+            pts = await fetch_dbnomics_chart(ind, freq)
+        else:
+            pts = await fetch_fred_chart(ind, key, freq)
+    except InvestingApiError:
+        pts = None
+    freq_label = FREQ_META[freq]["label"]
+    if not pts or all(v is None for _, v in pts):
+        html = ['<div class="card"><div class="sec"><h3>%s</h3>' % _esc(ind["label"])]
+        html.append(_freq_toggle_html(freq))
+        html.append('<div class="hint">%s 데이터를 가져오지 못했습니다.'
+                     '</div></div></div>' % _esc(freq_label))
+        box.innerHTML = "".join(html)
+        _bind_macro_freq(series)
+        return
+    unit = ind.get("unit", "")
+    unit_txt = (" · 단위: %s" % unit) if unit else ""
+    src_txt = "DBnomics (ISM)" if is_db else "FRED"
+    html = ['<div class="card">']
+    html.append('<div class="card-head"><div>'
+                '<span class="name">%s</span>'
+                '<span class="sym">[%s · %s별]</span></div></div>'
+                % (_esc(ind["label"]), _esc(ind["series"]), _esc(freq_label)))
+    html.append('<div class="sec">')
+    html.append(_freq_toggle_html(freq))
+    html.append('<div class="fin-chart">%s</div>' % _macro_chart_svg(ind, pts))
+    html.append('<div class="hint">출처: %s · 최근 %d개 %s(%s 평균) 기준'
+                '%s. 막대=값, 꺾은선=추세.</div>'
+                % (_esc(src_txt), len(pts), _esc(freq_label), _esc(freq_label), unit_txt))
+    html.append('</div></div>')
+    box.innerHTML = "".join(html)
+    _bind_macro_freq(series)
+
+
+def _freq_toggle_html(freq):
+    """월/분기/연도 선택 버튼 HTML."""
+    html = ['<div class="fin-controls"><span class="fin-quick">주기: ']
+    for f in ("m", "q", "a"):
+        act = " active" if f == freq else ""
+        html.append('<button type="button" class="macro-freq%s" data-freq="%s">%s</button>'
+                    % (act, f, FREQ_META[f]["label"]))
+    html.append('</span></div>')
+    return "".join(html)
+
+
+def _make_freq_handler(series, freq):
+    def handler(evt):
+        asyncio.ensure_future(_show_macro_chart(series, freq))
+    return handler
+
+
+def _bind_macro_freq(series):
+    btns = document.querySelectorAll("#macro-chart .macro-freq")
+    for i in range(btns.length):
+        b = btns.item(i)
+        _bind(b, "click", _make_freq_handler(series, b.getAttribute("data-freq")))
+
+
+def _show_tv_econ_chart(ind):
+    """TradingView 경제 지표(ISM PMI 등)는 과거 시계열 미지원 - 현재값만 표시."""
+    box = document.querySelector("#macro-chart")
+    r = None
+    rows = _MACRO_LAST.get("rows")
+    if rows:
+        for i2, rr in rows:
+            if i2["series"] == ind["series"]:
+                r = rr
+                break
+    html = ['<div class="card">']
+    html.append('<div class="card-head"><div>'
+                '<span class="name">%s</span>'
+                '<span class="sym">[%s · TradingView]</span></div></div>'
+                % (_esc(ind["label"]), _esc(ind["series"])))
+    html.append('<div class="sec">')
+    if r and r.get("value") is not None:
+        prev = r.get("prev")
+        html.append('<div class="grid">')
+        html.append(_kv("현재값", _macro_fmt(ind, r.get("value"))))
+        html.append(_kv("이전값", _macro_fmt(ind, prev) if prev is not None else "-"))
+        html.append(_kv("변화",
+                        _macro_delta(ind, r["value"] - prev) if prev is not None else "-"))
+        html.append('</div>')
+    else:
+        html.append('<div class="hint">값을 가져오지 못했습니다.</div>')
+    html.append('<div class="hint">이 지표는 TradingView 경제 피드 제공으로, '
+                '과거 시계열(분기·연도) 차트는 지원되지 않습니다. FRED 지표는 '
+                '행을 클릭하면 차트가 표시됩니다.</div>')
+    html.append('</div></div>')
+    box.innerHTML = "".join(html)
+
+
+def _make_macro_row_handler(series):
+    def handler(evt):
+        asyncio.ensure_future(_show_macro_chart(series))
+    return handler
+
+
+def _bind_macro_rows():
+    rows = document.querySelectorAll("#macro-result tr[data-series]")
+    for i in range(rows.length):
+        tr = rows.item(i)
+        _bind(tr, "click", _make_macro_row_handler(tr.getAttribute("data-series")))
+
+
+def _set_macro_status(msg):
+    document.querySelector("#macro-status").textContent = msg
+
+
+def _macro_busy(busy):
+    document.querySelector("#macroBtn").disabled = busy
+
+
+# ===================== 원/달러 환율 (헤더 상시 표시) =====================
+
+async def update_fxrate():
+    """USD/KRW 환율을 조회해 헤더에 표시(탭과 무관하게 상시)."""
+    el = document.querySelector("#fxrate")
+    if el is None:
+        return
+    params = {
+        "symbol": "FX_IDC:USDKRW",
+        "fields": "close,change,change_abs", "no_404": "true",
+    }
+    try:
+        d = await _get_json(SCANNER_SYMBOL_URL, params)
+    except InvestingApiError:
+        el.innerHTML = "USD/KRW —"
+        return
+    if not isinstance(d, dict) or not isinstance(d.get("close"), (int, float)):
+        el.innerHTML = "USD/KRW —"
+        return
+    close = d["close"]
+    txt = "USD/KRW %s" % fmt_num(close, 2)
+    chg = d.get("change")
+    chg_abs = d.get("change_abs")
+    if isinstance(chg, (int, float)) and isinstance(chg_abs, (int, float)):
+        cls = "up" if chg >= 0 else "down"
+        arrow = "▲" if chg >= 0 else "▼"
+        txt += ' <span class="%s">%s%s (%+.2f%%)</span>' % (
+            cls, arrow, fmt_num(abs(chg_abs), 2), chg)
+    el.innerHTML = txt
+
+
+# ===================== 미국 주요 지수 (헤더 상시 표시) =====================
+
+# (표시명, TradingView 심볼)
+INDEX_LIST = [
+    ("나스닥100", "NASDAQ:NDX"),
+    ("S&P500", "SP:SPX"),
+    ("다우", "DJ:DJI"),
+    ("러셀2000", "TVC:RUT"),
+]
+
+
+async def _fetch_index(sym):
+    """지수 심볼의 종가·변동을 조회. 실패 시 None."""
+    params = {"symbol": sym, "fields": "close,change,change_abs", "no_404": "true"}
+    try:
+        d = await _get_json(SCANNER_SYMBOL_URL, params)
+    except InvestingApiError:
+        return None
+    if not isinstance(d, dict) or not isinstance(d.get("close"), (int, float)):
+        return None
+    return d
+
+
+async def update_indices():
+    """나스닥100·S&P500·다우·러셀2000 지수값과 변동률을 헤더에 표시."""
+    el = document.querySelector("#indices")
+    if el is None:
+        return
+    results = await asyncio.gather(*[_fetch_index(s) for _, s in INDEX_LIST])
+    parts = []
+    for (name, _), d in zip(INDEX_LIST, results):
+        if not d:
+            parts.append('<span class="idx"><b>%s</b>—</span>' % _esc(name))
+            continue
+        seg = '<span class="idx"><b>%s</b>%s' % (_esc(name), fmt_num(d["close"], 2))
+        chg = d.get("change")
+        if isinstance(chg, (int, float)):
+            cls = "up" if chg >= 0 else "down"
+            arrow = "▲" if chg >= 0 else "▼"
+            seg += ' <span class="%s">%s%+.2f%%</span>' % (cls, arrow, chg)
+        seg += '</span>'
+        parts.append(seg)
+    el.innerHTML = "".join(parts)
+
+
+# ===================== 대가 13F 포트폴리오 (SEC EDGAR) =====================
+
+# 13F 를 제출하는 유명 투자자(대가) 목록. cik 은 SEC EDGAR 등록번호.
+# 검색은 아래 목록(ko/name/firm)에 대해 클라이언트에서 부분일치로 수행하므로
+# 이름 일부만 입력해도 찾을 수 있다. 실제 보유내역은 SEC EDGAR 에서 조회한다.
+GURUS = [
+    {"ko": "워런 버핏", "name": "Warren Buffett", "firm": "Berkshire Hathaway", "cik": "1067983"},
+    {"ko": "마이클 버리", "name": "Michael Burry", "firm": "Scion Asset Management", "cik": "1649339"},
+    {"ko": "레이 달리오", "name": "Ray Dalio", "firm": "Bridgewater Associates", "cik": "1350694"},
+    {"ko": "빌 애크먼", "name": "Bill Ackman", "firm": "Pershing Square Capital Management", "cik": "1336528"},
+    {"ko": "짐 사이먼스", "name": "Jim Simons", "firm": "Renaissance Technologies", "cik": "1037389"},
+    {"ko": "대니얼 로브", "name": "Daniel Loeb", "firm": "Third Point", "cik": "1040273"},
+    {"ko": "데이비드 아인혼", "name": "David Einhorn", "firm": "Greenlight Capital", "cik": "1079114"},
+    {"ko": "조지 소로스", "name": "George Soros", "firm": "Soros Fund Management", "cik": "1029160"},
+    {"ko": "세스 클라먼", "name": "Seth Klarman", "firm": "Baupost Group", "cik": "1061768"},
+    {"ko": "스탠리 드러켄밀러", "name": "Stanley Druckenmiller", "firm": "Duquesne Family Office", "cik": "1536411"},
+    {"ko": "빌 게이츠", "name": "Bill Gates", "firm": "Gates Foundation Trust", "cik": "1166559"},
+    {"ko": "체이스 콜먼", "name": "Chase Coleman", "firm": "Tiger Global Management", "cik": "1167483"},
+    {"ko": "데이비드 테퍼", "name": "David Tepper", "firm": "Appaloosa", "cik": "1656456"},
+    {"ko": "리 루", "name": "Li Lu", "firm": "Himalaya Capital Management", "cik": "1709323"},
+]
+
+SEC_SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK%010d.json"
+SEC_ARCHIVES_BASE = "https://www.sec.gov/Archives/edgar/data"
+
+# 마지막으로 선택된 대가(재렌더링용)
+_GURU_STATE = {"cik": None}
+
+# SEC 조회 실패 원인(진단용)
+_SEC_LAST_ERR = {"msg": ""}
+
+
+def _filter_gurus(q):
+    """검색어(부분일치, 대소문자 무시)로 대가 목록을 필터링."""
+    q = (q or "").strip().lower()
+    if not q:
+        return list(GURUS)
+    out = []
+    for g in GURUS:
+        hay = "%s %s %s" % (g["ko"], g["name"].lower(), g["firm"].lower())
+        if q in hay.lower():
+            out.append(g)
+    return out
+
+
+def render_guru_list(matches):
+    """검색 결과 대가 목록을 클릭 가능한 항목으로 렌더링."""
+    box = document.querySelector("#guru-list")
+    if box is None:
+        return
+    if not matches:
+        box.innerHTML = ('<div class="hint">검색 결과가 없습니다. '
+                         '이름 일부(예: 버핏, buffett, pershing)로 다시 검색하세요.</div>')
+        return
+    html = []
+    for g in matches:
+        sel = " sel" if g["cik"] == _GURU_STATE.get("cik") else ""
+        html.append('<button type="button" class="guru-item%s" data-cik="%s">'
+                    '<span class="g-name">%s (%s)</span><br>'
+                    '<span class="g-firm">%s</span></button>'
+                    % (sel, _esc(g["cik"]), _esc(g["ko"]), _esc(g["name"]),
+                       _esc(g["firm"])))
+    box.innerHTML = "".join(html)
+    _bind_guru_items()
+
+
+def _guru_by_cik(cik):
+    for g in GURUS:
+        if g["cik"] == cik:
+            return g
+    return None
+
+
+async def _sec_get_json(url):
+    """SEC EDGAR JSON 조회(프록시 경유). 실패 시 None."""
+    try:
+        resp = await pyfetch(_proxied(url), method="GET")
+    except Exception as exc:
+        _SEC_LAST_ERR["msg"] = "네트워크 오류(%s): %s" % (url, exc)
+        return None
+    if resp.status >= 400:
+        try:
+            body = (await resp.string())[:160]
+        except Exception:
+            body = ""
+        _SEC_LAST_ERR["msg"] = "HTTP %s · %s · 응답: %s" % (resp.status, url, body)
+        return None
+    try:
+        return json.loads(await resp.string())
+    except ValueError:
+        _SEC_LAST_ERR["msg"] = "JSON 파싱 실패 · %s" % url
+        return None
+
+
+async def _sec_get_text(url):
+    """SEC EDGAR 텍스트/XML 조회(프록시 경유). 실패 시 None."""
+    try:
+        resp = await pyfetch(_proxied(url), method="GET")
+    except Exception as exc:
+        _SEC_LAST_ERR["msg"] = "네트워크 오류(%s): %s" % (url, exc)
+        return None
+    if resp.status >= 400:
+        try:
+            body = (await resp.string())[:160]
+        except Exception:
+            body = ""
+        _SEC_LAST_ERR["msg"] = "HTTP %s · %s · 응답: %s" % (resp.status, url, body)
+        return None
+    return await resp.string()
+
+
+def _local_tag(tag):
+    """네임스페이스 접두어를 제거한 로컬 태그명."""
+    return tag.split("}", 1)[-1] if "}" in tag else tag
+
+
+def _parse_info_table(xml_text):
+    """13F 정보표 XML 을 파싱해 보유내역 리스트를 반환.
+
+    각 항목: {issuer, title, cusip, value, shares, sh_prn, put_call}
+    value 는 원문 보고값(단위는 filing 시점에 따라 천 달러 또는 달러).
+    """
+    import xml.etree.ElementTree as ET
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return None
+    rows = []
+    for el in root.iter():
+        if _local_tag(el.tag) != "infoTable":
+            continue
+        rec = {"issuer": "", "title": "", "cusip": "", "value": 0.0,
+               "shares": 0.0, "sh_prn": "SH", "put_call": ""}
+        for child in el.iter():
+            t = _local_tag(child.tag)
+            txt = (child.text or "").strip()
+            if t == "nameOfIssuer":
+                rec["issuer"] = txt
+            elif t == "titleOfClass":
+                rec["title"] = txt
+            elif t == "cusip":
+                rec["cusip"] = txt
+            elif t == "value":
+                try:
+                    rec["value"] = float(txt.replace(",", ""))
+                except ValueError:
+                    rec["value"] = 0.0
+            elif t == "sshPrnamt":
+                try:
+                    rec["shares"] = float(txt.replace(",", ""))
+                except ValueError:
+                    rec["shares"] = 0.0
+            elif t == "sshPrnamtType":
+                rec["sh_prn"] = txt or "SH"
+            elif t == "putCall":
+                rec["put_call"] = txt
+        if rec["issuer"]:
+            rows.append(rec)
+    return rows
+
+
+async def _list_13f_filings(cik_int):
+    """CIK 의 13F-HR 제출 목록을 최신순으로 반환. 각 항목:
+    {accession, filing_date, report_date}. 실패 시 None."""
+    subs = await _sec_get_json(SEC_SUBMISSIONS_URL % cik_int)
+    if not isinstance(subs, dict):
+        if not _SEC_LAST_ERR["msg"]:
+            _SEC_LAST_ERR["msg"] = "submissions 응답 없음 (CIK %d)" % cik_int
+        return None
+    recent = ((subs.get("filings") or {}).get("recent")) or {}
+    forms = recent.get("form") or []
+    accnos = recent.get("accessionNumber") or []
+    fdates = recent.get("filingDate") or []
+    rdates = recent.get("reportDate") or []
+    out = []
+    for i, f in enumerate(forms):
+        if f in ("13F-HR", "13F-HR/A"):
+            out.append({
+                "accession": accnos[i] if i < len(accnos) else "",
+                "filing_date": fdates[i] if i < len(fdates) else None,
+                "report_date": rdates[i] if i < len(rdates) else None,
+            })
+    return out
+
+
+def _unique_periods(filings):
+    """분기(report_date)별로 가장 최근 제출본만 남겨 최신순 리스트로 반환."""
+    seen = {}
+    order = []
+    for fl in filings:
+        rd = fl.get("report_date")
+        if rd and rd not in seen:
+            seen[rd] = fl
+            order.append(rd)
+    return [seen[rd] for rd in order]
+
+
+async def _fetch_13f_holdings(cik_int, accession):
+    """특정 13F-HR 제출본의 보유내역(정보표)을 조회. 실패 시 None."""
+    acc_nodash = accession.replace("-", "")
+    dir_url = "%s/%d/%s" % (SEC_ARCHIVES_BASE, cik_int, acc_nodash)
+    listing = await _sec_get_json(dir_url + "/index.json")
+    info_file = None
+    if isinstance(listing, dict):
+        items = ((listing.get("directory") or {}).get("item")) or []
+        xmls = [it.get("name") for it in items
+                if str(it.get("name", "")).lower().endswith(".xml")]
+        cands = [n for n in xmls if n and n.lower() != "primary_doc.xml"]
+        # 이름에 table/info 가 들어간 파일 우선, 없으면 첫 후보 사용
+        pref = [n for n in cands if "table" in n.lower() or "info" in n.lower()]
+        if pref:
+            info_file = pref[0]
+        elif cands:
+            info_file = cands[0]
+    if info_file is None:
+        if not _SEC_LAST_ERR["msg"]:
+            _SEC_LAST_ERR["msg"] = "정보표 XML 을 찾지 못했습니다 · %s" % dir_url
+        return None
+    xml_text = await _sec_get_text("%s/%s" % (dir_url, info_file))
+    if not xml_text:
+        return None
+    holdings = _parse_info_table(xml_text)
+    if holdings is None:
+        _SEC_LAST_ERR["msg"] = "정보표 XML 파싱 실패 · %s/%s" % (dir_url, info_file)
+    return holdings
+
+
+async def fetch_13f_latest(cik):
+    """CIK 의 최근 13F-HR 보유내역과 전분기 보유내역(매매 비교용)을 조회.
+
+    반환: {holdings, report_date, filing_date, accession,
+           prev_holdings, prev_report_date} 또는 None
+    """
+    _SEC_LAST_ERR["msg"] = ""
+    cik_int = int(cik)
+    filings = await _list_13f_filings(cik_int)
+    if not filings:
+        if not _SEC_LAST_ERR["msg"]:
+            _SEC_LAST_ERR["msg"] = "최근 제출목록에 13F-HR 이 없습니다 (CIK %d)" % cik_int
+        return None
+    periods = _unique_periods(filings)
+    cur = periods[0]
+    holdings = await _fetch_13f_holdings(cik_int, cur["accession"])
+    if holdings is None:
+        return None
+
+    # 전분기 보유내역(매매 내역 계산용) - 조회 실패해도 치명적이지 않음
+    prev_holdings = None
+    prev_report = None
+    if len(periods) > 1:
+        prev = periods[1]
+        prev_report = prev.get("report_date")
+        prev_holdings = await _fetch_13f_holdings(cik_int, prev["accession"])
+
+    return {"holdings": holdings, "report_date": cur.get("report_date"),
+            "filing_date": cur.get("filing_date"), "accession": cur.get("accession"),
+            "prev_holdings": prev_holdings, "prev_report_date": prev_report}
+
+
+def _aggregate_holdings(holdings, dollars):
+    """CUSIP+옵션 기준으로 합산하고 비중을 계산해 가치 내림차순 정렬."""
+    agg = {}
+    for h in holdings:
+        key = (h["cusip"], h["put_call"])
+        if key not in agg:
+            agg[key] = {"issuer": h["issuer"], "cusip": h["cusip"],
+                        "put_call": h["put_call"], "value": 0.0, "shares": 0.0}
+        agg[key]["value"] += h["value"]
+        agg[key]["shares"] += h["shares"]
+    rows = list(agg.values())
+    total = sum(r["value"] for r in rows) or 1.0
+    for r in rows:
+        r["value_usd"] = r["value"] * (1.0 if dollars else 1000.0)
+        r["weight"] = r["value"] / total * 100.0
+    rows.sort(key=lambda r: r["value"], reverse=True)
+    return rows, total * (1.0 if dollars else 1000.0)
+
+
+def _stock_shares_by_cusip(holdings):
+    """옵션(put/call)을 제외한 주식 보유를 CUSIP 기준 수량으로 합산."""
+    m = {}
+    for h in holdings:
+        if h.get("put_call"):
+            continue
+        c = h.get("cusip")
+        if not c:
+            continue
+        if c not in m:
+            m[c] = {"issuer": h["issuer"], "cusip": c, "shares": 0.0, "value": 0.0}
+        m[c]["shares"] += h["shares"]
+        m[c]["value"] += h["value"]
+    return m
+
+
+_ACTION_ORDER = {"신규": 0, "추가": 1, "축소": 2, "청산": 3}
+
+
+def _compute_changes(cur_holdings, prev_holdings, dollars):
+    """전분기 대비 주식 매매 내역을 계산. 변동이 있는 항목만 반환."""
+    cur = _stock_shares_by_cusip(cur_holdings)
+    prev = _stock_shares_by_cusip(prev_holdings)
+    rows = []
+    for c in set(cur) | set(prev):
+        cs = cur.get(c, {}).get("shares", 0.0)
+        ps = prev.get(c, {}).get("shares", 0.0)
+        if cs == ps:
+            continue  # 변동 없음(유지)
+        issuer = (cur.get(c) or prev.get(c) or {}).get("issuer", "")
+        delta = cs - ps
+        if ps == 0 and cs > 0:
+            action = "신규"
+        elif cs == 0 and ps > 0:
+            action = "청산"
+        elif delta > 0:
+            action = "추가"
+        else:
+            action = "축소"
+        if ps > 0:
+            pct = delta / ps * 100.0
+        else:
+            pct = 100.0
+        value = cur.get(c, {}).get("value", 0.0)
+        rows.append({"issuer": issuer, "cusip": c, "prev_shares": ps,
+                     "cur_shares": cs, "delta": delta, "action": action,
+                     "pct": pct, "value_usd": value * (1.0 if dollars else 1000.0)})
+    rows.sort(key=lambda r: (_ACTION_ORDER.get(r["action"], 9), -abs(r["delta"])))
+    return rows
+
+
+# 보유종목 표(정렬/재렌더링용) 상태
+_GURU_VIEW = {"rows": None, "has_prev": False,
+              "sort_key": "value", "sort_dir": "desc"}
+
+
+def _holdings_rows(holdings, prev_holdings, dollars):
+    """옵션(put/call)을 제외한 주식 보유내역 행과 전분기 대비 변화율을 계산.
+
+    반환: (rows, total_usd). rows 각 항목은
+    {issuer, weight, value_usd, shares, change_val, change_disp}.
+    change_val 은 정렬용(신규는 +inf), change_disp 는 표시용.
+    """
+    cur = _stock_shares_by_cusip(holdings)
+    prev = _stock_shares_by_cusip(prev_holdings) if prev_holdings else {}
+    total = sum(v["value"] for v in cur.values()) or 1.0
+    mult = 1.0 if dollars else 1000.0
+    rows = []
+    for c, v in cur.items():
+        cs = v["shares"]
+        ps = prev.get(c, {}).get("shares", 0.0)
+        if not prev_holdings:
+            change_val = None
+            change_disp = "-"
+        elif ps == 0:
+            change_val = float("inf")
+            change_disp = "신규"
+        else:
+            pct = (cs - ps) / ps * 100.0
+            change_val = pct
+            change_disp = "%s%.1f%%" % ("+" if pct >= 0 else "", pct)
+        rows.append({
+            "issuer": v["issuer"], "weight": v["value"] / total * 100.0,
+            "value_usd": v["value"] * mult, "shares": cs,
+            "change_val": change_val, "change_disp": change_disp,
+        })
+    return rows, total * mult
+
+
+def _sort_holdings(rows, key, direction):
+    """지정한 열·방향으로 보유종목 행을 정렬."""
+    def keyfn(r):
+        if key == "issuer":
+            return r["issuer"].lower()
+        if key == "weight":
+            return r["weight"]
+        if key == "shares":
+            return r["shares"]
+        if key == "change":
+            v = r["change_val"]
+            return v if isinstance(v, (int, float)) else float("-inf")
+        return r["value_usd"]
+    return sorted(rows, key=keyfn, reverse=(direction == "desc"))
+
+
+def _render_holdings():
+    """현재 정렬 상태로 보유종목 표를 #guru-holdings 에 렌더링."""
+    st = _GURU_VIEW
+    box = document.querySelector("#guru-holdings")
+    if box is None:
+        return
+    rows = st.get("rows") or []
+    if not rows:
+        box.innerHTML = ('<div class="hint">보유내역을 가져오지 못했습니다. '
+                         '(최근 13F-HR 공시가 없거나 프록시 설정을 확인하세요.)</div>')
+        return
+    sorted_rows = _sort_holdings(rows, st["sort_key"], st["sort_dir"])
+
+    def ind(key):
+        if st["sort_key"] != key:
+            return ' <span class="sort-ind">↕</span>'
+        return ' <span class="sort-ind on">%s</span>' % (
+            "▼" if st["sort_dir"] == "desc" else "▲")
+
+    has_prev = st.get("has_prev")
+    html = ['<div class="table-wrap"><table class="holdings"><thead><tr>']
+    html.append('<th>#</th>')
+    html.append('<th class="sortable" data-sort="issuer">종목명%s</th>' % ind("issuer"))
+    html.append('<th class="sortable num" data-sort="weight">비중%s</th>' % ind("weight"))
+    html.append('<th class="sortable num" data-sort="value">평가액%s</th>' % ind("value"))
+    html.append('<th class="sortable num" data-sort="shares">수량%s</th>' % ind("shares"))
+    ch_head = "전분기대비" if has_prev else "전분기대비(N/A)"
+    html.append('<th class="sortable num" data-sort="change">%s%s</th>'
+                % (ch_head, ind("change")))
+    html.append('</tr></thead><tbody>')
+    for i, r in enumerate(sorted_rows, 1):
+        cv = r["change_val"]
+        ccls = ""
+        if isinstance(cv, (int, float)):
+            if cv > 0:
+                ccls = "up"
+            elif cv < 0:
+                ccls = "down"
+        html.append('<tr><td>%d</td><td>%s</td>'
+                    '<td class="num">%.2f%%</td><td class="num">%s</td>'
+                    '<td class="num">%s</td><td class="num %s">%s</td></tr>'
+                    % (i, _esc(r["issuer"]), r["weight"],
+                       _esc(fmt_large(r["value_usd"], "USD")),
+                       _esc(fmt_num(r["shares"], 0)), ccls, _esc(r["change_disp"])))
+    html.append('</tbody></table></div>')
+    box.innerHTML = "".join(html)
+    _bind_holdings_sort()
+
+
+def _make_sort_handler(key):
+    def handler(evt):
+        st = _GURU_VIEW
+        if st["sort_key"] == key:
+            st["sort_dir"] = "asc" if st["sort_dir"] == "desc" else "desc"
+        else:
+            st["sort_key"] = key
+            st["sort_dir"] = "desc"
+        _render_holdings()
+    return handler
+
+
+def _bind_holdings_sort():
+    ths = document.querySelectorAll("#guru-holdings th.sortable")
+    for i in range(ths.length):
+        th = ths.item(i)
+        _bind(th, "click", _make_sort_handler(th.getAttribute("data-sort")))
+
+
+# 매매 내역 표(정렬/재렌더링용) 상태
+_GURU_CHG = {"rows": None, "sort_key": "action", "sort_dir": "asc"}
+
+
+def _sort_changes(rows, key, direction):
+    """지정한 열·방향으로 매매 내역 행을 정렬."""
+    def keyfn(r):
+        if key == "issuer":
+            return r["issuer"].lower()
+        if key == "action":
+            return _ACTION_ORDER.get(r["action"], 9)
+        if key == "prev":
+            return r["prev_shares"]
+        if key == "cur":
+            return r["cur_shares"]
+        if key == "pct":
+            return r["pct"]
+        return r["delta"]
+    return sorted(rows, key=keyfn, reverse=(direction == "desc"))
+
+
+def _render_changes():
+    """현재 정렬 상태로 매매 내역 표를 #guru-changes 에 렌더링."""
+    st = _GURU_CHG
+    box = document.querySelector("#guru-changes")
+    if box is None:
+        return
+    rows = st.get("rows") or []
+    if not rows:
+        box.innerHTML = '<div class="hint">전분기 대비 수량 변동이 없습니다.</div>'
+        return
+    sorted_rows = _sort_changes(rows, st["sort_key"], st["sort_dir"])
+
+    def ind(key):
+        if st["sort_key"] != key:
+            return ' <span class="sort-ind">↕</span>'
+        return ' <span class="sort-ind on">%s</span>' % (
+            "▼" if st["sort_dir"] == "desc" else "▲")
+
+    html = ['<div class="table-wrap"><table class="holdings"><thead><tr>']
+    html.append('<th>#</th>')
+    html.append('<th class="sortable" data-sort="issuer">종목명%s</th>' % ind("issuer"))
+    html.append('<th class="sortable" data-sort="action">구분%s</th>' % ind("action"))
+    html.append('<th class="sortable num" data-sort="prev">이전 수량%s</th>' % ind("prev"))
+    html.append('<th class="sortable num" data-sort="cur">현재 수량%s</th>' % ind("cur"))
+    html.append('<th class="sortable num" data-sort="delta">변화%s</th>' % ind("delta"))
+    html.append('<th class="sortable num" data-sort="pct">변화율%s</th>' % ind("pct"))
+    html.append('</tr></thead><tbody>')
+    for i, c in enumerate(sorted_rows, 1):
+        buy = c["action"] in ("신규", "추가")
+        cls = "up" if buy else "down"
+        sign = "+" if c["delta"] >= 0 else ""
+        pct_txt = ("신규" if c["action"] == "신규"
+                   else ("청산" if c["action"] == "청산"
+                         else "%s%.1f%%" % (sign, c["pct"])))
+        html.append('<tr><td>%d</td><td>%s</td>'
+                    '<td class="%s">%s</td>'
+                    '<td class="num">%s</td><td class="num">%s</td>'
+                    '<td class="num %s">%s%s</td>'
+                    '<td class="num %s">%s</td></tr>'
+                    % (i, _esc(c["issuer"]), cls, _esc(c["action"]),
+                       _esc(fmt_num(c["prev_shares"], 0)),
+                       _esc(fmt_num(c["cur_shares"], 0)),
+                       cls, sign, _esc(fmt_num(c["delta"], 0)),
+                       cls, _esc(pct_txt)))
+    html.append('</tbody></table></div>')
+    box.innerHTML = "".join(html)
+    _bind_changes_sort()
+
+
+def _make_changes_sort_handler(key):
+    def handler(evt):
+        st = _GURU_CHG
+        if st["sort_key"] == key:
+            st["sort_dir"] = "asc" if st["sort_dir"] == "desc" else "desc"
+        else:
+            st["sort_key"] = key
+            st["sort_dir"] = "desc"
+        _render_changes()
+    return handler
+
+
+def _bind_changes_sort():
+    ths = document.querySelectorAll("#guru-changes th.sortable")
+    for i in range(ths.length):
+        th = ths.item(i)
+        _bind(th, "click", _make_changes_sort_handler(th.getAttribute("data-sort")))
+
+
+def render_13f(guru, data):
+    """13F 보유내역을 표로 렌더링."""
+    holdings = data.get("holdings") or []
+    prev_holdings = data.get("prev_holdings")
+    prev_report = data.get("prev_report_date") or ""
+    filing_date = data.get("filing_date") or ""
+    report_date = data.get("report_date") or ""
+
+    # 2023년 SEC 개정 이후 제출분은 가치를 '달러' 단위로 보고(이전은 '천 달러').
+    dollars = False
+    try:
+        dollars = int((filing_date or "0")[:4]) >= 2023
+    except ValueError:
+        dollars = False
+
+    # 보유종목(옵션 제외) 행 계산 및 정렬 상태 초기화
+    h_rows, total_usd = _holdings_rows(holdings, prev_holdings, dollars)
+    _GURU_VIEW["rows"] = h_rows
+    _GURU_VIEW["has_prev"] = bool(prev_holdings)
+    _GURU_VIEW["sort_key"] = "value"
+    _GURU_VIEW["sort_dir"] = "desc"
+
+    html = ['<div class="card">']
+    html.append('<div class="card-head"><div>'
+                '<span class="name">%s (%s)</span>'
+                '<span class="sym">[%s]</span></div>'
+                '<div class="price">보고 기준일 %s · 제출일 %s · 총 %d 종목(옵션 제외) · 평가액 %s</div>'
+                '</div>'
+                % (_esc(guru["ko"]), _esc(guru["name"]), _esc(guru["firm"]),
+                   _esc(report_date or "-"), _esc(filing_date or "-"),
+                   len(h_rows), _esc(fmt_large(total_usd, "USD"))))
+
+    # ── 최근 분기 매매 내역 (전분기 대비) ──
+    html.append('<div class="sec"><h3>최근 분기 매매 내역 (전분기 대비)</h3>')
+    if not prev_holdings:
+        html.append('<div class="hint">전분기 13F 공시가 없어 매매 내역을 '
+                    '계산할 수 없습니다. (아래는 현재 보유 현황입니다.)</div>')
+        _GURU_CHG["rows"] = None
+    else:
+        changes = _compute_changes(holdings, prev_holdings, dollars)
+        buys = sum(1 for c in changes if c["action"] in ("신규", "추가"))
+        sells = sum(1 for c in changes if c["action"] in ("축소", "청산"))
+        _GURU_CHG["rows"] = changes
+        _GURU_CHG["sort_key"] = "action"
+        _GURU_CHG["sort_dir"] = "asc"
+        html.append('<div class="hint">기준: %s → %s · 매수(신규·추가) %d 건 · '
+                    '매도(축소·청산) %d 건</div>'
+                    % (_esc(prev_report or "-"), _esc(report_date or "-"), buys, sells))
+        html.append('<div class="hint">열 제목을 클릭하면 오름/내림차순으로 정렬됩니다.</div>')
+        html.append('<div id="guru-changes"></div>')
+    html.append('</div>')
+
+    # ── 보유종목 (옵션 제외 · 정렬 가능) ──
+    html.append('<div class="sec"><h3>보유종목 (13F Holdings · 옵션 제외)</h3>')
+    html.append('<div class="hint">열 제목을 클릭하면 오름/내림차순으로 정렬됩니다.</div>')
+    html.append('<div id="guru-holdings"></div>')
+    html.append('</div>')
+
+    html.append('<div class="sec"><div class="hint">출처: SEC EDGAR (13F-HR) · '
+                '매매 내역은 최근 분기와 직전 분기 보유수량 차이로 산출한 것으로, '
+                '분기 중 매매 후 청산분 등은 반영되지 않습니다. '
+                '평가액은 공시 시점 종가 기준이며 최대 45일 지연된 분기 스냅샷입니다. '
+                '2023년 SEC 개정 전 공시는 천 달러 단위로 보고되어 자동 환산했습니다.'
+                '</div></div>')
+    html.append('</div>')
+    document.querySelector("#guru-result").innerHTML = "".join(html)
+    if prev_holdings:
+        _render_changes()
+    _render_holdings()
+
+
+async def show_guru(cik):
+    """대가 선택 시 13F 보유내역을 조회·표시."""
+    guru = _guru_by_cik(cik)
+    if guru is None:
+        return
+    _GURU_STATE["cik"] = cik
+    render_guru_list(_filter_gurus(document.querySelector("#guru-search").value))
+    _set_guru_status("%s 13F 조회 중..." % guru["ko"])
+    document.querySelector("#guru-result").innerHTML = (
+        '<div class="card"><div class="sec"><div class="hint">'
+        'SEC EDGAR 에서 최근 13F 공시를 불러오는 중...</div></div></div>')
+    try:
+        data = await fetch_13f_latest(cik)
+    except Exception as exc:
+        _set_guru_status("오류")
+        document.querySelector("#guru-result").innerHTML = (
+            '<div class="card"><div class="sec"><div class="hint">'
+            '조회 중 오류가 발생했습니다: %s</div></div></div>' % _esc(str(exc)))
+        return
+    if data is None:
+        _set_guru_status("실패 · 데이터 없음")
+        reason = _SEC_LAST_ERR.get("msg") or "최근 13F-HR 공시를 찾지 못했습니다."
+        document.querySelector("#guru-result").innerHTML = (
+            '<div class="card"><div class="sec">'
+            '<h3>조회 실패</h3>'
+            '<div class="hint">%s</div>'
+            '<div class="hint">HTTP 403 이면 프록시(Cloudflare Worker)가 '
+            'sec.gov 를 아직 허용하지 않는 것입니다. 수정한 '
+            'investing-proxy-worker.js 를 재배포했는지 확인하세요.</div>'
+            '</div></div>' % _esc(reason))
+        return
+    render_13f(guru, data)
+    _set_guru_status("완료 · %s" % guru["ko"])
+
+
+def _make_guru_handler(cik):
+    def handler(evt):
+        asyncio.ensure_future(show_guru(cik))
+    return handler
+
+
+def _bind_guru_items():
+    items = document.querySelectorAll("#guru-list .guru-item")
+    for i in range(items.length):
+        it = items.item(i)
+        _bind(it, "click", _make_guru_handler(it.getAttribute("data-cik")))
+
+
+def _set_guru_status(msg):
+    el = document.querySelector("#guru-status")
+    if el is not None:
+        el.textContent = msg
+
+
+
+
+# ===================== 이벤트 =====================
+
+@when("click", "#lookupBtn")
+async def on_lookup(event):
+    ticker = document.querySelector("#ticker").value.strip()
+    if not ticker:
+        window.alert("티커를 입력하세요.")
+        return
+    exchange = document.querySelector("#exchange").value.strip() or None
+    lang = document.querySelector("#lang").value
+
+    _set_busy(True)
+    _set_status("조회 중...")
+    document.querySelector("#result").innerHTML = ""
+    try:
+        kind, full_symbol, payload = await lookup(ticker, exchange, lang)
+        if kind == "notfound" or full_symbol is None:
+            _set_status("실패")
+            window.alert("'%s' 에 해당하는 심볼을 찾지 못했습니다." % ticker)
+            return
+        if kind == "nodata" or payload is None:
+            _set_status("실패")
+            window.alert("'%s' 의 데이터를 가져오지 못했습니다.\n"
+                         "티커 또는 거래소를 확인하세요." % full_symbol)
+            return
+        if kind == "etf":
+            render_holdings(full_symbol, payload["meta"],
+                            payload["holdings"], payload["report_ts"])
+            _set_status("완료 · %s (ETF)" % full_symbol)
+        else:
+            render_report(full_symbol, payload)
+            _set_status("완료 · %s (종목)" % full_symbol)
+    except InvestingApiError as exc:
+        _set_status("오류")
+        window.alert("조회 실패:\n%s" % exc)
+    except Exception as exc:
+        _set_status("오류")
+        window.alert("조회 중 오류가 발생했습니다:\n%s" % exc)
+    finally:
+        _set_busy(False)
+
+
+@when("keydown", "#ticker")
+def on_enter(event):
+    if event.key == "Enter":
+        document.querySelector("#lookupBtn").click()
+
+
+@when("click", ".tab-btn")
+def on_tab(event):
+    name = event.target.getAttribute("data-tab")
+    if not name:
+        return
+    btns = document.querySelectorAll(".tab-btn")
+    for i in range(btns.length):
+        b = btns.item(i)
+        if b.getAttribute("data-tab") == name:
+            b.classList.add("active")
+        else:
+            b.classList.remove("active")
+    panels = document.querySelectorAll(".tab-panel")
+    for i in range(panels.length):
+        p = panels.item(i)
+        if p.id == ("tab-" + name):
+            p.classList.add("active")
+        else:
+            p.classList.remove("active")
+
+
+@when("click", "#macroBtn")
+async def on_macro(event):
+    key = document.querySelector("#fredKey").value.strip()
+    if not key:
+        window.alert("FRED API 키를 입력하세요.")
+        return
+    try:
+        window.localStorage.setItem("fredApiKey", key)
+    except Exception:
+        pass
+    _macro_busy(True)
+    _set_macro_status("조회 중...")
+    document.querySelector("#macro-result").innerHTML = ""
+    try:
+        rows = await fetch_all_macro(key)
+        render_macro(rows, _MACRO_MODE.get("mode", "normal"))
+        ok = sum(1 for _, r in rows if r and r.get("value") is not None)
+        if ok == 0:
+            _set_macro_status("실패 · 데이터 없음 (API 키/프록시 확인)")
+        else:
+            _set_macro_status("완료 · %d/%d 지표" % (ok, len(rows)))
+    except InvestingApiError as exc:
+        _set_macro_status("오류")
+        window.alert("조회 실패:\n%s" % exc)
+    except Exception as exc:
+        _set_macro_status("오류")
+        window.alert("조회 중 오류가 발생했습니다:\n%s" % exc)
+    finally:
+        _macro_busy(False)
+
+
+@when("keydown", "#fredKey")
+def on_fred_enter(event):
+    if event.key == "Enter":
+        document.querySelector("#macroBtn").click()
+
+
+@when("click", ".macro-mode")
+def on_macro_mode(event):
+    mode = event.target.getAttribute("data-mode")
+    if mode not in ("normal", "custom"):
+        return
+    _MACRO_MODE["mode"] = mode
+    btns = document.querySelectorAll(".macro-mode")
+    for i in range(btns.length):
+        b = btns.item(i)
+        if b.getAttribute("data-mode") == mode:
+            b.classList.add("active")
+        else:
+            b.classList.remove("active")
+    note = document.querySelector("#cycle-note")
+    if note is not None:
+        note.style.display = "block" if mode == "custom" else "none"
+    rows = _MACRO_LAST.get("rows")
+    if rows:
+        render_macro(rows, mode)
+
+
+@when("input", "#guru-search")
+def on_guru_search(event):
+    render_guru_list(_filter_gurus(event.target.value))
+
+
+# 초기화: 조회 버튼 활성화
+document.querySelector("#lookupBtn").disabled = False
+document.querySelector("#macroBtn").disabled = False
+try:
+    _saved_key = window.localStorage.getItem("fredApiKey")
+    if _saved_key:
+        document.querySelector("#fredKey").value = _saved_key
+except Exception:
+    pass
+_set_status("준비 완료")
+_set_macro_status("준비 완료 · FRED API 키 입력 후 조회")
+
+# 대가 13F 탭: 전체 목록을 초기 표시
+render_guru_list(_filter_gurus(""))
+_set_guru_status("이름 일부를 입력해 검색하거나 아래 목록에서 선택하세요")
+
+# 원/달러 환율 · 미국 지수: 초기 1회 조회 후 60초마다 갱신
+asyncio.ensure_future(update_fxrate())
+asyncio.ensure_future(update_indices())
+
+
+def _refresh_header():
+    asyncio.ensure_future(update_fxrate())
+    asyncio.ensure_future(update_indices())
+
+
+_FX_TIMER = create_proxy(_refresh_header)
+window.setInterval(_FX_TIMER, 60000)
+</script>
+</body>
+</html>
