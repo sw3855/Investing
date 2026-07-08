@@ -181,8 +181,12 @@
   .cmp-actions { display:flex; align-items:center; gap:8px; }
   .cmp-actions .btn-compare { margin-top:0; }
   .cmp-actions button:disabled { opacity:.5; cursor:default; }
+  #addCompareBtn { padding:0 6px; font-size:11px; white-space:nowrap; }
+  #cmpClearBtn { padding:0 20px; min-width:120px; }
   .fin-table tr.cmp-group td { position:static; background:var(--bg);
     color:var(--mut); font-weight:700; text-align:left; }
+  .fin-table tr.cmp-group td .cmp-group-label { position:sticky; left:0;
+    display:inline-block; background:var(--bg); }
   .fin-table td.buy { color:var(--buy); font-weight:600; }
   .fin-table td.sell { color:var(--sell); font-weight:600; }
   .fin-table td.hold { color:var(--hold); }
@@ -397,7 +401,7 @@ FIELDS = [
 VALUATION_FIELDS = [
     "market_cap_basic",
     "price_earnings_ttm",
-    "price_sales_ratio",
+    "price_earnings_fwd",
     "price_book_fq",
     "enterprise_value_ebitda_ttm",
     "price_to_cash_f_operating_activities_ttm",
@@ -991,7 +995,7 @@ def render_report(full_symbol, payload):
         html.append('<div class="sec"><h3>평가비율 (현재)</h3><div class="grid">')
         html.append(_kv("시가총액", fmt_large(valuation.get("market_cap_basic"), cur)))
         html.append(_kv("PER (P/E · TTM)", rv("price_earnings_ttm")))
-        html.append(_kv("PSR (P/S)", rv("price_sales_ratio")))
+        html.append(_kv("Forward PER (P/E)", rv("price_earnings_fwd")))
         html.append(_kv("PBR (P/B)", rv("price_book_fq")))
         html.append(_kv("EV / EBITDA", rv("enterprise_value_ebitda_ttm")))
         html.append(_kv("P / OCF", rv("price_to_cash_f_operating_activities_ttm")))
@@ -1312,11 +1316,9 @@ def render_compare():
     h.append('<span class="name">종목 비교 (%d/%d)</span>' % (n, _COMPARE_MAX))
     h.append('<div class="cmp-actions">')
     if _LAST_STOCK.get("symbol"):
-        add_desc = (_LAST_STOCK["data"].get("description")
-                    or _LAST_STOCK["symbol"])
         h.append('<button class="btn-compare" id="addCompareBtn"%s>'
-                 '＋ 비교에 추가 (%s)</button>'
-                 % ("" if can_add else " disabled", _esc(add_desc)))
+                 '＋ 비교에 추가</button>'
+                 % ("" if can_add else " disabled"))
     h.append('<button id="cmpClearBtn"%s>전체 지우기</button>'
              % ("" if n else " disabled"))
     h.append('</div>')
@@ -1345,7 +1347,8 @@ def render_compare():
     h.append('</tr></thead><tbody>')
 
     def group(title):
-        h.append('<tr class="cmp-group"><td colspan="%d">%s</td></tr>'
+        h.append('<tr class="cmp-group"><td colspan="%d">'
+                 '<span class="cmp-group-label">%s</span></td></tr>'
                  % (n + 1, _esc(title)))
 
     def row(label, fn):
@@ -1431,7 +1434,7 @@ def render_compare():
         return fmt_large(v, c["cur"]), ""
     row("시가총액", f_mktcap)
     row("PER (P/E · TTM)", f_val("price_earnings_ttm"))
-    row("PSR (P/S)", f_val("price_sales_ratio"))
+    row("Forward PER (P/E)", f_val("price_earnings_fwd"))
     row("PBR (P/B)", f_val("price_book_fq"))
     row("EV / EBITDA", f_val("enterprise_value_ebitda_ttm"))
     row("P / OCF", f_val("price_to_cash_f_operating_activities_ttm"))
