@@ -94,6 +94,12 @@
   .fin-controls select { min-width:200px; }
   .fin-quick { color:var(--mut); font-size:13px; }
   .fin-quick button { height:26px; padding:0 8px; margin-left:4px; font-size:12px; }
+  .fin-period { display:inline-flex; border:1px solid var(--bd); border-radius:6px;
+    overflow:hidden; }
+  .fin-period button { height:28px; padding:0 14px; font-size:13px; border:0;
+    background:#fff; color:var(--mut); cursor:pointer; border-radius:0; margin:0; }
+  .fin-period button + button { border-left:1px solid var(--bd); }
+  .fin-period button.on { background:var(--pri); color:#fff; font-weight:600; }
   .fin-years { display:flex; flex-wrap:wrap; gap:4px 12px; margin-bottom:12px; }
   .fin-years label { font-size:12px; color:var(--mut); display:inline-flex;
     align-items:center; gap:3px; cursor:pointer; }
@@ -113,10 +119,16 @@
   .fin-table th, .fin-table td { padding:5px 8px; border-bottom:1px solid #eaecef;
     text-align:right; white-space:nowrap; }
   .fin-table th:first-child, .fin-table td:first-child { text-align:left;
-    position:sticky; left:0; background:#fff; }
+    position:sticky; left:0; background:#fff; z-index:1; }
   .fin-table thead th { color:var(--mut); background:var(--bg);
-    position:sticky; top:0; }
+    position:sticky; top:0; z-index:2;
+    box-shadow:inset 0 -1px 0 #d0d7de; }
+  .fin-table thead th:first-child { z-index:3; background:var(--bg); }
   .fin-table tr.sel-metric td { background:#eef3ff; font-weight:600; }
+  .fin-table tr.sel-metric td:first-child { background:#eef3ff; }
+  .fin-table th.cur-col, .fin-table td.cur-col { background:#fff8e6;
+    font-weight:600; border-left:2px solid #eac54f; }
+  .fin-table thead th.cur-col { background:#fdf1c9; color:#7a5c00; }
   @media (max-width:640px){ .grid{ grid-template-columns:1fr; } }
 
   .tabs { display:flex; gap:4px; border-bottom:2px solid var(--bd);
@@ -158,6 +170,31 @@
   table.holdings th.sortable:hover { color:#1f2328; }
   .sort-ind { color:#b0b6bd; font-size:11px; }
   .sort-ind.on { color:var(--pri); }
+
+  .btn-compare { height:28px; padding:0 12px; margin-top:8px; font-size:13px;
+    background:var(--pri); color:#fff; border:1px solid var(--pri); border-radius:6px;
+    cursor:pointer; }
+  .btn-compare:hover { filter:brightness(1.1); }
+  #compare-section .card-head { display:flex; align-items:center;
+    justify-content:space-between; gap:12px; }
+  #compare-section .card-head button { height:28px; padding:0 12px; font-size:12px; }
+  .cmp-actions { display:flex; align-items:center; gap:8px; }
+  .cmp-actions .btn-compare { margin-top:0; }
+  .cmp-actions button:disabled { opacity:.5; cursor:default; }
+  .fin-table tr.cmp-group td { position:static; background:var(--bg);
+    color:var(--mut); font-weight:700; text-align:left; }
+  .fin-table td.buy { color:var(--buy); font-weight:600; }
+  .fin-table td.sell { color:var(--sell); font-weight:600; }
+  .fin-table td.hold { color:var(--hold); }
+  .fin-table td.up { color:var(--buy); }
+  .fin-table td.down { color:var(--sell); }
+  .cmp-remove { height:22px; font-size:11px; margin-top:4px; padding:0 6px;
+    border:1px solid var(--bd); border-radius:4px; background:var(--bg); cursor:pointer; }
+  .cmp-remove:hover { background:#ffe9e9; border-color:var(--sell); color:var(--sell); }
+  .cmp-detail { height:22px; font-size:11px; margin-top:4px; margin-right:4px;
+    padding:0 6px; border:1px solid var(--pri); border-radius:4px;
+    background:var(--bg); color:var(--pri); cursor:pointer; }
+  .cmp-detail:hover { background:#eef3ff; }
 </style>
 </head>
 <body>
@@ -207,6 +244,7 @@
       </div>
     </fieldset>
 
+    <div id="compare-section"></div>
     <div id="result"></div>
   </div>
 
@@ -353,11 +391,12 @@ FIELDS = [
 
 # 현재 시점 평가비율(밸류에이션) 지표 - Investing는 과거 연도별 배열을 제공하지 않는다.
 VALUATION_FIELDS = [
+    "market_cap_basic",
     "price_earnings_ttm",
     "price_sales_ratio",
     "price_book_fq",
     "enterprise_value_ebitda_ttm",
-    "price_free_cash_flow_ttm",
+    "price_to_cash_f_operating_activities_ttm",
     "price_earnings_growth_ttm",
     "dividends_yield_current",
 ]
@@ -374,6 +413,26 @@ FIN_HISTORY_FIELDS = [
     "dps_common_stock_prim_issue_fy_h",
     "total_assets_fy_h",
     "total_debt_fy_h",
+    # 현재값(TTM/최근분기) - 올해 진행 중인 실적 확인용
+    "total_revenue_ttm",
+    "gross_profit_ttm",
+    "net_income_ttm",
+    "ebitda_ttm",
+    "free_cash_flow_ttm",
+    "earnings_per_share_basic_ttm",
+    "dps_common_stock_prim_issue_ttm",
+    "total_assets_fq",
+    "total_debt_fq",
+    # 분기별 히스토리(_fq_h 접미사) - 분기 지표 표시용
+    "total_revenue_fq_h",
+    "gross_profit_fq_h",
+    "net_income_fq_h",
+    "ebitda_fq_h",
+    "free_cash_flow_fq_h",
+    "earnings_per_share_diluted_fq_h",
+    "dps_common_stock_prim_issue_fq_h",
+    "total_assets_fq_h",
+    "total_debt_fq_h",
 ]
 
 # 펀더멘털(보고 통화)로 제공되는 금액 필드 - 거래소 통화로 환산 대상
@@ -390,6 +449,16 @@ FUNDAMENTAL_HISTORY_MONEY_FIELDS = [
     "total_revenue_fy_h", "gross_profit_fy_h", "net_income_fy_h",
     "ebitda_fy_h", "free_cash_flow_fy_h", "earnings_per_share_basic_fy_h",
     "dps_common_stock_prim_issue_fy_h", "total_assets_fy_h", "total_debt_fy_h",
+    "total_revenue_fq_h", "gross_profit_fq_h", "net_income_fq_h",
+    "ebitda_fq_h", "free_cash_flow_fq_h", "earnings_per_share_diluted_fq_h",
+    "dps_common_stock_prim_issue_fq_h", "total_assets_fq_h", "total_debt_fq_h",
+]
+
+# 현재값(TTM/최근분기) 중 금액(보고 통화) 스칼라 필드 - 환산 대상
+FUNDAMENTAL_CURRENT_MONEY_FIELDS = [
+    "total_revenue_ttm", "gross_profit_ttm", "net_income_ttm",
+    "ebitda_ttm", "free_cash_flow_ttm", "earnings_per_share_basic_ttm",
+    "dps_common_stock_prim_issue_ttm", "total_assets_fq", "total_debt_fq",
 ]
 
 
@@ -593,6 +662,10 @@ def _convert_fundamentals(data, financials, rate):
                 financials[key] = [
                     x * rate if isinstance(x, (int, float)) else x for x in arr
                 ]
+        for key in FUNDAMENTAL_CURRENT_MONEY_FIELDS:
+            v = financials.get(key)
+            if isinstance(v, (int, float)):
+                financials[key] = v * rate
 
 
 async def resolve_symbol(ticker, exchange=None, lang="en"):
@@ -787,6 +860,12 @@ def _upside(target, close):
     return "%+.2f%%" % pct, cls
 
 
+# 비교 기능 상태: 최대 4 종목까지 추천 등급·목표주가·실적추정치·평가비율 비교
+_COMPARE_MAX = 4
+_COMPARE = []   # [{"symbol", "data", "valuation", "cur"}]
+_LAST_STOCK = {"symbol": None, "data": None, "valuation": None, "cur": None}
+
+
 def render_report(full_symbol, payload):
     if isinstance(payload, dict) and "forecast" in payload:
         data = payload.get("forecast") or {}
@@ -802,6 +881,12 @@ def render_report(full_symbol, payload):
     cur = data.get("currency") or ""
     desc = data.get("description") or full_symbol
     close = data.get("close")
+
+    # 비교 기능용: 마지막으로 조회한 종목 정보 저장
+    _LAST_STOCK["symbol"] = full_symbol
+    _LAST_STOCK["data"] = data
+    _LAST_STOCK["valuation"] = valuation
+    _LAST_STOCK["cur"] = cur
 
     mark = data.get("recommendation_mark")
     total = data.get("recommendation_total")
@@ -894,11 +979,12 @@ def render_report(full_symbol, payload):
             v = valuation.get(key)
             return "%s%s" % (fmt_num(v), suffix) if v is not None else "-"
         html.append('<div class="sec"><h3>평가비율 (현재)</h3><div class="grid">')
+        html.append(_kv("시가총액", fmt_large(valuation.get("market_cap_basic"), cur)))
         html.append(_kv("PER (P/E · TTM)", rv("price_earnings_ttm")))
         html.append(_kv("PSR (P/S)", rv("price_sales_ratio")))
         html.append(_kv("PBR (P/B)", rv("price_book_fq")))
         html.append(_kv("EV / EBITDA", rv("enterprise_value_ebitda_ttm")))
-        html.append(_kv("P / FCF", rv("price_free_cash_flow_ttm")))
+        html.append(_kv("P / OCF", rv("price_to_cash_f_operating_activities_ttm")))
         html.append(_kv("PEG", rv("price_earnings_growth_ttm", "")))
         html.append(_kv("배당수익률", rv("dividends_yield_current", " %")))
         html.append('</div><div class="hint">Investing 가 과거 연도별 평가비율은 '
@@ -918,6 +1004,218 @@ def render_report(full_symbol, payload):
 
     document.querySelector("#result").innerHTML = "".join(html)
     init_financials(full_symbol, financials, cur)
+    render_compare()
+
+
+def _on_add_compare(event):
+    sym = _LAST_STOCK.get("symbol")
+    if not sym or _LAST_STOCK.get("data") is None:
+        window.alert("먼저 종목을 조회하세요.")
+        return
+    for c in _COMPARE:
+        if c["symbol"] == sym:
+            window.alert("이미 비교 목록에 있는 종목입니다.")
+            return
+    if len(_COMPARE) >= _COMPARE_MAX:
+        window.alert("최대 %d 종목까지 비교할 수 있습니다." % _COMPARE_MAX)
+        return
+    _COMPARE.append({
+        "symbol": sym,
+        "data": _LAST_STOCK["data"],
+        "valuation": _LAST_STOCK["valuation"],
+        "cur": _LAST_STOCK["cur"],
+    })
+    render_compare()
+
+
+def _on_clear_compare(event):
+    _COMPARE.clear()
+    render_compare()
+
+
+def _make_remove_handler(sym):
+    def handler(event):
+        for i in range(len(_COMPARE)):
+            if _COMPARE[i]["symbol"] == sym:
+                _COMPARE.pop(i)
+                break
+        render_compare()
+    return handler
+
+
+def _make_detail_handler(sym):
+    def handler(event):
+        # 선택한 종목의 심볼을 조회 입력창에 넣고 조회를 실행한다.
+        document.querySelector("#ticker").value = sym
+        document.querySelector("#exchange").value = ""
+        document.querySelector("#lookupBtn").click()
+        try:
+            document.querySelector("#tab-stock").scrollIntoView()
+        except Exception:
+            pass
+    return handler
+
+
+def render_compare():
+    """비교 목록에 담긴 종목들을 항목별로 나란히 비교 표시."""
+    box = document.querySelector("#compare-section")
+    if box is None:
+        return
+    # 조회한 종목도 없고 비교 목록도 비어 있으면 표시하지 않는다.
+    if not _COMPARE and not _LAST_STOCK.get("symbol"):
+        box.innerHTML = ""
+        return
+
+    n = len(_COMPARE)
+    can_add = bool(_LAST_STOCK.get("symbol")) and n < _COMPARE_MAX
+    h = []
+    h.append('<div class="card">')
+    h.append('<div class="card-head">')
+    h.append('<span class="name">종목 비교 (%d/%d)</span>' % (n, _COMPARE_MAX))
+    h.append('<div class="cmp-actions">')
+    if _LAST_STOCK.get("symbol"):
+        add_desc = (_LAST_STOCK["data"].get("description")
+                    or _LAST_STOCK["symbol"])
+        h.append('<button class="btn-compare" id="addCompareBtn"%s>'
+                 '＋ 비교에 추가 (%s)</button>'
+                 % ("" if can_add else " disabled", _esc(add_desc)))
+    h.append('<button id="cmpClearBtn"%s>전체 지우기</button>'
+             % ("" if n else " disabled"))
+    h.append('</div>')
+    h.append('</div>')
+
+    if not _COMPARE:
+        h.append('<div class="sec"><div class="hint">비교할 종목이 없습니다. '
+                 '조회한 종목을 ＋ 비교에 추가 버튼으로 담아보세요.</div></div>')
+        h.append('</div>')
+        box.innerHTML = "".join(h)
+        _bind(document.querySelector("#addCompareBtn"), "click", _on_add_compare)
+        return
+
+    h.append('<div class="sec"><div class="fin-table-wrap"><table class="fin-table">')
+
+    # 헤더: 종목명 + 제거 버튼
+    h.append('<thead><tr><th>항목</th>')
+    for c in _COMPARE:
+        desc = c["data"].get("description") or c["symbol"]
+        h.append('<th>%s<br>'
+                 '<span style="font-weight:400;color:#57606a">[%s]</span><br>'
+                 '<button class="cmp-detail" data-sym="%s">지표 보기</button>'
+                 '<button class="cmp-remove" data-sym="%s">제거</button></th>'
+                 % (_esc(desc), _esc(c["symbol"]), _esc(c["symbol"]),
+                    _esc(c["symbol"])))
+    h.append('</tr></thead><tbody>')
+
+    def group(title):
+        h.append('<tr class="cmp-group"><td colspan="%d">%s</td></tr>'
+                 % (n + 1, _esc(title)))
+
+    def row(label, fn):
+        h.append('<tr><td>%s</td>' % _esc(label))
+        for c in _COMPARE:
+            txt, cls = fn(c)
+            h.append('<td class="%s">%s</td>' % (cls, _esc(txt)))
+        h.append('</tr>')
+
+    def _int_or_dash(v):
+        return str(int(v)) if v is not None else "-"
+
+    # --- 애널리스트 추천 등급 ---
+    group("애널리스트 추천 등급")
+
+    def f_rating(c):
+        label, rcls = rating_label(c["data"].get("recommendation_mark"))
+        return label, rcls
+    row("등급", f_rating)
+    row("mark", lambda c: (fmt_num(c["data"].get("recommendation_mark")), ""))
+    row("애널리스트 수",
+        lambda c: (_int_or_dash(c["data"].get("recommendation_total")), ""))
+
+    def f_dist(c):
+        d = c["data"]
+        return ("%s / %s / %s" % (_int_or_dash(d.get("recommendation_buy")),
+                                  _int_or_dash(d.get("recommendation_hold")),
+                                  _int_or_dash(d.get("recommendation_sell"))), "")
+    row("매수 / 중립 / 매도", f_dist)
+
+    # --- 목표 주가 ---
+    group("목표 주가")
+    row("현재가",
+        lambda c: ("%s %s" % (fmt_num(c["data"].get("close")), c["cur"]), ""))
+
+    def f_target(key):
+        def fn(c):
+            d = c["data"]
+            close = d.get("close")
+            v = d.get(key)
+            up_txt, up_cls = _upside(v, close)
+            s = "%s %s" % (fmt_num(v), c["cur"])
+            if up_txt:
+                s += " (%s)" % up_txt
+            return s, up_cls
+        return fn
+    row("최고가", f_target("price_target_high"))
+    row("평균가", f_target("price_target_average"))
+    row("최저가", f_target("price_target_low"))
+
+    # --- 실적 추정치 ---
+    group("실적 추정치")
+
+    def f_eps(key):
+        return lambda c: ("%s %s" % (fmt_num(c["data"].get(key)), c["cur"]), "")
+    row("EPS (최근 TTM)", f_eps("earnings_per_share_basic_ttm"))
+    row("EPS 전망 (다음 분기)", f_eps("earnings_per_share_forecast_next_fq"))
+    row("EPS 전망 (다음 회계연도)", f_eps("earnings_per_share_forecast_next_fy"))
+
+    def f_rev(key):
+        return lambda c: (fmt_large(c["data"].get(key), c["cur"]), "")
+    row("매출 (최근 TTM)", f_rev("total_revenue"))
+    row("매출 전망 (다음 분기)", f_rev("revenue_forecast_next_fq"))
+    row("매출 전망 (다음 회계연도)", f_rev("revenue_forecast_next_fy"))
+    row("다음 실적 발표 예정일",
+        lambda c: (fmt_date(c["data"].get("earnings_release_next_date")), ""))
+
+    # --- 평가비율 (현재) ---
+    group("평가비율 (현재)")
+
+    def f_val(key, suffix=" 배"):
+        def fn(c):
+            val = c.get("valuation")
+            if not val:
+                return "-", ""
+            v = val.get(key)
+            return ("%s%s" % (fmt_num(v), suffix) if v is not None else "-"), ""
+        return fn
+
+    def f_mktcap(c):
+        val = c.get("valuation")
+        v = val.get("market_cap_basic") if val else None
+        return fmt_large(v, c["cur"]), ""
+    row("시가총액", f_mktcap)
+    row("PER (P/E · TTM)", f_val("price_earnings_ttm"))
+    row("PSR (P/S)", f_val("price_sales_ratio"))
+    row("PBR (P/B)", f_val("price_book_fq"))
+    row("EV / EBITDA", f_val("enterprise_value_ebitda_ttm"))
+    row("P / OCF", f_val("price_to_cash_f_operating_activities_ttm"))
+    row("PEG", f_val("price_earnings_growth_ttm", ""))
+    row("배당수익률", f_val("dividends_yield_current", " %"))
+
+    h.append('</tbody></table></div>')
+    h.append('<div class="hint">통화가 다른 종목은 각 종목의 표시 통화 기준입니다. '
+             '＋ 비교에 추가 버튼으로 최대 %d 종목까지 담을 수 있습니다.</div>'
+             % _COMPARE_MAX)
+    h.append('</div></div>')
+    box.innerHTML = "".join(h)
+    _bind(document.querySelector("#addCompareBtn"), "click", _on_add_compare)
+    _bind(document.querySelector("#cmpClearBtn"), "click", _on_clear_compare)
+    btns = document.querySelectorAll(".cmp-remove")
+    for i in range(btns.length):
+        b = btns.item(i)
+        _bind(b, "click", _make_remove_handler(b.getAttribute("data-sym")))
+    dbtns = document.querySelectorAll(".cmp-detail")
+    for i in range(dbtns.length):
+        b = dbtns.item(i)
+        _bind(b, "click", _make_detail_handler(b.getAttribute("data-sym")))
 
 
 def render_holdings(full_symbol, meta, holdings, report_ts):
@@ -1004,27 +1302,84 @@ def _bind(el, event, handler):
     el.addEventListener(event, proxy)
 
 
-def _build_financial_metrics(fin):
-    """재무 히스토리 배열에서 연도별 지표 목록을 만든다. (years, metrics) 반환.
+def _quarter_labels(fin, n):
+    """분기 기간 라벨(예: '2025 Q4')을 유도한다. 연대순(과거→최신) 배열 반환.
 
+    TradingView 는 분기 기간 라벨을 제공하지 않으므로, 최신 회계연도와
+    '최근 4개 분기 매출 합계 ≈ 최신 연간 매출' 관계로 최신 분기 위치를 추정한다.
+    """
+    fy_h = fin.get("fiscal_period_fy_h") or []
+    latest_fy = None
+    if fy_h:
+        try:
+            latest_fy = int(fy_h[0])
+        except (ValueError, TypeError):
+            latest_fy = None
+    if latest_fy is None:
+        # 회계연도 정보가 없으면 최신부터 역순 번호를 라벨로 사용
+        return list(reversed(["P%d" % (n - i) for i in range(n)]))
+
+    q_rev = fin.get("total_revenue_fq_h") or []
+    ann_rev = fin.get("total_revenue_fy_h") or []
+    latest_ann_rev = ann_rev[0] if ann_rev else None
+
+    off = 0  # 최신 회계연도 이후로 이미 발표된 분기 수(0~3)
+    if latest_ann_rev:
+        best = None
+        for o in range(4):
+            win = q_rev[o:o + 4]
+            if len(win) < 4 or any(x is None for x in win):
+                continue
+            d = abs(sum(win) - latest_ann_rev)
+            if best is None or d < best:
+                best, off = d, o
+
+    if off > 0:
+        year, q = latest_fy + 1, off
+    else:
+        year, q = latest_fy, 4
+
+    newest_first = []
+    for _ in range(n):
+        newest_first.append("%d Q%d" % (year, q))
+        q -= 1
+        if q == 0:
+            q, year = 4, year - 1
+    return list(reversed(newest_first))
+
+
+def _build_financial_metrics(fin, mode="annual"):
+    """재무 히스토리 배열에서 지표 목록을 만든다. (periods, metrics) 반환.
+
+    mode="annual"  → 연도별(_fy_h), mode="quarterly" → 분기별(_fq_h).
     배열은 최신→과거 순이므로 뒤집어 과거→최신(연대순)으로 정렬한다.
     """
-    years = list(reversed(fin.get("fiscal_period_fy_h") or []))
-    n = len(years)
+    quarterly = mode == "quarterly"
+    sfx = "fq_h" if quarterly else "fy_h"
+    eps_key = ("earnings_per_share_diluted_" + sfx if quarterly
+               else "earnings_per_share_basic_fy_h")
+    lag = 4 if quarterly else 1  # 성장률: 분기는 전년동기(YoY), 연간은 전년
+
+    if quarterly:
+        n = len(fin.get("total_revenue_fq_h") or [])
+        years = _quarter_labels(fin, n)
+    else:
+        years = list(reversed(fin.get("fiscal_period_fy_h") or []))
+        n = len(years)
 
     def arr(key):
         v = list(reversed(fin.get(key) or []))
         return [v[i] if i < len(v) else None for i in range(n)]
 
-    rev = arr("total_revenue_fy_h")
-    gp = arr("gross_profit_fy_h")
-    ni = arr("net_income_fy_h")
-    ebitda = arr("ebitda_fy_h")
-    fcf = arr("free_cash_flow_fy_h")
-    eps = arr("earnings_per_share_basic_fy_h")
-    dps = arr("dps_common_stock_prim_issue_fy_h")
-    assets = arr("total_assets_fy_h")
-    debt = arr("total_debt_fy_h")
+    rev = arr("total_revenue_" + sfx)
+    gp = arr("gross_profit_" + sfx)
+    ni = arr("net_income_" + sfx)
+    ebitda = arr("ebitda_" + sfx)
+    fcf = arr("free_cash_flow_" + sfx)
+    eps = arr(eps_key)
+    dps = arr("dps_common_stock_prim_issue_" + sfx)
+    assets = arr("total_assets_" + sfx)
+    debt = arr("total_debt_" + sfx)
 
     def ratio(a, b, scale=1.0):
         out = []
@@ -1036,22 +1391,23 @@ def _build_financial_metrics(fin):
         return out
 
     def growth(a):
-        out = [None]
-        for i in range(1, len(a)):
-            p, c = a[i - 1], a[i]
+        out = [None] * min(lag, len(a))
+        for i in range(lag, len(a)):
+            p, c = a[i - lag], a[i]
             if p is None or c is None or p == 0:
                 out.append(None)
             else:
                 out.append((c - p) / abs(p) * 100.0)
         return out
 
+    eps_label = "EPS (희석)" if quarterly else "EPS (기본)"
     metrics = [
         {"key": "revenue", "label": "매출 (Revenue)", "kind": "money", "values": rev},
         {"key": "net_income", "label": "순이익 (Net Income)", "kind": "money", "values": ni},
         {"key": "gross_profit", "label": "매출총이익 (Gross Profit)", "kind": "money", "values": gp},
         {"key": "ebitda", "label": "EBITDA", "kind": "money", "values": ebitda},
         {"key": "fcf", "label": "잉여현금흐름 (FCF)", "kind": "money", "values": fcf},
-        {"key": "eps", "label": "EPS (기본)", "kind": "cur", "values": eps},
+        {"key": "eps", "label": eps_label, "kind": "cur", "values": eps},
         {"key": "dps", "label": "주당배당금 (DPS)", "kind": "cur", "values": dps},
         {"key": "assets", "label": "총자산 (Total Assets)", "kind": "money", "values": assets},
         {"key": "debt", "label": "총부채 (Total Debt)", "kind": "money", "values": debt},
@@ -1063,6 +1419,47 @@ def _build_financial_metrics(fin):
         {"key": "rev_growth", "label": "매출성장률 YoY (%)", "kind": "pct", "values": growth(rev)},
         {"key": "ni_growth", "label": "순이익성장률 YoY (%)", "kind": "pct", "values": growth(ni)},
     ]
+
+    # 현재값(TTM/최근분기) - 올해 진행 중인 실적 확인용 (모드 공통)
+    rev_c = fin.get("total_revenue_ttm")
+    gp_c = fin.get("gross_profit_ttm")
+    ni_c = fin.get("net_income_ttm")
+    ebitda_c = fin.get("ebitda_ttm")
+    fcf_c = fin.get("free_cash_flow_ttm")
+    eps_c = fin.get("earnings_per_share_basic_ttm")
+    dps_c = fin.get("dps_common_stock_prim_issue_ttm")
+    assets_c = fin.get("total_assets_fq")
+    debt_c = fin.get("total_debt_fq")
+
+    def rc(a, b, scale=1.0):
+        if a is None or b is None or b == 0:
+            return None
+        return a / b * scale
+
+    # 현재값 성장률은 모드와 무관하게 TTM 대비 최신 연간 실적으로 계산
+    ann_rev = list(reversed(fin.get("total_revenue_fy_h") or []))
+    ann_ni = list(reversed(fin.get("net_income_fy_h") or []))
+
+    def gc(cur_val, series):
+        prev = series[-1] if series else None
+        if cur_val is None or prev is None or prev == 0:
+            return None
+        return (cur_val - prev) / abs(prev) * 100.0
+
+    current = {
+        "revenue": rev_c, "net_income": ni_c, "gross_profit": gp_c,
+        "ebitda": ebitda_c, "fcf": fcf_c, "eps": eps_c, "dps": dps_c,
+        "assets": assets_c, "debt": debt_c,
+        "gross_margin": rc(gp_c, rev_c, 100.0),
+        "net_margin": rc(ni_c, rev_c, 100.0),
+        "ebitda_margin": rc(ebitda_c, rev_c, 100.0),
+        "fcf_margin": rc(fcf_c, rev_c, 100.0),
+        "debt_assets": rc(debt_c, assets_c, 100.0),
+        "rev_growth": gc(rev_c, ann_rev),
+        "ni_growth": gc(ni_c, ann_ni),
+    }
+    for m in metrics:
+        m["current"] = current.get(m["key"])
     return years, metrics
 
 
@@ -1103,6 +1500,9 @@ def _fin_chart_svg(metric, sel_years, cur):
     years = _FIN_STATE.get("years", [])
     vmap = dict(zip(years, metric["values"]))
     data = [(y, vmap.get(y)) for y in sel_years]
+    cur_val = metric.get("current")
+    if cur_val is not None and _FIN_STATE.get("period") != "quarterly":
+        data.append(("현재", cur_val))
     vals = [v for _, v in data if v is not None]
     if not sel_years or not vals:
         return '<div class="hint">차트를 표시할 데이터가 없습니다. (연도를 선택하세요)</div>'
@@ -1180,13 +1580,16 @@ def _fin_chart_svg(metric, sel_years, cur):
 
 def _fin_table(metrics, sel_years, cur):
     if not sel_years:
-        return '<div class="hint">표시할 연도를 선택하세요.</div>'
+        return '<div class="hint">표시할 기간을 선택하세요.</div>'
     years = _FIN_STATE.get("years", [])
+    show_cur = _FIN_STATE.get("period") != "quarterly"
     idx = {y: i for i, y in enumerate(years)}
     html = ['<div class="fin-table-wrap"><table class="fin-table"><thead><tr>'
             '<th>지표</th>']
     for y in sel_years:
         html.append('<th>%s</th>' % _esc(str(y)))
+    if show_cur:
+        html.append('<th class="cur-col">현재 (TTM)</th>')
     html.append('</tr></thead><tbody>')
     for m in metrics:
         rowcls = ' class="sel-metric"' if m["key"] == _FIN_STATE.get("metric") else ''
@@ -1194,43 +1597,50 @@ def _fin_table(metrics, sel_years, cur):
         for y in sel_years:
             v = m["values"][idx[y]] if y in idx else None
             html.append('<td>%s</td>' % _esc(_metric_cell_fmt(m["kind"], v, cur)))
+        if show_cur:
+            cv = m.get("current")
+            html.append('<td class="cur-col">%s</td>'
+                        % _esc(_metric_cell_fmt(m["kind"], cv, cur)))
         html.append('</tr>')
     html.append('</tbody></table></div>')
     return "".join(html)
 
 
 def refresh_financials():
-    """현재 상태(_FIN_STATE)로 연도별 지표 섹션 전체를 다시 그리고 이벤트를 바인딩."""
+    """현재 상태(_FIN_STATE)로 재무 지표 섹션 전체를 다시 그리고 이벤트를 바인딩."""
     st = _FIN_STATE
     years = st.get("years", [])
     metrics = st.get("metrics", [])
     sel = st.get("sel_years", set())
     cur = st.get("currency", "")
+    period = st.get("period", "annual")
+    quarterly = period == "quarterly"
     sel_years = [y for y in years if y in sel]  # 연대순
     metric = _get_metric(st.get("metric"))
 
-    html = ['<div class="card"><div class="sec"><h3>연도별 지표</h3>']
+    title = "분기별 지표" if quarterly else "연도별 지표"
+    html = ['<div class="card"><div class="sec"><h3>%s</h3>' % title]
 
-    # 컨트롤: 지표 선택 + 연도 빠른선택
+    # 컨트롤: 연간/분기 전환 + 지표 선택 + 기간 빠른선택
     html.append('<div class="fin-controls">')
+    if st.get("has_quarterly"):
+        html.append('<span class="fin-period">')
+        html.append('<button type="button" data-fp="annual" class="%s">연간</button>'
+                    % ("on" if not quarterly else ""))
+        html.append('<button type="button" data-fp="quarterly" class="%s">분기</button>'
+                    % ("on" if quarterly else ""))
+        html.append('</span>')
     html.append('<label>지표: <select id="fin-metric">')
     for m in metrics:
         sel_attr = ' selected' if m["key"] == st.get("metric") else ''
         html.append('<option value="%s"%s>%s</option>'
                     % (m["key"], sel_attr, _esc(m["label"])))
     html.append('</select></label>')
-    html.append('<span class="fin-quick">표시 연도: '
+    qlabel = "표시 분기" if quarterly else "표시 연도"
+    html.append('<span class="fin-quick">%s: '
                 '<button type="button" data-yq="5">최근5</button>'
                 '<button type="button" data-yq="10">최근10</button>'
-                '<button type="button" data-yq="all">전체</button></span>')
-    html.append('</div>')
-
-    # 연도 체크박스
-    html.append('<div class="fin-years">')
-    for y in years:
-        chk = ' checked' if y in sel else ''
-        html.append('<label><input type="checkbox" class="fin-year" value="%s"%s>%s</label>'
-                    % (y, chk, y))
+                '<button type="button" data-yq="all">전체</button></span>' % qlabel)
     html.append('</div>')
 
     # 차트(막대 + 꺾은선)
@@ -1239,14 +1649,19 @@ def refresh_financials():
 
     # 표
     html.append(_fin_table(metrics, sel_years, cur))
-    html.append('<div class="hint">출처: Investing · 연도별 재무 데이터에서 '
-                '계산한 지표입니다. 선택한 지표는 표에서 강조됩니다.</div>')
+    note = ("출처: Investing · 분기별 재무 데이터에서 계산한 지표입니다. "
+            "성장률은 전년동기(YoY) 기준이며, 분기 기간 라벨은 매출 기준으로 "
+            "추정한 값입니다."
+            if quarterly else
+            "출처: Investing · 연도별 재무 데이터에서 계산한 지표입니다. "
+            "선택한 지표는 표에서 강조됩니다.")
+    html.append('<div class="hint">%s</div>' % note)
     html.append('</div></div>')
 
     document.querySelector("#fin-section").innerHTML = "".join(html)
     _bind_financials()
 
-    # 표의 가로 스크롤을 우측 끝(최신 연도)으로 이동
+    # 표의 가로 스크롤을 우측 끝(최신 기간)으로 이동
     wrap = document.querySelector("#fin-section .fin-table-wrap")
     if wrap is not None:
         wrap.scrollLeft = wrap.scrollWidth
@@ -1254,12 +1669,12 @@ def refresh_financials():
 
 def _bind_financials():
     _bind(document.querySelector("#fin-metric"), "change", _on_metric_change)
-    boxes = document.querySelectorAll(".fin-year")
-    for i in range(boxes.length):
-        _bind(boxes.item(i), "change", _on_year_toggle)
     quick = document.querySelectorAll("[data-yq]")
     for i in range(quick.length):
         _bind(quick.item(i), "click", _on_year_quick)
+    fp = document.querySelectorAll("[data-fp]")
+    for i in range(fp.length):
+        _bind(fp.item(i), "click", _on_period_change)
 
 
 def _on_metric_change(evt):
@@ -1267,17 +1682,10 @@ def _on_metric_change(evt):
     refresh_financials()
 
 
-def _on_year_toggle(evt):
-    cb = evt.target
-    try:
-        y = int(cb.value)
-    except ValueError:
-        return
-    if cb.checked:
-        _FIN_STATE["sel_years"].add(y)
-    else:
-        _FIN_STATE["sel_years"].discard(y)
-    refresh_financials()
+def _on_period_change(evt):
+    period = evt.target.getAttribute("data-fp")
+    if period and period != _FIN_STATE.get("period"):
+        _apply_fin_period(period)
 
 
 def _on_year_quick(evt):
@@ -1294,27 +1702,45 @@ def _on_year_quick(evt):
 
 
 def init_financials(full_symbol, fin, currency):
-    """연도별 지표 섹션을 초기화한다. 데이터가 없으면 안내 문구를 표시."""
+    """연도별/분기별 지표 섹션을 초기화한다. 데이터가 없으면 안내 문구를 표시."""
     container = document.querySelector("#fin-section")
     if container is None:
         return
     if not fin or not (fin.get("fiscal_period_fy_h")):
         container.innerHTML = ('<div class="card"><div class="sec">'
-                               '<h3>연도별 지표</h3><div class="hint">'
-                               '이 종목은 연도별 재무 데이터를 제공하지 않습니다.'
+                               '<h3>재무 지표</h3><div class="hint">'
+                               '이 종목은 재무 데이터를 제공하지 않습니다.'
                                '</div></div></div>')
         return
-    years, metrics = _build_financial_metrics(fin)
-    recent = years[-10:] if len(years) > 10 else years
     _FIN_STATE.clear()
     _FIN_STATE.update({
         "symbol": full_symbol,
         "currency": currency or "",
-        "years": years,
-        "metrics": metrics,
-        "sel_years": set(recent),
-        "metric": metrics[0]["key"] if metrics else None,
+        "fin": fin,
+        "period": "annual",
+        "metric": None,
+        # 분기별 데이터 제공 여부(라벨 유도 가능 여부와 무관하게 매출 배열 존재)
+        "has_quarterly": bool(fin.get("total_revenue_fq_h")),
     })
+    _apply_fin_period("annual")
+
+
+def _apply_fin_period(period):
+    """연간/분기 모드를 적용해 지표·기간·선택기간을 재계산한다."""
+    st = _FIN_STATE
+    fin = st.get("fin")
+    if not fin:
+        return
+    years, metrics = _build_financial_metrics(fin, period)
+    recent = years[-10:] if len(years) > 10 else years
+    keep = st.get("metric")
+    if not any(m["key"] == keep for m in metrics):
+        keep = metrics[0]["key"] if metrics else None
+    st["period"] = period
+    st["years"] = years
+    st["metrics"] = metrics
+    st["sel_years"] = set(recent)
+    st["metric"] = keep
     refresh_financials()
 
 
