@@ -195,6 +195,10 @@
     padding:0 6px; border:1px solid var(--pri); border-radius:4px;
     background:var(--bg); color:var(--pri); cursor:pointer; }
   .cmp-detail:hover { background:#eef3ff; }
+  .cmp-legend { display:flex; flex-wrap:wrap; gap:6px 16px; margin:2px 0 10px;
+    font-size:13px; color:#1f2328; }
+  .cmp-leg { display:inline-flex; align-items:center; gap:6px; }
+  .cmp-leg i { width:14px; height:3px; border-radius:2px; display:inline-block; }
 </style>
 </head>
 <body>
@@ -862,8 +866,13 @@ def _upside(target, close):
 
 # 비교 기능 상태: 최대 4 종목까지 추천 등급·목표주가·실적추정치·평가비율 비교
 _COMPARE_MAX = 4
-_COMPARE = []   # [{"symbol", "data", "valuation", "cur"}]
-_LAST_STOCK = {"symbol": None, "data": None, "valuation": None, "cur": None}
+_COMPARE = []   # [{"symbol", "data", "valuation", "cur", "financials"}]
+_LAST_STOCK = {"symbol": None, "data": None, "valuation": None,
+               "cur": None, "financials": None}
+
+# 비교 차트 상태: 선택 지표를 종목별 꺾은선으로 겹쳐 그린다.
+_CMP_CHART = {"metric": "revenue", "period": "annual"}
+_CMP_COLORS = ["#2962ff", "#f23645", "#089981", "#ff9800"]
 
 
 def render_report(full_symbol, payload):
@@ -887,6 +896,7 @@ def render_report(full_symbol, payload):
     _LAST_STOCK["data"] = data
     _LAST_STOCK["valuation"] = valuation
     _LAST_STOCK["cur"] = cur
+    _LAST_STOCK["financials"] = financials
 
     mark = data.get("recommendation_mark")
     total = data.get("recommendation_total")
@@ -1024,6 +1034,7 @@ def _on_add_compare(event):
         "data": _LAST_STOCK["data"],
         "valuation": _LAST_STOCK["valuation"],
         "cur": _LAST_STOCK["cur"],
+        "financials": _LAST_STOCK.get("financials"),
     })
     render_compare()
 
@@ -1054,6 +1065,233 @@ def _make_detail_handler(sym):
         except Exception:
             pass
     return handler
+
+
+def _cmp_period_sort_key(label):
+    """비교 차트 x축 정렬용 키. '2025 Q4'/'2024'/'P3' 등을 (연,분기)로 변환."""
+    s = str(label)
+    if " Q" in s:
+        try:
+            y, q = s.split(" Q")
+            return (int(y), int(q))
+        except (ValueError, TypeError):
+            return (0, 0)
+    try:
+        return (int(s), 0)
+    except (ValueError, TypeError):
+        return (0, 0)
+
+
+def _cmp_build_series(period, metric_key):
+    """비교 목록 각 종목에 대해 선택 지표의 (라벨, 값) 시계열을 만든다.
+
+    반환: (labels, series_list, kind, metric_label)
+      labels      = 공통 기간 라벨(과거→최신, 최근 10개)
+      series_list = [{"name", "cur", "color", "values"(labels 정렬)}]
+    """
+    kind = "money"
+    metric_label = ""
+    per_stock = []           # [(name, cur, {label: value}, current)]
+    label_union = set()
+    for c in _COMPARE:
+        fin = c.get("financials")
+        name = c["data"].get("description") or c["symbol"]
+        vmap = {}
+        cur_val = None
+        if fin and fin.get("fiscal_period_fy_h"):
+            years, metrics = _build_financial_metrics(fin, period)
+            metric = None
+            for m in metrics:
+                if m["key"] == metric_key:
+                    metric = m
+                    break
+            if metric is None and metrics:
+                metric = metrics[0]
+            if metric is not None:
+                kind = metric["kind"]
+                metric_label = metric["label"]
+                cur_val = metric.get("current")
+                for y, v in zip(years, metric["values"]):
+                    if v is not None:
+                        vmap[y] = v
+                        label_union.add(y)
+        per_stock.append((name, c.get("cur") or "", vmap, cur_val))
+
+    labels = sorted(label_union, key=_cmp_period_sort_key)
+    if len(labels) > 10:
+        labels = labels[-10:]
+
+    # 연간 모드에서는 진행 중인 실적(TTM/최근분기)을 '현재' 항목으로 덧붙인다.
+    show_cur = period != "quarterly" and any(
+        cv is not None for _, _, _, cv in per_stock)
+    if show_cur:
+        labels = labels + ["현재"]
+
+    series_list = []
+    for i, (name, cur, vmap, cur_val) in enumerate(per_stock):
+        vals = [vmap.get(lb) for lb in labels]
+        if show_cur:
+            vals[-1] = cur_val
+        series_list.append({
+            "name": name,
+            "cur": cur,
+            "color": _CMP_COLORS[i % len(_CMP_COLORS)],
+            "values": vals,
+        })
+    return labels, series_list, kind, metric_label
+
+
+def _cmp_chart_svg(labels, series_list, kind):
+    """여러 종목의 선택 지표를 하나의 차트에 꺾은선으로 겹쳐 그린 SVG 반환."""
+    vals = [v for s in series_list for v in s["values"] if v is not None]
+    if not labels or not vals:
+        return '<div class="hint">차트를 표시할 재무 데이터가 없습니다.</div>'
+
+    vmax = max(vals)
+    vmin = min(vals)
+    if vmin > 0:
+        vmin = 0.0
+    if vmax < 0:
+        vmax = 0.0
+    if vmax == vmin:
+        vmax = vmin + 1.0
+
+    W, H = 760.0, 320.0
+    padL, padR, padT, padB = 66.0, 18.0, 22.0, 40.0
+    plot_w = W - padL - padR
+    plot_h = H - padT - padB
+    n = len(labels)
+
+    def X(i):
+        if n == 1:
+            return padL + plot_w / 2.0
+        return padL + plot_w * (i / (n - 1))
+
+    def Y(v):
+        return padT + (vmax - v) / (vmax - vmin) * plot_h
+
+    parts = ['<svg viewBox="0 0 %g %g" class="chart-svg cmp-chart-svg" '
+             'preserveAspectRatio="xMidYMid meet">' % (W, H)]
+
+    if vmin < 0 < vmax:
+        grid_vals = [vmax, 0.0, vmin]
+    else:
+        grid_vals = [vmax, (vmax + vmin) / 2.0, vmin]
+    for gv in grid_vals:
+        gy = Y(gv)
+        parts.append('<line x1="%g" y1="%g" x2="%g" y2="%g" stroke="#eaecef"/>'
+                     % (padL, gy, W - padR, gy))
+        parts.append('<text x="%g" y="%g" class="ax-y">%s</text>'
+                     % (padL - 8, gy + 4, _esc(_metric_axis_fmt(kind, gv))))
+
+    # 종목별 꺾은선
+    for s in series_list:
+        col = s["color"]
+        pts = ["%g,%g" % (X(i), Y(v))
+               for i, v in enumerate(s["values"]) if v is not None]
+        if len(pts) >= 2:
+            parts.append('<polyline points="%s" fill="none" stroke="%s" '
+                         'stroke-width="2" stroke-linejoin="round" '
+                         'stroke-linecap="round"/>' % (" ".join(pts), col))
+        for i, v in enumerate(s["values"]):
+            if v is None:
+                continue
+            parts.append('<circle cx="%g" cy="%g" r="3" fill="%s"/>'
+                         % (X(i), Y(v), col))
+
+    # x축 라벨
+    for i, lb in enumerate(labels):
+        parts.append('<text x="%g" y="%g" class="ax-x">%s</text>'
+                     % (X(i), H - padB + 22, _esc(str(lb))))
+
+    parts.append('</svg>')
+    return "".join(parts)
+
+
+def _render_cmp_chart(h):
+    """render_compare 내부에서 호출: 지표 비교 차트 + 값 표를 h 리스트에 추가."""
+    period = _CMP_CHART.get("period", "annual")
+    quarterly = period == "quarterly"
+    metric_key = _CMP_CHART.get("metric", "revenue")
+
+    # 지표 선택 목록은 첫 번째 유효 종목의 지표 정의에서 가져온다.
+    metric_defs = []
+    for c in _COMPARE:
+        fin = c.get("financials")
+        if fin and fin.get("fiscal_period_fy_h"):
+            _, mm = _build_financial_metrics(fin, period)
+            metric_defs = mm
+            break
+    if not any(m["key"] == metric_key for m in metric_defs):
+        metric_key = metric_defs[0]["key"] if metric_defs else "revenue"
+        _CMP_CHART["metric"] = metric_key
+
+    labels, series_list, kind, metric_label = _cmp_build_series(period, metric_key)
+
+    has_quarterly = any(
+        (c.get("financials") or {}).get("total_revenue_fq_h") for c in _COMPARE)
+
+    h.append('<div class="sec"><h3>지표 비교 차트</h3>')
+    h.append('<div class="fin-controls">')
+    if has_quarterly:
+        h.append('<span class="fin-period">')
+        h.append('<button type="button" data-cfp="annual" class="%s">연간</button>'
+                 % ("on" if not quarterly else ""))
+        h.append('<button type="button" data-cfp="quarterly" class="%s">분기</button>'
+                 % ("on" if quarterly else ""))
+        h.append('</span>')
+    h.append('<label>지표: <select id="cmp-metric">')
+    for m in metric_defs:
+        sel_attr = ' selected' if m["key"] == metric_key else ''
+        h.append('<option value="%s"%s>%s</option>'
+                 % (m["key"], sel_attr, _esc(m["label"])))
+    h.append('</select></label>')
+    h.append('</div>')
+
+    # 범례
+    h.append('<div class="cmp-legend">')
+    for s in series_list:
+        h.append('<span class="cmp-leg"><i style="background:%s"></i>%s</span>'
+                 % (s["color"], _esc(s["name"])))
+    h.append('</div>')
+
+    # 꺾은선 차트
+    h.append('<div class="fin-chart">%s</div>'
+             % _cmp_chart_svg(labels, series_list, kind))
+
+    # 선택 지표에 대한 값 표 (종목 x 기간)
+    if labels:
+        h.append('<div class="fin-table-wrap" id="cmp-val-wrap">'
+                 '<table class="fin-table"><thead><tr>')
+        h.append('<th>%s</th>' % _esc(metric_label or "지표"))
+        for lb in labels:
+            h.append('<th>%s</th>' % _esc(str(lb)))
+        h.append('</tr></thead><tbody>')
+        for s in series_list:
+            h.append('<tr><td>%s</td>' % _esc(s["name"]))
+            for v in s["values"]:
+                h.append('<td>%s</td>'
+                         % _esc(_metric_cell_fmt(kind, v, s["cur"])))
+            h.append('</tr>')
+        h.append('</tbody></table></div>')
+
+    unit = "분기" if quarterly else "연도"
+    h.append('<div class="hint">선택한 지표를 최근 10개 %s에 대해 비교 종목별 '
+             '꺾은선으로 표시합니다. 통화가 다른 종목은 각 종목의 표시 통화 '
+             '기준입니다.</div>' % unit)
+    h.append('</div>')
+
+
+def _on_cmp_metric_change(evt):
+    _CMP_CHART["metric"] = document.querySelector("#cmp-metric").value
+    render_compare()
+
+
+def _on_cmp_period_change(evt):
+    period = evt.target.getAttribute("data-cfp")
+    if period and period != _CMP_CHART.get("period"):
+        _CMP_CHART["period"] = period
+        render_compare()
 
 
 def render_compare():
@@ -1204,7 +1442,12 @@ def render_compare():
     h.append('<div class="hint">통화가 다른 종목은 각 종목의 표시 통화 기준입니다. '
              '＋ 비교에 추가 버튼으로 최대 %d 종목까지 담을 수 있습니다.</div>'
              % _COMPARE_MAX)
-    h.append('</div></div>')
+    h.append('</div>')
+
+    # 선택 지표 꺾은선 비교 차트 + 값 표 (기존 표는 그대로 유지)
+    _render_cmp_chart(h)
+
+    h.append('</div>')
     box.innerHTML = "".join(h)
     _bind(document.querySelector("#addCompareBtn"), "click", _on_add_compare)
     _bind(document.querySelector("#cmpClearBtn"), "click", _on_clear_compare)
@@ -1216,6 +1459,15 @@ def render_compare():
     for i in range(dbtns.length):
         b = dbtns.item(i)
         _bind(b, "click", _make_detail_handler(b.getAttribute("data-sym")))
+    _bind(document.querySelector("#cmp-metric"), "change", _on_cmp_metric_change)
+    cfp = document.querySelectorAll("[data-cfp]")
+    for i in range(cfp.length):
+        _bind(cfp.item(i), "click", _on_cmp_period_change)
+
+    # 지표 비교 값 표의 가로 스크롤을 우측 끝(최신 기간)으로 이동
+    cwrap = document.querySelector("#cmp-val-wrap")
+    if cwrap is not None:
+        cwrap.scrollLeft = cwrap.scrollWidth
 
 
 def render_holdings(full_symbol, meta, holdings, report_ts):
