@@ -140,6 +140,33 @@
     border-bottom:2px solid #fff; }
   .tab-panel { display:none; }
   .tab-panel.active { display:block; }
+
+  /* 공포·탐욕 지수 */
+  .fg-score { font-size:56px; font-weight:800; line-height:1; text-align:center; }
+  .fg-rating { text-align:center; font-size:18px; font-weight:700; margin-top:6px; }
+  .fg-asof { text-align:center; font-size:12px; color:var(--mut); margin-top:4px; }
+  .fg-gauge { position:relative; margin:22px 0 6px; }
+  .fg-gauge-mini { margin:3px 0 4px; }
+  .fg-zones-bar { display:flex; height:14px; border-radius:8px; overflow:hidden; }
+  .fg-gauge-mini .fg-zones-bar { height:9px; border-radius:5px; }
+  .fg-zone { height:100%; }
+  .fg-gauge-marker { position:absolute; top:-5px; width:4px; height:24px;
+    background:#131722; border-radius:2px; transform:translateX(-50%);
+    box-shadow:0 0 0 2px #fff; z-index:1; }
+  .fg-gauge-mini .fg-gauge-marker { top:-3px; height:15px; width:3px; }
+  .fg-zones { display:flex; font-size:10px; color:var(--mut); text-align:center;
+    margin-bottom:4px; }
+  .fg-zones span { display:block; overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap; padding:1px 2px; border-left:1px solid var(--bd);
+    box-sizing:border-box; }
+  .fg-zones span:first-child { border-left:none; }
+  .fg-h3 { font-size:14px; color:var(--mut); margin:20px 0 10px;
+    border-top:1px solid var(--bd); padding-top:14px; }
+  .fg-comp { margin-bottom:12px; }
+  .fg-comp-top { display:flex; justify-content:space-between; align-items:baseline;
+    font-size:13px; margin-bottom:4px; }
+  .fg-comp-name { color:#1f2328; }
+  .fg-comp-val { font-weight:600; white-space:nowrap; }
   .macro-note { color:var(--mut); font-size:12px; margin-top:8px; line-height:1.5; }
   .macro-note a { color:var(--pri); }
   table.cycle { width:100%; border-collapse:collapse; font-size:13px;
@@ -203,6 +230,48 @@
     font-size:13px; color:#1f2328; }
   .cmp-leg { display:inline-flex; align-items:center; gap:6px; }
   .cmp-leg i { width:14px; height:3px; border-radius:2px; display:inline-block; }
+
+  /* 즐겨찾기 */
+  .fav-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .fav-head .fav-title { font-weight:600; color:var(--mut); }
+  #favAddBtn { height:30px; padding:0 12px; font-size:13px; }
+  #favAddBtn:not(:disabled) { background:#fff8e1; border-color:#f0c000; color:#8a6d00; }
+  #favDeleteBtn { border-color:var(--sell); color:var(--sell); }
+  #favDeleteBtn:hover { background:#ffe9e9; }
+  #fav-status { font-size:12px; color:var(--mut); margin-left:auto; }
+  .fav-list { display:flex; flex-direction:column; gap:8px; margin-top:10px; }
+  .fav-list:empty { display:none; }
+  .fav-folder { border:1px solid var(--bd); border-radius:10px;
+    background:var(--bg); overflow:hidden; }
+  .fav-folder > summary { display:flex; align-items:center; gap:8px;
+    cursor:pointer; padding:8px 12px; font-weight:600; color:var(--pri);
+    list-style:none; user-select:none; }
+  .fav-folder > summary::-webkit-details-marker { display:none; }
+  .fav-folder > summary::before { content:"▸"; font-size:11px; color:var(--mut);
+    transition:transform .15s; }
+  .fav-folder[open] > summary::before { transform:rotate(90deg); }
+  .fav-folder .fav-folder-name { display:inline-flex; align-items:center; gap:6px; }
+  .fav-folder .fav-folder-count { font-size:12px; color:var(--mut);
+    font-weight:400; }
+  .fav-folder .fav-folder-del { margin-left:auto; width:22px; height:22px;
+    border-radius:50%; border:none; background:transparent; color:var(--mut);
+    cursor:pointer; font-size:14px; line-height:1; padding:0; }
+  .fav-folder .fav-folder-del:hover { background:#ffe9e9; color:var(--sell); }
+  .fav-folder-items { display:flex; flex-wrap:wrap; gap:8px;
+    padding:2px 12px 12px; }
+  .fav-chip { display:inline-flex; align-items:center; gap:6px; font-size:13px;
+    border:1px solid var(--bd); border-radius:16px; padding:4px 6px 4px 12px;
+    background:#fff; }
+  .fav-chip .fav-load { cursor:pointer; display:inline-flex; flex-direction:column;
+    line-height:1.2; }
+  .fav-chip .fav-load:hover .fav-sym { color:var(--pri); }
+  .fav-chip .fav-sym { font-weight:600; }
+  .fav-chip .fav-name { font-size:11px; color:var(--mut); max-width:180px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .fav-chip .fav-del { width:20px; height:20px; border-radius:50%; border:none;
+    background:transparent; color:var(--mut); cursor:pointer; font-size:14px;
+    line-height:1; padding:0; }
+  .fav-chip .fav-del:hover { background:#ffe9e9; color:var(--sell); }
 </style>
 </head>
 <body>
@@ -227,6 +296,7 @@
     <button class="tab-btn active" data-tab="stock">종목</button>
     <button class="tab-btn" data-tab="macro">경제지표</button>
     <button class="tab-btn" data-tab="guru">13F</button>
+    <button class="tab-btn" data-tab="feargreed">공포·탐욕</button>
   </div>
 
   <div class="tab-panel active" id="tab-stock">
@@ -250,6 +320,37 @@
       <div class="row">
         <span id="status"></span>
       </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>즐겨찾기</legend>
+      <div class="row">
+        <label>계정 ID:
+          <input type="text" id="favAccount" style="width:150px"
+                 placeholder="예: my-list" autocomplete="username">
+        </label>
+        <label>공유 키:
+          <input type="password" id="favKey" style="width:150px"
+                 placeholder="비밀 키(4자 이상)" autocomplete="current-password">
+        </label>
+        <button id="favLoginBtn">로그인</button>
+        <button id="favRegisterBtn">계정 등록</button>
+        <button id="favLogoutBtn" style="display:none">로그아웃</button>
+        <button id="favDeleteBtn" style="display:none">계정 삭제</button>
+        <span id="fav-login-status"></span>
+      </div>
+      <div class="hint">같은 계정 ID·공유 키를 입력하면 어느 기기에서든 같은 즐겨찾기를
+        공유합니다. 처음 쓰는 계정은 "계정 등록"으로 먼저 만든 뒤 로그인하세요.</div>
+      <div class="fav-head">
+        <span class="fav-title">⭐ 내 즐겨찾기</span>
+        <input type="text" id="favFolder" list="fav-folder-list"
+               placeholder="폴더 (기본: Default)" style="width:150px">
+        <datalist id="fav-folder-list"></datalist>
+        <button id="favNewFolderBtn">＋ 폴더 추가</button>
+        <button id="favAddBtn" disabled>현재 종목 즐겨찾기 등록</button>
+        <span id="fav-status"></span>
+      </div>
+      <div id="favorites-list" class="fav-list"></div>
     </fieldset>
 
     <div id="compare-section"></div>
@@ -331,6 +432,19 @@
     </fieldset>
 
     <div id="guru-result"></div>
+  </div>
+
+  <div class="tab-panel" id="tab-feargreed">
+    <fieldset>
+      <legend>공포·탐욕 지수 · 미국 증시(CNN) + 암호화폐(alternative.me)</legend>
+      <div class="row">
+        <button class="primary" id="fgBtn">조회 / 새로고침</button>
+        <span id="fg-status"></span>
+      </div>
+      <div class="hint">미국 증시 지수는 CNN Business(7개 지표 종합), 암호화폐 지수는 alternative.me 데이터를 사용합니다.</div>
+    </fieldset>
+
+    <div id="fg-result"></div>
   </div>
 </main>
 
@@ -901,6 +1015,9 @@ def render_report(full_symbol, payload):
     _LAST_STOCK["valuation"] = valuation
     _LAST_STOCK["cur"] = cur
     _LAST_STOCK["financials"] = financials
+
+    # 즐겨찾기 등록 버튼 활성화
+    _mark_favoritable(full_symbol, desc)
 
     mark = data.get("recommendation_mark")
     total = data.get("recommendation_total")
@@ -1477,6 +1594,9 @@ def render_holdings(full_symbol, meta, holdings, report_ts):
     cur = meta.get("currency") or ""
     desc = meta.get("description") or full_symbol
     close = meta.get("close")
+
+    # 즐겨찾기 등록 버튼 활성화
+    _mark_favoritable(full_symbol, desc)
 
     html = []
     html.append('<div class="card">')
@@ -3392,6 +3512,613 @@ def _set_guru_status(msg):
 
 
 
+# ===================== 즐겨찾기 (Cloudflare KV · 계정 로그인) =====================
+
+_LAST_LOOKUP = {"symbol": None, "name": None}
+
+# 로그인 정보는 저장하지 않고 현재 세션(메모리)에서만 유지한다.
+_FAV_CREDS = {"account": None, "key": None}
+
+# 서버에서 받은 폴더 목록(빈 폴더 포함)을 세션 동안 보관한다.
+_FAV_FOLDERS = []
+
+
+def _fav_creds():
+    """현재 세션의 (계정 ID, 공유 키)를 반환. 없으면 (None, None)."""
+    return _FAV_CREDS.get("account") or None, _FAV_CREDS.get("key") or None
+
+
+def _fav_logged_in():
+    acct, key = _fav_creds()
+    return bool(acct and key)
+
+
+def _fav_base():
+    """CORS 프록시 접두어에서 Worker 주소를 뽑아 /favorites 엔드포인트를 만든다."""
+    prefix = document.querySelector("#proxy").value.strip()
+    if not prefix:
+        return None
+    base = prefix.split("?")[0].rstrip("/")
+    if not base.startswith("http"):
+        return None
+    return base + "/favorites"
+
+
+def _set_fav_status(msg):
+    el = document.querySelector("#fav-status")
+    if el is not None:
+        el.textContent = msg or ""
+
+
+def _set_fav_login_status(msg):
+    el = document.querySelector("#fav-login-status")
+    if el is not None:
+        el.textContent = msg or ""
+
+
+async def _fav_api(method, account, key, extra_query="", body=None):
+    """계정 ID·공유 키를 명시적으로 받아 즐겨찾기 API를 호출한다.
+
+    반환: (data 딕셔너리 또는 None, error 문자열 또는 None, HTTP status)
+    """
+    base = _fav_base()
+    if not base:
+        return None, "Worker(프록시) 주소가 설정돼 있어야 합니다.", 0
+    url = "%s?account=%s%s" % (base, js.encodeURIComponent(account), extra_query)
+    headers = {"X-Fav-Key": key}
+    kwargs = {"method": method, "headers": headers}
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+        kwargs["body"] = body
+    try:
+        resp = await pyfetch(url, **kwargs)
+        data = json.loads(await resp.string())
+    except Exception as exc:
+        return None, str(exc), 0
+    if resp.status >= 400:
+        return None, (data.get("error") or ("HTTP %s" % resp.status)), resp.status
+    return data, None, resp.status
+
+
+async def _fav_request(method, extra_query="", body=None):
+    """로그인된 계정으로 즐겨찾기 API 호출.
+
+    반환: (favorites 리스트 또는 None, error 문자열 또는 None)
+    성공 시 서버가 준 폴더 목록으로 _FAV_FOLDERS 를 갱신한다.
+    """
+    global _FAV_FOLDERS
+    acct, key = _fav_creds()
+    if not (acct and key):
+        return None, "먼저 로그인하세요."
+    data, err, _status = await _fav_api(method, acct, key, extra_query, body)
+    if err:
+        return None, err
+    if data.get("folders") is not None:
+        _FAV_FOLDERS = data.get("folders") or []
+    return (data.get("favorites") or []), None
+
+
+async def fav_list():
+    """서버(KV)에서 즐겨찾기 목록을 가져온다."""
+    favs, err = await _fav_request("GET")
+    if err:
+        _set_fav_status(err)
+        return []
+    return favs
+
+
+async def fav_add(symbol, name, folder=None):
+    """즐겨찾기에 심볼을 추가(또는 폴더 이동)하고 갱신된 목록을 반환."""
+    body = json.dumps({"symbol": symbol, "name": name or "",
+                       "folder": folder or "Default"})
+    favs, err = await _fav_request("POST", body=body)
+    if err:
+        _set_fav_status("등록 실패: %s" % err)
+        return None
+    return favs
+
+
+async def fav_remove(symbol):
+    """즐겨찾기에서 심볼을 삭제하고 갱신된 목록을 반환."""
+    q = "&symbol=%s" % js.encodeURIComponent(symbol)
+    favs, err = await _fav_request("DELETE", extra_query=q)
+    if err:
+        _set_fav_status("삭제 실패: %s" % err)
+        return None
+    return favs
+
+
+async def fav_delete_account():
+    """현재 로그인한 계정을 서버(KV)에서 통째로 삭제한다."""
+    favs, err = await _fav_request("DELETE")
+    if err:
+        _set_fav_status("계정 삭제 실패: %s" % err)
+        return False
+    return True
+
+
+async def fav_new_folder(name):
+    """서버에 빈 폴더를 생성하고 갱신된 목록을 반환."""
+    body = json.dumps({"folder": name})
+    favs, err = await _fav_request("POST", extra_query="&folder_op=create", body=body)
+    if err:
+        _set_fav_status("폴더 생성 실패: %s" % err)
+        return None
+    return favs
+
+
+async def fav_delete_folder(name):
+    """폴더와 그 안의 종목을 모두 삭제하고 갱신된 목록을 반환."""
+    q = "&folder=%s" % js.encodeURIComponent(name)
+    favs, err = await _fav_request("DELETE", extra_query=q)
+    if err:
+        _set_fav_status("폴더 삭제 실패: %s" % err)
+        return None
+    return favs
+
+
+def render_favorites(favs):
+    """즐겨찾기 목록을 폴더별로 그룹화해 렌더링한다(빈 폴더 포함)."""
+    box = document.querySelector("#favorites-list")
+    if box is None:
+        return
+    _update_folder_datalist(favs)
+    # 폴더별로 묶기 (폴더 미지정은 'Default')
+    groups = {}
+    for f in favs:
+        folder = (f.get("folder") or "Default").strip() or "Default"
+        groups.setdefault(folder, []).append(f)
+    # 종목이 없는 빈 폴더도 표시하도록 서버 폴더 목록을 병합
+    for name in _FAV_FOLDERS:
+        nm = (name or "").strip()
+        if nm:
+            groups.setdefault(nm, [])
+    if not groups:
+        box.innerHTML = ""
+        return
+
+    # Default 를 맨 위로, 나머지는 이름순 정렬
+    def _folder_sort_key(name):
+        return (0 if name == "Default" else 1, name.lower())
+
+    html = []
+    for folder in sorted(groups.keys(), key=_folder_sort_key):
+        items = groups[folder]
+        chips = []
+        for f in items:
+            sym = f.get("symbol") or ""
+            name = f.get("name") or ""
+            chips.append(
+                '<span class="fav-chip">'
+                '<span class="fav-load" data-symbol="%s">'
+                '<span class="fav-sym">%s</span>'
+                '<span class="fav-name">%s</span></span>'
+                '<button class="fav-del" data-symbol="%s" title="삭제">×</button>'
+                '</span>'
+                % (_esc(sym), _esc(sym), _esc(name), _esc(sym)))
+        empty_hint = '' if chips else '<span class="fav-name">(비어 있음)</span>'
+        # Default 는 기본 폴더라 삭제 버튼을 숨긴다
+        del_btn = (
+            '' if folder == "Default"
+            else '<button class="fav-folder-del" data-folder="%s" '
+                 'title="폴더 삭제">🗑</button>' % _esc(folder))
+        html.append(
+            '<details class="fav-folder" open>'
+            '<summary><span class="fav-folder-name">📁 %s</span>'
+            '<span class="fav-folder-count">%d</span>%s</summary>'
+            '<div class="fav-folder-items">%s%s</div>'
+            '</details>'
+            % (_esc(folder), len(items), del_btn, "".join(chips), empty_hint))
+    box.innerHTML = "".join(html)
+    _bind_favorites()
+
+
+def _update_folder_datalist(favs):
+    """폴더 입력칸(datalist)에 기존 폴더 목록을 채워 자동완성되게 한다."""
+    dl = document.querySelector("#fav-folder-list")
+    if dl is None:
+        return
+    names = set()
+    for f in (favs or []):
+        folder = (f.get("folder") or "").strip()
+        if folder:
+            names.add(folder)
+    for n in _FAV_FOLDERS:
+        nm = (n or "").strip()
+        if nm:
+            names.add(nm)
+    names.add("Default")
+    opts = ['<option value="%s">' % _esc(n) for n in sorted(names)]
+    dl.innerHTML = "".join(opts)
+
+
+def _make_fav_load_handler(symbol):
+    def handler(evt):
+        document.querySelector("#ticker").value = symbol
+        document.querySelector("#exchange").value = ""
+        document.querySelector("#lookupBtn").click()
+    return handler
+
+
+def _make_fav_del_handler(symbol):
+    async def _do():
+        favs = await fav_remove(symbol)
+        if favs is not None:
+            render_favorites(favs)
+            _set_fav_status("삭제됨 · %s" % symbol)
+
+    def handler(evt):
+        evt.stopPropagation()
+        asyncio.ensure_future(_do())
+    return handler
+
+
+def _make_fav_folder_del_handler(folder):
+    async def _do():
+        favs = await fav_delete_folder(folder)
+        if favs is not None:
+            render_favorites(favs)
+            _set_fav_status("폴더 삭제됨 · %s" % folder)
+
+    def handler(evt):
+        evt.preventDefault()
+        evt.stopPropagation()
+        if not window.confirm(
+                "'%s' 폴더와 그 안의 종목을 모두 삭제합니다. 계속할까요?" % folder):
+            return
+        asyncio.ensure_future(_do())
+    return handler
+
+
+def _bind_favorites():
+    loads = document.querySelectorAll("#favorites-list .fav-load")
+    for i in range(loads.length):
+        el = loads.item(i)
+        _bind(el, "click", _make_fav_load_handler(el.getAttribute("data-symbol")))
+    dels = document.querySelectorAll("#favorites-list .fav-del")
+    for i in range(dels.length):
+        el = dels.item(i)
+        _bind(el, "click", _make_fav_del_handler(el.getAttribute("data-symbol")))
+    fdels = document.querySelectorAll("#favorites-list .fav-folder-del")
+    for i in range(fdels.length):
+        el = fdels.item(i)
+        _bind(el, "click", _make_fav_folder_del_handler(el.getAttribute("data-folder")))
+
+
+def _update_fav_add_btn():
+    """로그인 상태 + 마지막 조회 종목이 있을 때만 등록 버튼을 활성화."""
+    btn = document.querySelector("#favAddBtn")
+    if btn is not None:
+        btn.disabled = not (_fav_logged_in() and _LAST_LOOKUP.get("symbol"))
+
+
+def _update_fav_login_ui():
+    """로그인 상태에 따라 입력칸/버튼 표시를 갱신."""
+    acct, key = _fav_creds()
+    login_btn = document.querySelector("#favLoginBtn")
+    register_btn = document.querySelector("#favRegisterBtn")
+    logout_btn = document.querySelector("#favLogoutBtn")
+    delete_btn = document.querySelector("#favDeleteBtn")
+    if _fav_logged_in():
+        document.querySelector("#favAccount").value = acct
+        document.querySelector("#favKey").value = key
+        if login_btn is not None:
+            login_btn.style.display = "none"
+        if register_btn is not None:
+            register_btn.style.display = "none"
+        if logout_btn is not None:
+            logout_btn.style.display = "inline-block"
+        if delete_btn is not None:
+            delete_btn.style.display = "inline-block"
+        _set_fav_login_status("로그인됨 · %s" % acct)
+    else:
+        if login_btn is not None:
+            login_btn.style.display = "inline-block"
+        if register_btn is not None:
+            register_btn.style.display = "inline-block"
+        if logout_btn is not None:
+            logout_btn.style.display = "none"
+        if delete_btn is not None:
+            delete_btn.style.display = "none"
+        _set_fav_login_status("로그아웃 상태 · 계정 ID와 공유 키를 입력하세요")
+    _update_fav_add_btn()
+
+
+def _mark_favoritable(symbol, name):
+    """조회 성공 시 마지막 종목을 저장하고 등록 버튼 상태를 갱신한다."""
+    _LAST_LOOKUP["symbol"] = symbol
+    _LAST_LOOKUP["name"] = name
+    _update_fav_add_btn()
+
+
+async def refresh_favorites():
+    if not _fav_logged_in():
+        render_favorites([])
+        return
+    render_favorites(await fav_list())
+
+
+# ===================== 공포·탐욕 지수 (CNN Business) =====================
+
+FEAR_GREED_URL = "https://production.dataviz.cnn.io/index/fearandgreed/graphdata"
+
+_FG_LOADED = {"done": False}
+
+_FG_RATING_KR = {
+    "extreme fear": "극도의 공포",
+    "fear": "공포",
+    "neutral": "중립",
+    "greed": "탐욕",
+    "extreme greed": "극도의 탐욕",
+}
+
+# CNN 이 제공하는 7개 구성 지표(키, 표시 이름)
+_FG_COMPONENTS = [
+    ("market_momentum_sp500", "시장 모멘텀 (S&P 500)"),
+    ("stock_price_strength", "주가 강도 (신고가/신저가)"),
+    ("stock_price_breadth", "주가 폭 (거래량)"),
+    ("put_call_options", "풋/콜 옵션"),
+    ("market_volatility_vix", "시장 변동성 (VIX)"),
+    ("safe_haven_demand", "안전자산 수요"),
+    ("junk_bond_demand", "정크본드 수요"),
+]
+
+
+def _fg_label(rating):
+    return _FG_RATING_KR.get((rating or "").strip().lower(), rating or "-")
+
+
+# 게이지 구간(폭%, 색상, 라벨). 0~25 극도의 공포 … 75~100 극도의 탐욕
+_FG_ZONES = [
+    (25.0, "#f23645", "극도의 공포"),
+    (20.0, "#ff7a45", "공포"),
+    (10.0, "#787b86", "중립"),
+    (20.0, "#3fa86a", "탐욕"),
+    (25.0, "#089981", "극도의 탐욕"),
+]
+
+
+def _fg_color(score):
+    try:
+        s = float(score)
+    except (TypeError, ValueError):
+        return "#787b86"
+    if s < 25:
+        return "#f23645"      # 극도의 공포
+    if s < 45:
+        return "#ff7a45"      # 공포
+    if s <= 55:
+        return "#787b86"      # 중립
+    if s <= 75:
+        return "#3fa86a"      # 탐욕
+    return "#089981"          # 극도의 탐욕
+
+
+def _fg_zone_bar(score_num, mini=False):
+    """0~100 을 5개 구간 색으로 나눈 게이지 바 HTML. 현재 점수 위치에 마커 표시."""
+    pos = max(0.0, min(100.0, score_num if score_num is not None else 50))
+    segs = "".join(
+        '<div class="fg-zone" style="width:%.0f%%;background:%s"></div>' % (w, c)
+        for w, c, _lbl in _FG_ZONES)
+    cls = "fg-gauge fg-gauge-mini" if mini else "fg-gauge"
+    marker = "" if score_num is None else (
+        '<div class="fg-gauge-marker" style="left:%.1f%%"></div>' % pos)
+    return '<div class="%s"><div class="fg-zones-bar">%s</div>%s</div>' % (
+        cls, segs, marker)
+
+
+def _fg_zone_legend():
+    """게이지 아래에 구간 이름을 폭에 맞춰 표시."""
+    spans = "".join(
+        '<span style="width:%.0f%%">%s</span>' % (w, _esc(lbl))
+        for w, _c, lbl in _FG_ZONES)
+    return '<div class="fg-zones">%s</div>' % spans
+
+
+def _fg_num(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _set_fg_status(msg):
+    el = document.querySelector("#fg-status")
+    if el is not None:
+        el.textContent = msg or ""
+
+
+async def fetch_fear_greed():
+    """CNN 공포·탐욕 지수 데이터를 여러 경로로 시도해 가져온다.
+
+    순서: (1) 브라우저 직접 호출  (2) 사용자 CORS 프록시(Worker)
+          (3) 공개 CORS 프록시들.  CNN 이 Cloudflare Worker 를 차단(HTTP 530)해도
+    직접 호출이나 다른 우회 경로 중 하나가 성공하면 데이터를 표시한다.
+    """
+    enc = str(js.encodeURIComponent(FEAR_GREED_URL))
+    attempts = [
+        ("직접", FEAR_GREED_URL),
+        ("사용자 프록시", _proxied(FEAR_GREED_URL)),
+        ("우회1", "https://api.allorigins.win/raw?url=" + enc),
+        ("우회2", "https://corsproxy.io/?url=" + enc),
+        ("우회3", "https://thingproxy.freeboard.io/fetch/" + FEAR_GREED_URL),
+    ]
+    errs = []
+    seen = set()
+    for label, url in attempts:
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        try:
+            resp = await pyfetch(url, method="GET")
+            if resp.status >= 400:
+                raise InvestingApiError("HTTP %s" % resp.status)
+            data = json.loads(await resp.string())
+            if data.get("fear_and_greed"):
+                return data
+            errs.append("%s: 데이터 없음" % label)
+        except Exception as exc:
+            errs.append("%s: %s" % (label, exc))
+    raise InvestingApiError("모든 경로 실패 — " + " / ".join(errs))
+
+
+def _fg_gauge_html(score_num, rating_label, extra=""):
+    """점수/등급/구간 게이지 공통 블록 HTML 을 만든다."""
+    score_txt = "%.0f" % score_num if score_num is not None else "-"
+    color = _fg_color(score_num if score_num is not None else 50)
+    return (
+        '<div class="fg-score" style="color:%s">%s</div>'
+        '<div class="fg-rating" style="color:%s">%s</div>'
+        '%s%s%s'
+        % (color, score_txt, color, _esc(rating_label), extra,
+           _fg_zone_bar(score_num), _fg_zone_legend()))
+
+
+def _fg_cnn_html(data):
+    """CNN(미국 증시) 지수 카드 HTML 을 반환."""
+    fg = data.get("fear_and_greed") or {}
+    score_num = _fg_num(fg.get("score"))
+    rating = fg.get("rating")
+    asof = (fg.get("timestamp") or "").replace("T", " ")[:19]
+
+    def _prev(key):
+        v = _fg_num(fg.get(key))
+        return "%.0f" % v if v is not None else "-"
+
+    prev_rows = [
+        ("이전 종가", _prev("previous_close")),
+        ("1주 전", _prev("previous_1_week")),
+        ("1개월 전", _prev("previous_1_month")),
+        ("1년 전", _prev("previous_1_year")),
+    ]
+    prev_html = "".join(
+        '<div class="kv"><span class="k">%s</span><span class="v">%s</span></div>'
+        % (_esc(k), _esc(v)) for k, v in prev_rows)
+
+    comp_html = []
+    for key, label in _FG_COMPONENTS:
+        c = data.get(key) or {}
+        csf = _fg_num(c.get("score"))
+        cs_txt = "%.0f" % csf if csf is not None else "-"
+        ccolor = _fg_color(csf if csf is not None else 50)
+        comp_html.append(
+            '<div class="fg-comp">'
+            '<div class="fg-comp-top">'
+            '<span class="fg-comp-name">%s</span>'
+            '<span class="fg-comp-val" style="color:%s">%s · %s</span></div>'
+            '%s'
+            '</div>'
+            % (_esc(label), ccolor, _esc(cs_txt), _esc(_fg_label(c.get("rating"))),
+               _fg_zone_bar(csf, mini=True)))
+
+    asof_html = ('<div class="fg-asof">기준: %s (UTC)</div>' % _esc(asof)) if asof else ""
+    return (
+        '<div class="card">'
+        '<div class="card-head"><span class="name">🇺🇸 미국 증시 · CNN</span>'
+        '<span class="sym">Fear &amp; Greed Index</span></div>'
+        '<div style="padding:18px">'
+        '%s'
+        '<div class="grid" style="margin-top:16px">%s</div>'
+        '<h3 class="fg-h3">구성 지표 (7)</h3>%s'
+        '</div></div>'
+        % (_fg_gauge_html(score_num, _fg_label(rating), asof_html),
+           prev_html, "".join(comp_html)))
+
+
+def _fg_cnn_error_html(exc):
+    return (
+        '<div class="card">'
+        '<div class="card-head"><span class="name">🇺🇸 미국 증시 · CNN</span>'
+        '<span class="sym">Fear &amp; Greed Index</span></div>'
+        '<div style="padding:16px 18px">'
+        '<div class="warn">CNN 미국 증시 지수를 불러오지 못했습니다.<br>%s'
+        '<br><small>CNN 엔드포인트가 브라우저 직접 호출·사용자 프록시·공개 우회 '
+        '프록시를 모두 거부한 경우입니다. 잠시 후 다시 시도하거나, 상단 CORS '
+        '프록시(Worker) 주소가 설정돼 있는지 확인하세요.</small></div>'
+        '</div></div>'
+        % _esc(str(exc)))
+
+
+# 암호화폐 지수(alternative.me) — CORS 가 열려 있어 프록시 없이 직접 호출한다.
+FEAR_GREED_ALT_URL = "https://api.alternative.me/fng/?limit=35"
+
+
+async def fetch_fear_greed_alt():
+    try:
+        resp = await pyfetch(FEAR_GREED_ALT_URL, method="GET")
+    except Exception as exc:
+        raise InvestingApiError("암호화폐 지수 요청 실패: %s" % exc)
+    if resp.status >= 400:
+        raise InvestingApiError("암호화폐 지수 HTTP %s 응답" % resp.status)
+    text = await resp.string()
+    try:
+        return json.loads(text)
+    except ValueError:
+        raise InvestingApiError("암호화폐 지수 JSON 파싱 실패")
+
+
+def _fg_alt_html(data):
+    """암호화폐(alternative.me) 지수 카드 HTML 을 반환."""
+    arr = data.get("data") or []
+    if not arr:
+        raise InvestingApiError("암호화폐 지수 데이터가 비어 있습니다.")
+    cur = arr[0]
+    score_num = _fg_num(cur.get("value"))
+
+    def _at(i):
+        if i < len(arr):
+            v = _fg_num(arr[i].get("value"))
+            return "%.0f" % v if v is not None else "-"
+        return "-"
+
+    prev_rows = [("어제", _at(1)), ("1주 전", _at(7)), ("1개월 전", _at(30))]
+    prev_html = "".join(
+        '<div class="kv"><span class="k">%s</span><span class="v">%s</span></div>'
+        % (_esc(k), _esc(v)) for k, v in prev_rows)
+
+    return (
+        '<div class="card">'
+        '<div class="card-head"><span class="name">₿ 암호화폐 · alternative.me</span>'
+        '<span class="sym">Crypto Fear &amp; Greed</span></div>'
+        '<div style="padding:18px">'
+        '%s'
+        '<div class="grid" style="margin-top:16px">%s</div>'
+        '</div></div>'
+        % (_fg_gauge_html(score_num, _fg_label(cur.get("value_classification"))),
+           prev_html))
+
+
+def _fg_alt_error_html(exc):
+    return (
+        '<div class="card">'
+        '<div class="card-head"><span class="name">₿ 암호화폐 · alternative.me</span>'
+        '<span class="sym">Crypto Fear &amp; Greed</span></div>'
+        '<div style="padding:16px 18px">'
+        '<div class="warn">암호화폐 지수를 불러오지 못했습니다.<br>%s</div>'
+        '</div></div>'
+        % _esc(str(exc)))
+
+
+async def load_fear_greed():
+    """미국 증시(CNN)와 암호화폐(alternative.me) 지수를 모두 불러와 함께 표시한다."""
+    box = document.querySelector("#fg-result")
+    if box is None:
+        return
+    # CNN (미국 증시)
+    try:
+        cnn = await fetch_fear_greed()
+        cnn_html = _fg_cnn_html(cnn)
+    except Exception as exc:
+        cnn_html = _fg_cnn_error_html(exc)
+    # 암호화폐
+    try:
+        alt = await fetch_fear_greed_alt()
+        alt_html = _fg_alt_html(alt)
+    except Exception as exc:
+        alt_html = _fg_alt_error_html(exc)
+    box.innerHTML = cnn_html + alt_html
+
+
 # ===================== 이벤트 =====================
 
 @when("click", "#lookupBtn")
@@ -3459,6 +4186,27 @@ def on_tab(event):
             p.classList.add("active")
         else:
             p.classList.remove("active")
+    # 공포·탐욕 탭을 처음 열면 자동으로 1회 조회한다.
+    if name == "feargreed" and not _FG_LOADED["done"]:
+        document.querySelector("#fgBtn").click()
+
+
+@when("click", "#fgBtn")
+async def on_fear_greed(event):
+    btn = document.querySelector("#fgBtn")
+    _set_fg_status("불러오는 중...")
+    btn.disabled = True
+    try:
+        await load_fear_greed()
+        _FG_LOADED["done"] = True
+        _set_fg_status("완료")
+    except Exception as exc:
+        _set_fg_status("오류")
+        document.querySelector("#fg-result").innerHTML = (
+            '<div class="warn">공포·탐욕 지수를 불러오지 못했습니다.<br>%s</div>'
+            % _esc(str(exc)))
+    finally:
+        btn.disabled = False
 
 
 @when("click", "#macroBtn")
@@ -3524,6 +4272,150 @@ def on_guru_search(event):
     render_guru_list(_filter_gurus(event.target.value))
 
 
+@when("click", "#favAddBtn")
+async def on_fav_add(event):
+    sym = _LAST_LOOKUP.get("symbol")
+    if not sym:
+        return
+    if not _fav_logged_in():
+        window.alert("먼저 계정 ID·공유 키로 로그인하세요.")
+        return
+    folder = document.querySelector("#favFolder").value.strip() or "Default"
+    _set_fav_status("등록 중...")
+    favs = await fav_add(sym, _LAST_LOOKUP.get("name") or "", folder)
+    if favs is not None:
+        render_favorites(favs)
+        _set_fav_status("등록됨 · %s → %s" % (sym, folder))
+
+
+@when("click", "#favNewFolderBtn")
+async def on_fav_new_folder(event):
+    if not _fav_logged_in():
+        window.alert("먼저 로그인하세요.")
+        return
+    name = document.querySelector("#favFolder").value.strip()
+    if not name:
+        name = (window.prompt("새 폴더 이름을 입력하세요") or "").strip()
+    if not name:
+        return
+    if name == "Default":
+        window.alert("'Default'는 기본 폴더라 새로 만들 필요가 없습니다.")
+        return
+    _set_fav_status("폴더 생성 중...")
+    favs = await fav_new_folder(name)
+    if favs is not None:
+        render_favorites(favs)
+        document.querySelector("#favFolder").value = name
+        _set_fav_status("폴더 생성됨 · %s" % name)
+
+
+@when("click", "#favLoginBtn")
+async def on_fav_login(event):
+    acct = document.querySelector("#favAccount").value.strip()
+    key = document.querySelector("#favKey").value
+    if not acct or not key:
+        window.alert("계정 ID와 공유 키를 모두 입력하세요.")
+        return
+    if len(key) < 4:
+        window.alert("공유 키는 4자 이상이어야 합니다.")
+        return
+    _set_fav_login_status("로그인 확인 중...")
+    data, err, status = await _fav_api("GET", acct, key)
+    if status == 403:
+        _set_fav_login_status("로그아웃 상태 · 계정 ID와 공유 키를 입력하세요")
+        window.alert("계정 ID 또는 공유 키가 일치하지 않습니다.")
+        return
+    if err:
+        _set_fav_login_status("로그아웃 상태 · 계정 ID와 공유 키를 입력하세요")
+        window.alert("로그인 실패: %s" % err)
+        return
+    if not data.get("exists"):
+        _set_fav_login_status("로그아웃 상태 · 계정 ID와 공유 키를 입력하세요")
+        window.alert("등록되지 않은 계정입니다. '계정 등록'으로 먼저 계정을 만드세요.")
+        return
+    global _FAV_FOLDERS
+    _FAV_CREDS["account"] = acct
+    _FAV_CREDS["key"] = key
+    _FAV_FOLDERS = data.get("folders") or []
+    _update_fav_login_ui()
+    favs = data.get("favorites") or []
+    render_favorites(favs)
+    _set_fav_status("로그인됨 · %d개 즐겨찾기" % len(favs))
+
+
+@when("click", "#favRegisterBtn")
+async def on_fav_register(event):
+    acct = document.querySelector("#favAccount").value.strip()
+    key = document.querySelector("#favKey").value
+    if not acct or not key:
+        window.alert("계정 ID와 공유 키를 모두 입력하세요.")
+        return
+    if len(key) < 4:
+        window.alert("공유 키는 4자 이상이어야 합니다.")
+        return
+    _set_fav_login_status("계정 등록 중...")
+    data, err, status = await _fav_api(
+        "POST", acct, key, extra_query="&register=1", body=json.dumps({}))
+    if status == 409:
+        _set_fav_login_status("로그아웃 상태 · 계정 ID와 공유 키를 입력하세요")
+        window.alert("이미 존재하는 계정 ID입니다. 다른 ID를 사용하세요.")
+        return
+    if err:
+        _set_fav_login_status("로그아웃 상태 · 계정 ID와 공유 키를 입력하세요")
+        window.alert("계정 등록 실패: %s" % err)
+        return
+    # 등록 성공 → 바로 로그인 상태로 전환
+    global _FAV_FOLDERS
+    _FAV_CREDS["account"] = acct
+    _FAV_CREDS["key"] = key
+    _FAV_FOLDERS = data.get("folders") or []
+    _update_fav_login_ui()
+    render_favorites([])
+    _set_fav_status("계정 '%s' 등록 완료 · 로그인됨" % acct)
+
+
+@when("click", "#favLogoutBtn")
+def on_fav_logout(event):
+    global _FAV_FOLDERS
+    _FAV_CREDS["account"] = None
+    _FAV_CREDS["key"] = None
+    _FAV_FOLDERS = []
+    document.querySelector("#favKey").value = ""
+    render_favorites([])
+    _update_fav_login_ui()
+    _set_fav_status("")
+
+
+@when("click", "#favDeleteBtn")
+async def on_fav_delete_account(event):
+    acct, _ = _fav_creds()
+    if not acct:
+        return
+    if not window.confirm(
+            "'%s' 계정과 저장된 모든 즐겨찾기를 서버에서 삭제합니다.\n"
+            "이 작업은 되돌릴 수 없습니다. 계속할까요?" % acct):
+        return
+    _set_fav_status("계정 삭제 중...")
+    ok = await fav_delete_account()
+    if not ok:
+        return
+    global _FAV_FOLDERS
+    _FAV_CREDS["account"] = None
+    _FAV_CREDS["key"] = None
+    _FAV_FOLDERS = []
+    document.querySelector("#favKey").value = ""
+    document.querySelector("#favAccount").value = ""
+    render_favorites([])
+    _update_fav_login_ui()
+    _set_fav_status("계정 '%s' 삭제됨" % acct)
+
+
+@when("keydown", "#favKey")
+def on_fav_key_enter(event):
+    if event.key == "Enter":
+        document.querySelector("#favLoginBtn").click()
+
+
 # 초기화: 조회 버튼 활성화
 document.querySelector("#lookupBtn").disabled = False
 document.querySelector("#macroBtn").disabled = False
@@ -3539,6 +4431,9 @@ _set_macro_status("준비 완료 · FRED API 키 입력 후 조회")
 # 대가 13F 탭: 전체 목록을 초기 표시
 render_guru_list(_filter_gurus(""))
 _set_guru_status("이름 일부를 입력해 검색하거나 아래 목록에서 선택하세요")
+
+# 즐겨찾기: 로그아웃 상태에서 시작 (로그인 정보는 저장하지 않음)
+_update_fav_login_ui()
 
 # 원/달러 환율 · 미국 지수: 초기 1회 조회 후 60초마다 갱신
 asyncio.ensure_future(update_fxrate())
