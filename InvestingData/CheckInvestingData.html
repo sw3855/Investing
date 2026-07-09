@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Investing 종목/ETF 조회 · PyScript</title>
+<title>Investing Data</title>
 
 <!-- PyScript (Pyodide 기반, 브라우저에서 파이썬 실행) -->
 <link rel="stylesheet" href="https://pyscript.net/releases/2024.11.1/core.css">
@@ -232,6 +232,12 @@
   .cmp-leg i { width:14px; height:3px; border-radius:2px; display:inline-block; }
 
   /* 즐겨찾기 */
+  .fav-fieldset { position:relative; }
+  .fav-collapse-btn { position:absolute; top:-4px; right:3px; width:26px;
+    height:22px; padding:0; font-size:11px; line-height:1; border:1px solid var(--bd);
+    border-radius:5px; background:var(--bg); color:var(--mut); cursor:pointer; }
+  .fav-collapse-btn:hover { background:#eef3ff; border-color:var(--pri);
+    color:var(--pri); }
   .fav-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
   .fav-head .fav-title { font-weight:600; color:var(--mut); }
   #favAddBtn { height:30px; padding:0 12px; font-size:13px; }
@@ -253,9 +259,11 @@
   .fav-folder .fav-folder-name { display:inline-flex; align-items:center; gap:6px; }
   .fav-folder .fav-folder-count { font-size:12px; color:var(--mut);
     font-weight:400; }
-  .fav-folder .fav-folder-del { margin-left:auto; width:22px; height:22px;
+  .fav-folder .fav-folder-actions { margin-left:auto; display:inline-flex; gap:2px; }
+  .fav-folder .fav-folder-ren, .fav-folder .fav-folder-del { width:22px; height:22px;
     border-radius:50%; border:none; background:transparent; color:var(--mut);
-    cursor:pointer; font-size:14px; line-height:1; padding:0; }
+    cursor:pointer; font-size:13px; line-height:1; padding:0; }
+  .fav-folder .fav-folder-ren:hover { background:#e7f0ff; color:var(--pri); }
   .fav-folder .fav-folder-del:hover { background:#ffe9e9; color:var(--sell); }
   .fav-folder-items { display:flex; flex-wrap:wrap; gap:8px;
     padding:2px 12px 12px; }
@@ -322,8 +330,11 @@
       </div>
     </fieldset>
 
-    <fieldset>
+    <fieldset class="fav-fieldset">
       <legend>즐겨찾기</legend>
+      <button id="favCollapseBtn" class="fav-collapse-btn" type="button"
+              title="즐겨찾기 접기/펴기">▲</button>
+      <div id="fav-body">
       <div class="row">
         <label>계정 ID:
           <input type="text" id="favAccount" style="width:150px"
@@ -343,14 +354,15 @@
         공유합니다. 처음 쓰는 계정은 "계정 등록"으로 먼저 만든 뒤 로그인하세요.</div>
       <div class="fav-head">
         <span class="fav-title">⭐ 내 즐겨찾기</span>
-        <input type="text" id="favFolder" list="fav-folder-list"
-               placeholder="폴더 (기본: Default)" style="width:150px">
-        <datalist id="fav-folder-list"></datalist>
+        <label>폴더:
+          <select id="favFolder" style="width:160px"></select>
+        </label>
         <button id="favNewFolderBtn">＋ 폴더 추가</button>
         <button id="favAddBtn" disabled>현재 종목 즐겨찾기 등록</button>
         <span id="fav-status"></span>
       </div>
       <div id="favorites-list" class="fav-list"></div>
+      </div>
     </fieldset>
 
     <div id="compare-section"></div>
@@ -566,15 +578,11 @@ FUNDAMENTAL_MONEY_FIELDS = [
     "total_revenue", "revenue_forecast_next_fq", "revenue_forecast_next_fy",
 ]
 
-# 연도별 재무 히스토리 중 금액(보고 통화) 배열 - 환산 대상
-FUNDAMENTAL_HISTORY_MONEY_FIELDS = [
-    "total_revenue_fy_h", "gross_profit_fy_h", "net_income_fy_h",
-    "ebitda_fy_h", "free_cash_flow_fy_h", "earnings_per_share_basic_fy_h",
-    "dps_common_stock_prim_issue_fy_h", "total_assets_fy_h", "total_debt_fy_h",
-    "total_revenue_fq_h", "gross_profit_fq_h", "net_income_fq_h",
-    "ebitda_fq_h", "free_cash_flow_fq_h", "earnings_per_share_diluted_fq_h",
-    "dps_common_stock_prim_issue_fq_h", "total_assets_fq_h", "total_debt_fq_h",
-]
+# 연도별 재무 히스토리 배열(_fy_h/_fq_h)은 TradingView 가 '거래(상장) 통화'로
+# 제공하므로 보고 통화 환산 대상이 아니다. (스칼라·TTM 값만 보고 통화이며 아래에서 환산)
+#   예) KRX:000660(하이닉스): fundamental_currency_code=USD 이지만
+#       total_revenue_fy_h 는 KRW(수십조) 로 제공된다.
+FUNDAMENTAL_HISTORY_MONEY_FIELDS = []
 
 # 현재값(TTM/최근분기) 중 금액(보고 통화) 스칼라 필드 - 환산 대상
 FUNDAMENTAL_CURRENT_MONEY_FIELDS = [
@@ -907,9 +915,18 @@ async def lookup(ticker, exchange=None, lang="en"):
             _convert_fundamentals(data, financials, rate)
             fx = {"from": fund_ccy, "to": trade_ccy, "rate": rate}
 
+    # 지표 비교 차트에서 USD 로 통일 비교하기 위한 (거래통화 → USD) 환율을
+    # 조회 시점에 미리 확보해 둔다. (비동기 재렌더 타이밍 의존 제거)
+    if not trade_ccy:
+        usd_rate = None
+    elif trade_ccy == "USD":
+        usd_rate = 1.0
+    else:
+        usd_rate = await fetch_fx_rate(trade_ccy, "USD")
+
     payload = {
         "forecast": data, "valuation": valuation, "financials": financials,
-        "fx": fx,
+        "fx": fx, "usd_rate": usd_rate,
     }
     return "stock", full_symbol, payload
 
@@ -986,11 +1003,13 @@ def _upside(target, close):
 _COMPARE_MAX = 4
 _COMPARE = []   # [{"symbol", "data", "valuation", "cur", "financials"}]
 _LAST_STOCK = {"symbol": None, "data": None, "valuation": None,
-               "cur": None, "financials": None}
+               "cur": None, "financials": None, "usd_rate": None}
 
 # 비교 차트 상태: 선택 지표를 종목별 꺾은선으로 겹쳐 그린다.
 _CMP_CHART = {"metric": "revenue", "period": "annual"}
 _CMP_COLORS = ["#2962ff", "#f23645", "#089981", "#ff9800"]
+# 지표 비교 차트 전용: 통화 → USD 환율 캐시(1 통화 = ? USD). USD 는 1.0.
+_USD_RATES = {"USD": 1.0}
 
 
 def render_report(full_symbol, payload):
@@ -999,11 +1018,13 @@ def render_report(full_symbol, payload):
         valuation = payload.get("valuation")
         financials = payload.get("financials")
         fx = payload.get("fx")
+        usd_rate = payload.get("usd_rate")
     else:
         data = payload
         valuation = None
         financials = None
         fx = None
+        usd_rate = None
 
     cur = data.get("currency") or ""
     desc = data.get("description") or full_symbol
@@ -1015,6 +1036,7 @@ def render_report(full_symbol, payload):
     _LAST_STOCK["valuation"] = valuation
     _LAST_STOCK["cur"] = cur
     _LAST_STOCK["financials"] = financials
+    _LAST_STOCK["usd_rate"] = usd_rate
 
     # 즐겨찾기 등록 버튼 활성화
     _mark_favoritable(full_symbol, desc)
@@ -1150,14 +1172,36 @@ def _on_add_compare(event):
     if len(_COMPARE) >= _COMPARE_MAX:
         window.alert("최대 %d 종목까지 비교할 수 있습니다." % _COMPARE_MAX)
         return
+    cur = _LAST_STOCK["cur"]
+    usd_rate = _LAST_STOCK.get("usd_rate")
     _COMPARE.append({
         "symbol": sym,
         "data": _LAST_STOCK["data"],
         "valuation": _LAST_STOCK["valuation"],
-        "cur": _LAST_STOCK["cur"],
+        "cur": cur,
         "financials": _LAST_STOCK.get("financials"),
+        "usd_rate": usd_rate,
     })
+    # 조회 시점에 확보한 환율을 캐시에도 넣어둔다.
+    if cur and usd_rate is not None and cur not in _USD_RATES:
+        _USD_RATES[cur] = usd_rate
     render_compare()
+    # 혹시 환율을 못 받은 경우(조회 시 실패)에 한해 비동기로 재시도한다.
+    if cur and usd_rate is None:
+        asyncio.ensure_future(_ensure_usd_rate_and_render(cur))
+
+
+async def _ensure_usd_rate(ccy):
+    """통화의 USD 환율을 캐시에 채운다. 새로 받아왔으면 True."""
+    if not ccy or ccy in _USD_RATES:
+        return False
+    _USD_RATES[ccy] = await fetch_fx_rate(ccy, "USD")
+    return True
+
+
+async def _ensure_usd_rate_and_render(ccy):
+    if await _ensure_usd_rate(ccy):
+        render_compare()
 
 
 def _on_clear_compare(event):
@@ -1217,6 +1261,7 @@ def _cmp_build_series(period, metric_key):
     for c in _COMPARE:
         fin = c.get("financials")
         name = c["data"].get("description") or c["symbol"]
+        disp_cur = c.get("cur") or ""
         vmap = {}
         cur_val = None
         if fin and fin.get("fiscal_period_fy_h"):
@@ -1232,11 +1277,28 @@ def _cmp_build_series(period, metric_key):
                 kind = metric["kind"]
                 metric_label = metric["label"]
                 cur_val = metric.get("current")
-                for y, v in zip(years, metric["values"]):
-                    if v is not None:
-                        vmap[y] = v
-                        label_union.add(y)
-        per_stock.append((name, c.get("cur") or "", vmap, cur_val))
+                # 금액(money)·주당(cur) 지표는 통화 단위가 달라 비교가 어려우므로
+                # USD 가 아닌 종목은 현재 환율로 USD 로 환산해 통일한다.
+                is_money = kind in ("money", "cur")
+                rate = None
+                if is_money:
+                    rate = c.get("usd_rate")
+                    if rate is None:
+                        rate = _USD_RATES.get(disp_cur)
+                if is_money and rate:
+                    disp_cur = "USD"
+                    if isinstance(cur_val, (int, float)):
+                        cur_val = cur_val * rate
+                    for y, v in zip(years, metric["values"]):
+                        if v is not None:
+                            vmap[y] = v * rate
+                            label_union.add(y)
+                else:
+                    for y, v in zip(years, metric["values"]):
+                        if v is not None:
+                            vmap[y] = v
+                            label_union.add(y)
+        per_stock.append((name, disp_cur, vmap, cur_val))
 
     labels = sorted(label_union, key=_cmp_period_sort_key)
     if len(labels) > 10:
@@ -1398,8 +1460,9 @@ def _render_cmp_chart(h):
 
     unit = "분기" if quarterly else "연도"
     h.append('<div class="hint">선택한 지표를 최근 10개 %s에 대해 비교 종목별 '
-             '꺾은선으로 표시합니다. 통화가 다른 종목은 각 종목의 표시 통화 '
-             '기준입니다.</div>' % unit)
+             '꺾은선으로 표시합니다. 금액·주당 지표는 USD 가 아닌 종목을 현재 '
+             '환율로 USD 로 환산해 비교합니다(비율·성장률 등은 환산하지 않음).</div>'
+             % unit)
     h.append('</div>')
 
 
@@ -3657,6 +3720,16 @@ async def fav_delete_folder(name):
     return favs
 
 
+async def fav_rename_folder(old_name, new_name):
+    """폴더 이름을 변경하고 갱신된 목록을 반환."""
+    body = json.dumps({"folder": old_name, "newFolder": new_name})
+    favs, err = await _fav_request("POST", extra_query="&folder_op=rename", body=body)
+    if err:
+        _set_fav_status("폴더 이름 변경 실패: %s" % err)
+        return None
+    return favs
+
+
 def render_favorites(favs):
     """즐겨찾기 목록을 폴더별로 그룹화해 렌더링한다(빈 폴더 포함)."""
     box = document.querySelector("#favorites-list")
@@ -3697,27 +3770,35 @@ def render_favorites(favs):
                 '</span>'
                 % (_esc(sym), _esc(sym), _esc(name), _esc(sym)))
         empty_hint = '' if chips else '<span class="fav-name">(비어 있음)</span>'
-        # Default 는 기본 폴더라 삭제 버튼을 숨긴다
-        del_btn = (
+        # Default 는 기본 폴더라 이름 변경/삭제 버튼을 숨긴다
+        actions = (
             '' if folder == "Default"
-            else '<button class="fav-folder-del" data-folder="%s" '
-                 'title="폴더 삭제">🗑</button>' % _esc(folder))
+            else '<span class="fav-folder-actions">'
+                 '<button class="fav-folder-ren" data-folder="%s" '
+                 'title="폴더 이름 변경">✏</button>'
+                 '<button class="fav-folder-del" data-folder="%s" '
+                 'title="폴더 삭제">🗑</button></span>'
+                 % (_esc(folder), _esc(folder)))
         html.append(
             '<details class="fav-folder" open>'
             '<summary><span class="fav-folder-name">📁 %s</span>'
             '<span class="fav-folder-count">%d</span>%s</summary>'
             '<div class="fav-folder-items">%s%s</div>'
             '</details>'
-            % (_esc(folder), len(items), del_btn, "".join(chips), empty_hint))
+            % (_esc(folder), len(items), actions, "".join(chips), empty_hint))
     box.innerHTML = "".join(html)
     _bind_favorites()
 
 
 def _update_folder_datalist(favs):
-    """폴더 입력칸(datalist)에 기존 폴더 목록을 채워 자동완성되게 한다."""
-    dl = document.querySelector("#fav-folder-list")
-    if dl is None:
+    """폴더 드롭박스(select)에 계정의 폴더 목록을 채운다.
+
+    'Default' 를 맨 위로, 나머지는 이름순으로 넣고 이전 선택을 최대한 유지한다.
+    """
+    sel = document.querySelector("#favFolder")
+    if sel is None:
         return
+    prev = sel.value
     names = set()
     for f in (favs or []):
         folder = (f.get("folder") or "").strip()
@@ -3727,9 +3808,12 @@ def _update_folder_datalist(favs):
         nm = (n or "").strip()
         if nm:
             names.add(nm)
-    names.add("Default")
-    opts = ['<option value="%s">' % _esc(n) for n in sorted(names)]
-    dl.innerHTML = "".join(opts)
+    names.discard("Default")
+    ordered = ["Default"] + sorted(names)
+    opts = ['<option value="%s">%s</option>' % (_esc(n), _esc(n)) for n in ordered]
+    sel.innerHTML = "".join(opts)
+    if prev in ordered:
+        sel.value = prev
 
 
 def _make_fav_load_handler(symbol):
@@ -3770,6 +3854,26 @@ def _make_fav_folder_del_handler(folder):
     return handler
 
 
+def _make_fav_folder_ren_handler(folder):
+    async def _do(new_name):
+        favs = await fav_rename_folder(folder, new_name)
+        if favs is not None:
+            render_favorites(favs)
+            _set_fav_status("폴더 이름 변경됨 · %s → %s" % (folder, new_name))
+
+    def handler(evt):
+        evt.preventDefault()
+        evt.stopPropagation()
+        new_name = (window.prompt("새 폴더 이름을 입력하세요", folder) or "").strip()
+        if not new_name or new_name == folder:
+            return
+        if new_name == "Default":
+            window.alert("'Default'는 사용할 수 없는 폴더 이름입니다.")
+            return
+        asyncio.ensure_future(_do(new_name))
+    return handler
+
+
 def _bind_favorites():
     loads = document.querySelectorAll("#favorites-list .fav-load")
     for i in range(loads.length):
@@ -3779,6 +3883,10 @@ def _bind_favorites():
     for i in range(dels.length):
         el = dels.item(i)
         _bind(el, "click", _make_fav_del_handler(el.getAttribute("data-symbol")))
+    frens = document.querySelectorAll("#favorites-list .fav-folder-ren")
+    for i in range(frens.length):
+        el = frens.item(i)
+        _bind(el, "click", _make_fav_folder_ren_handler(el.getAttribute("data-folder")))
     fdels = document.querySelectorAll("#favorites-list .fav-folder-del")
     for i in range(fdels.length):
         el = fdels.item(i)
@@ -4288,14 +4396,29 @@ async def on_fav_add(event):
         _set_fav_status("등록됨 · %s → %s" % (sym, folder))
 
 
+@when("click", "#favCollapseBtn")
+def on_fav_collapse(event):
+    """즐겨찾기 영역 전체를 접거나 편다(타이틀·버튼만 남기고 최소화)."""
+    body = document.querySelector("#fav-body")
+    btn = document.querySelector("#favCollapseBtn")
+    if body is None or btn is None:
+        return
+    if body.style.display == "none":
+        body.style.display = ""
+        btn.textContent = "▲"
+        btn.title = "즐겨찾기 접기"
+    else:
+        body.style.display = "none"
+        btn.textContent = "▼"
+        btn.title = "즐겨찾기 펴기"
+
+
 @when("click", "#favNewFolderBtn")
 async def on_fav_new_folder(event):
     if not _fav_logged_in():
         window.alert("먼저 로그인하세요.")
         return
-    name = document.querySelector("#favFolder").value.strip()
-    if not name:
-        name = (window.prompt("새 폴더 이름을 입력하세요") or "").strip()
+    name = (window.prompt("새 폴더 이름을 입력하세요") or "").strip()
     if not name:
         return
     if name == "Default":

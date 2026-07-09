@@ -39,6 +39,7 @@
  *    GET    https://<worker>/favorites?account=<id>            → {favorites:[...], folders:[...], exists}
  *    POST   https://<worker>/favorites?account=<id>&register=1  → 계정 등록(중복 시 409)
  *    POST   https://<worker>/favorites?account=<id>&folder_op=create → 본문 {folder} 빈 폴더 생성
+ *    POST   https://<worker>/favorites?account=<id>&folder_op=rename → 본문 {folder,newFolder} 폴더 이름 변경
  *    POST   https://<worker>/favorites?account=<id>            → 본문 {symbol,name,folder} 추가/이동
  *    DELETE https://<worker>/favorites?account=<id>&symbol=..  → 해당 심볼 삭제
  *    DELETE https://<worker>/favorites?account=<id>&folder=..  → 폴더와 그 안의 종목 삭제
@@ -306,6 +307,44 @@ async function handleFavorites(request, env, reqUrl) {
         );
       }
       folders.push(newFolder);
+      await env.FAVORITES.put(
+        kvKey,
+        JSON.stringify({ keyHash: authHash, favorites, folders })
+      );
+      return jsonResponse({ favorites, folders });
+    }
+
+    // 폴더 이름 변경 요청: ?folder_op=rename, 본문 {folder, newFolder}
+    if (reqUrl.searchParams.get("folder_op") === "rename") {
+      const oldName = cleanStr(payload && payload.folder);
+      const newName = cleanStr(payload && payload.newFolder);
+      if (!oldName || !newName) {
+        return jsonResponse({ error: "변경할 폴더와 새 이름을 입력하세요.", favorites, folders }, 400);
+      }
+      if (oldName === "Default" || newName === "Default") {
+        return jsonResponse({ error: "'Default' 폴더는 이름을 변경할 수 없습니다.", favorites, folders }, 400);
+      }
+      if (oldName === newName) {
+        return jsonResponse({ favorites, folders });
+      }
+      const usedOld =
+        folders.includes(oldName) ||
+        favorites.some((f) => (f.folder || "Default") === oldName);
+      if (!usedOld) {
+        return jsonResponse({ error: "변경할 폴더를 찾을 수 없습니다.", favorites, folders }, 404);
+      }
+      const usedNew =
+        folders.includes(newName) ||
+        favorites.some((f) => (f.folder || "Default") === newName);
+      if (usedNew) {
+        return jsonResponse({ error: "이미 존재하는 폴더 이름입니다.", favorites, folders }, 409);
+      }
+      favorites.forEach((f) => {
+        if ((f.folder || "Default") === oldName) f.folder = newName;
+      });
+      const idx = folders.indexOf(oldName);
+      if (idx >= 0) folders[idx] = newName;
+      else folders.push(newName);
       await env.FAVORITES.put(
         kvKey,
         JSON.stringify({ keyHash: authHash, favorites, folders })
