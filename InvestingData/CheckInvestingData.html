@@ -113,6 +113,21 @@
   .chart-svg .ax-y { fill:var(--mut); font-size:11px; text-anchor:end; }
   .chart-svg .ax-x { fill:var(--mut); font-size:11px; text-anchor:middle; }
   .chart-svg .pt-val { fill:#1f2328; font-size:10px; text-anchor:middle; }
+  .chart-svg .guide-line { stroke:#131722; stroke-width:1; stroke-dasharray:4 3;
+    pointer-events:none; }
+  .chart-svg .guide-dot { fill:#131722; pointer-events:none; }
+  .multpl-tip { position:absolute; pointer-events:none; display:none;
+    transform:translate(-50%,-145%); background:#131722; color:#fff;
+    font-size:12px; padding:4px 9px; border-radius:6px; white-space:nowrap;
+    z-index:5; box-shadow:0 2px 6px rgba(0,0,0,.25); }
+  .multpl-tip .d { opacity:.75; margin-right:7px; }
+  .multpl-tip .v { font-weight:700; }
+  .chart-svg .cmp-guide-dot { pointer-events:none; stroke:#fff; stroke-width:1; }
+  .multpl-tip .tip-date { opacity:.75; margin-bottom:3px; }
+  .multpl-tip .row { display:flex; align-items:center; gap:6px; line-height:1.55; }
+  .multpl-tip .row i { width:9px; height:9px; border-radius:2px; flex:0 0 auto; }
+  .multpl-tip .row .nm { margin-right:10px; }
+  .multpl-tip .row .v { font-weight:700; margin-left:auto; }
   .fin-table-wrap { overflow:auto; max-height:440px; border:1px solid var(--bd);
     border-radius:8px; }
   .fin-table { width:100%; border-collapse:collapse; font-size:13px; }
@@ -305,6 +320,7 @@
     <button class="tab-btn" data-tab="macro">경제지표</button>
     <button class="tab-btn" data-tab="guru">13F</button>
     <button class="tab-btn" data-tab="feargreed">공포·탐욕</button>
+    <button class="tab-btn" data-tab="multpl">밸류에이션</button>
   </div>
 
   <div class="tab-panel active" id="tab-stock">
@@ -458,6 +474,26 @@
 
     <div id="fg-result"></div>
   </div>
+
+  <div class="tab-panel" id="tab-multpl">
+    <fieldset>
+      <legend>밸류에이션 · 시장/거시 지표 (multpl.com)</legend>
+      <div class="row">
+        <label>지표:
+          <select id="multpl-metric" style="min-width:260px"></select>
+        </label>
+        <span class="fin-period" id="multpl-period">
+          <button type="button" class="on" data-freq="by-month">월별</button>
+          <button type="button" data-freq="by-year">연도별</button>
+        </span>
+        <button class="primary" id="multplBtn">조회</button>
+        <button id="multplOverviewBtn">전체 요약</button>
+        <span id="multpl-status"></span>
+      </div>
+    </fieldset>
+
+    <div id="multpl-result"></div>
+  </div>
 </main>
 
 <!-- ===================== PyScript (Python) ===================== -->
@@ -476,6 +512,7 @@ import re
 import asyncio
 from datetime import datetime, timezone
 from urllib.parse import urlencode
+from html import unescape as _html_unescape
 
 from pyodide.http import pyfetch
 from pyscript import document, window, when
@@ -1008,6 +1045,8 @@ _LAST_STOCK = {"symbol": None, "data": None, "valuation": None,
 # 비교 차트 상태: 선택 지표를 종목별 꺾은선으로 겹쳐 그린다.
 _CMP_CHART = {"metric": "revenue", "period": "annual"}
 _CMP_COLORS = ["#2962ff", "#f23645", "#089981", "#ff9800"]
+# 마우스 호버 툴팁을 위한 비교 차트 점 좌표/치수 캐시
+_CMP_HOVER = {"cols": [], "W": 0.0, "H": 0.0, "y1": 0.0, "y2": 0.0, "ndots": 0}
 # 지표 비교 차트 전용: 통화 → USD 환율 캐시(1 통화 = ? USD). USD 는 1.0.
 _USD_RATES = {"USD": 1.0}
 
@@ -1387,7 +1426,36 @@ def _cmp_chart_svg(labels, series_list, kind):
         parts.append('<text x="%g" y="%g" class="ax-x">%s</text>'
                      % (X(i), H - padB + 22, _esc(str(lb))))
 
+    # 마우스 호버 가이드(세로선 + 종목별 강조점) — JS 에서 위치를 갱신한다.
+    parts.append('<line id="cmp-guide" class="guide-line" x1="0" y1="%g" '
+                 'x2="0" y2="%g" style="display:none"/>' % (padT, H - padB))
+    for j in range(len(series_list)):
+        parts.append('<circle id="cmp-guide-dot-%d" class="cmp-guide-dot" r="4" '
+                     'cx="0" cy="0" style="display:none"/>' % j)
+
     parts.append('</svg>')
+
+    # 호버 툴팁용 좌표/치수 캐시 갱신 (기간별 라벨 + 종목별 값/색상/좌표)
+    cols = []
+    for i, lb in enumerate(labels):
+        items = []
+        for s in series_list:
+            v = s["values"][i] if i < len(s["values"]) else None
+            if v is None:
+                continue
+            items.append({
+                "name": s["name"],
+                "color": s["color"],
+                "val": _metric_cell_fmt(kind, v, s["cur"]),
+                "y": Y(v),
+            })
+        cols.append({"x": X(i), "label": str(lb), "items": items})
+    _CMP_HOVER["cols"] = cols
+    _CMP_HOVER["W"] = W
+    _CMP_HOVER["H"] = H
+    _CMP_HOVER["y1"] = padT
+    _CMP_HOVER["y2"] = H - padB
+    _CMP_HOVER["ndots"] = len(series_list)
     return "".join(parts)
 
 
@@ -1439,7 +1507,8 @@ def _render_cmp_chart(h):
     h.append('</div>')
 
     # 꺾은선 차트
-    h.append('<div class="fin-chart">%s</div>'
+    h.append('<div class="fin-chart" style="position:relative">%s'
+             '<div id="cmp-tip" class="multpl-tip"></div></div>'
              % _cmp_chart_svg(labels, series_list, kind))
 
     # 선택 지표에 대한 값 표 (종목 x 기간)
@@ -1476,6 +1545,81 @@ def _on_cmp_period_change(evt):
     if period and period != _CMP_CHART.get("period"):
         _CMP_CHART["period"] = period
         render_compare()
+
+
+def _cmp_hide_hover():
+    ids = ["#cmp-tip", "#cmp-guide"]
+    for j in range(len(_CMP_COLORS)):
+        ids.append("#cmp-guide-dot-%d" % j)
+    for sel in ids:
+        el = document.querySelector(sel)
+        if el is not None:
+            el.style.display = "none"
+
+
+@when("mousemove", "#compare-section")
+def on_cmp_hover(event):
+    """지표 비교 꺾은선 위에서 가장 가까운 기간의 라벨과 종목별 값을 표시."""
+    cols = _CMP_HOVER["cols"]
+    if not cols:
+        return
+    svg = document.querySelector("#compare-section svg.cmp-chart-svg")
+    tip = document.querySelector("#cmp-tip")
+    if svg is None or tip is None:
+        return
+    rect = svg.getBoundingClientRect()
+    if not rect.width or not rect.height:
+        return
+    # 커서가 차트 영역을 벗어나면 툴팁/가이드를 숨긴다.
+    if (event.clientX < rect.left or event.clientX > rect.right
+            or event.clientY < rect.top or event.clientY > rect.bottom):
+        _cmp_hide_hover()
+        return
+    W = _CMP_HOVER["W"]
+    H = _CMP_HOVER["H"]
+    sx = (event.clientX - rect.left) / rect.width * W
+    best = min(cols, key=lambda c: abs(c["x"] - sx))
+    items = best["items"]
+
+    guide = document.querySelector("#cmp-guide")
+    if guide is not None:
+        guide.setAttribute("x1", "%g" % best["x"])
+        guide.setAttribute("x2", "%g" % best["x"])
+        guide.setAttribute("y1", "%g" % _CMP_HOVER["y1"])
+        guide.setAttribute("y2", "%g" % _CMP_HOVER["y2"])
+        guide.style.display = "block"
+    for j in range(_CMP_HOVER["ndots"]):
+        dot = document.querySelector("#cmp-guide-dot-%d" % j)
+        if dot is None:
+            continue
+        if j < len(items):
+            dot.setAttribute("cx", "%g" % best["x"])
+            dot.setAttribute("cy", "%g" % items[j]["y"])
+            dot.setAttribute("fill", items[j]["color"])
+            dot.style.display = "block"
+        else:
+            dot.style.display = "none"
+
+    rows = ['<div class="tip-date">%s</div>' % _esc(best["label"])]
+    for it in items:
+        rows.append('<div class="row"><i style="background:%s"></i>'
+                    '<span class="nm">%s</span><span class="v">%s</span></div>'
+                    % (it["color"], _esc(it["name"]), _esc(it["val"])))
+    tip.innerHTML = "".join(rows)
+
+    wrap = svg.parentElement
+    wrect = wrap.getBoundingClientRect()
+    top_y = min((it["y"] for it in items), default=H / 2.0)
+    left_px = (rect.left - wrect.left) + best["x"] / W * rect.width
+    top_px = (rect.top - wrect.top) + top_y / H * rect.height
+    tip.style.left = "%gpx" % left_px
+    tip.style.top = "%gpx" % top_px
+    tip.style.display = "block"
+
+
+@when("mouseleave", "#compare-section")
+def on_cmp_leave(event):
+    _cmp_hide_hover()
 
 
 def render_compare():
@@ -4227,6 +4371,313 @@ async def load_fear_greed():
     box.innerHTML = cnn_html + alt_html
 
 
+# ===================== 밸류에이션 (multpl.com) =====================
+_MULTPL_LOADED = {"done": False}
+# 마우스 호버 툴팁을 위한 현재 그래프의 점 좌표/치수 캐시
+_MULTPL_CHART = {"pts": [], "W": 0.0, "H": 0.0, "y1": 0.0, "y2": 0.0}
+
+# (slug, 한글 라벨, 단위 접미사)
+_MULTPL_METRICS = [
+    ("s-p-500-pe-ratio", "S&P 500 PER", ""),
+    ("shiller-pe", "Shiller PE (CAPE)", ""),
+    ("s-p-500-earnings-yield", "S&P 500 이익수익률", "%"),
+    ("s-p-500-dividend-yield", "S&P 500 배당수익률", "%"),
+    ("s-p-500-price-to-book", "S&P 500 PBR", ""),
+    ("s-p-500-price-to-sales", "S&P 500 PSR", ""),
+    ("s-p-500-earnings", "S&P 500 주당순이익", ""),
+    ("s-p-500-dividend", "S&P 500 주당배당금", ""),
+    ("s-p-500-historical-prices", "S&P 500 지수", ""),
+    ("inflation-adjusted-s-p-500", "인플레이션 조정 S&P 500", ""),
+    ("10-year-treasury-rate", "미 국채 10년 금리", "%"),
+    ("20-year-treasury-rate", "미 국채 20년 금리", "%"),
+    ("inflation", "미 인플레이션율", "%"),
+    ("us-gdp-growth-rate", "미 GDP 성장률", "%"),
+    ("us-real-gdp-growth-rate", "미 실질 GDP 성장률", "%"),
+]
+
+_MULTPL_DATE_RE = re.compile(r"^[A-Z][a-z]{2}\s+\d{1,2},\s+\d{4}$")
+
+
+def _multpl_label(slug):
+    for s, label, unit in _MULTPL_METRICS:
+        if s == slug:
+            return label, unit
+    return slug, ""
+
+
+def _set_multpl_status(msg):
+    el = document.querySelector("#multpl-status")
+    if el is not None:
+        el.textContent = msg or ""
+
+
+def _multpl_freq():
+    btns = document.querySelectorAll("#multpl-period button")
+    for i in range(btns.length):
+        b = btns.item(i)
+        if "on" in (b.className or ""):
+            return b.getAttribute("data-freq") or "by-month"
+    return "by-month"
+
+
+def _populate_multpl_select():
+    sel = document.querySelector("#multpl-metric")
+    if sel is None or sel.options.length > 0:
+        return
+    for slug, label, unit in _MULTPL_METRICS:
+        opt = document.createElement("option")
+        opt.value = slug
+        opt.textContent = label
+        sel.appendChild(opt)
+
+
+async def _fetch_multpl_text(slug, freq):
+    """multpl.com 표 페이지 HTML 을 여러 경로로 시도해 가져온다.
+
+    순서: 직접 → 사용자 CORS 프록시(Worker) → 공개 프록시들.
+    """
+    url = "https://www.multpl.com/%s/table/%s" % (slug, freq)
+    enc = str(js.encodeURIComponent(url))
+    attempts = [
+        ("직접", url),
+        ("사용자 프록시", _proxied(url)),
+        ("우회1", "https://api.allorigins.win/raw?url=" + enc),
+        ("우회2", "https://corsproxy.io/?url=" + enc),
+        ("우회3", "https://thingproxy.freeboard.io/fetch/" + url),
+    ]
+    errs = []
+    seen = set()
+    for label, u in attempts:
+        if not u or u in seen:
+            continue
+        seen.add(u)
+        try:
+            resp = await pyfetch(u, method="GET")
+        except Exception as exc:
+            errs.append("%s: %s" % (label, exc))
+            continue
+        if resp.status >= 400:
+            errs.append("%s: HTTP %s" % (label, resp.status))
+            continue
+        text = await resp.string()
+        if text and "</table" in text.lower():
+            return text
+        errs.append("%s: 표 없음" % label)
+    raise InvestingApiError("데이터를 가져오지 못했습니다 (%s)" % "; ".join(errs))
+
+
+def _parse_multpl(html):
+    """multpl 표에서 (날짜, 값문자열) 목록을 최신순 그대로 추출."""
+    rows = re.findall(r"<tr[^>]*>(.*?)</tr>", html, re.S | re.I)
+    out = []
+    for r in rows:
+        cells = re.findall(r"<td[^>]*>(.*?)</td>", r, re.S | re.I)
+        if len(cells) < 2:
+            continue
+        # 태그 제거 → HTML 엔티티 해제(&#x2002; 등) → 공백류 정규화
+        date = _html_unescape(re.sub(r"<[^>]+>", "", cells[0]))
+        date = re.sub(r"\s+", " ", date).strip()
+        if not _MULTPL_DATE_RE.match(date):
+            continue
+        val = _html_unescape(re.sub(r"<[^>]+>", "", cells[1]))
+        # 각주 표식(†, ‡) 및 잔여 공백류 제거
+        val = val.replace("\u2020", "").replace("\u2021", "")
+        val = re.sub(r"\s+", " ", val).strip()
+        out.append((date, val))
+    return out
+
+
+def _multpl_num(s):
+    """값 문자열에서 부호 있는 실수 추출. 실패 시 None."""
+    m = re.search(r"-?\d[\d,]*\.?\d*", s or "")
+    if not m:
+        return None
+    try:
+        return float(m.group(0).replace(",", ""))
+    except ValueError:
+        return None
+
+
+def _fmt_multpl_val(val, unit):
+    if _multpl_num(val) is None:
+        return _esc(val)
+    txt = val.strip()
+    if unit == "%" and "%" not in txt:
+        txt = txt + "%"
+    return _esc(txt)
+
+
+def _multpl_chart_svg(data, unit):
+    """최근 120개(최신순 data)를 시간순 꺾은선 그래프 SVG 로 반환."""
+    recent = list(reversed(data[:120]))
+    pts = [(d, _multpl_num(v)) for d, v in recent]
+    pts = [(d, v) for d, v in pts if v is not None]
+    if len(pts) < 2:
+        return '<div class="hint">그래프를 표시할 데이터가 부족합니다.</div>'
+    vals = [v for _, v in pts]
+    vmax, vmin = max(vals), min(vals)
+    if vmax == vmin:
+        vmax += 1.0
+        vmin -= 1.0
+    else:
+        pad = (vmax - vmin) * 0.08
+        vmax += pad
+        vmin -= pad
+    W, H = 820.0, 300.0
+    padL, padR, padT, padB = 66.0, 18.0, 20.0, 40.0
+    plot_w = W - padL - padR
+    plot_h = H - padT - padB
+    n = len(pts)
+    suf = unit if unit else ""
+
+    def X(i):
+        return padL + plot_w * (i / (n - 1))
+
+    def Y(v):
+        return padT + (vmax - v) / (vmax - vmin) * plot_h
+
+    def axfmt(v):
+        return "{:,.2f}{}".format(v, suf)
+
+    def xlabel(d):
+        # "Jul 9, 2026" → "Jul 2026" 로 축약해 축 라벨 혼잡을 줄인다.
+        return re.sub(r"\s+\d{1,2},", "", d)
+
+    parts = ['<svg viewBox="0 0 %g %g" class="chart-svg" '
+             'preserveAspectRatio="xMidYMid meet">' % (W, H)]
+    for gv in (vmax, (vmax + vmin) / 2.0, vmin):
+        gy = Y(gv)
+        parts.append('<line x1="%g" y1="%g" x2="%g" y2="%g" stroke="#eaecef"/>'
+                     % (padL, gy, W - padR, gy))
+        parts.append('<text x="%g" y="%g" class="ax-y">%s</text>'
+                     % (padL - 8, gy + 4, _esc(axfmt(gv))))
+
+    poly = " ".join("%g,%g" % (X(i), Y(v)) for i, (d, v) in enumerate(pts))
+    parts.append('<polyline points="%s" class="line-path" fill="none"/>' % poly)
+    # 최신 점 강조 + 값 라벨
+    lx, ly, lv = X(n - 1), Y(pts[-1][1]), pts[-1][1]
+    parts.append('<circle cx="%g" cy="%g" r="4" class="line-dot"/>' % (lx, ly))
+    parts.append('<text x="%g" y="%g" class="pt-val" text-anchor="end">%s</text>'
+                 % (lx - 6, ly - 6, _esc(axfmt(lv))))
+
+    step = max(1, n // 8)
+    for i, (d, v) in enumerate(pts):
+        if i % step == 0 or i == n - 1:
+            parts.append('<text x="%g" y="%g" class="ax-x">%s</text>'
+                         % (X(i), H - padB + 22, _esc(xlabel(d))))
+    # 마우스 호버 가이드(세로선 + 점) — JS 에서 위치를 갱신한다.
+    parts.append('<line id="multpl-guide" class="guide-line" x1="0" y1="%g" '
+                 'x2="0" y2="%g" style="display:none"/>' % (padT, H - padB))
+    parts.append('<circle id="multpl-guide-dot" class="guide-dot" r="4" '
+                 'cx="0" cy="0" style="display:none"/>')
+    parts.append('</svg>')
+
+    # 호버 툴팁용 좌표/치수 캐시 갱신
+    _MULTPL_CHART["pts"] = [
+        {"x": X(i), "y": Y(v), "date": d, "val": axfmt(v)}
+        for i, (d, v) in enumerate(pts)]
+    _MULTPL_CHART["W"] = W
+    _MULTPL_CHART["H"] = H
+    _MULTPL_CHART["y1"] = padT
+    _MULTPL_CHART["y2"] = H - padB
+    return "".join(parts)
+
+
+def _multpl_html(slug, label, unit, freq, data):
+    cur_date, cur_val = data[0]
+    delta_html = ""
+    if len(data) > 1:
+        c = _multpl_num(cur_val)
+        p = _multpl_num(data[1][1])
+        if c is not None and p is not None:
+            diff = c - p
+            cls = "up" if diff > 0 else ("down" if diff < 0 else "")
+            arrow = "▲" if diff > 0 else ("▼" if diff < 0 else "―")
+            delta_html = ('<span class="%s" style="font-size:14px;margin-left:8px">'
+                          '%s %+.2f (직전 %s)</span>'
+                          % (cls, arrow, diff, _esc(data[1][0])))
+    chart_html = _multpl_chart_svg(data, unit)
+    shown = min(len(data), 120)
+    freq_txt = "월별" if freq == "by-month" else "연도별"
+    return (
+        '<div class="card">'
+        '<div class="card-head">'
+        '<span class="name">%s</span>'
+        '<span class="sym">multpl.com · %s</span>'
+        '<div class="price">현재값 <b>%s</b>%s</div>'
+        '</div>'
+        '<div style="padding:16px 18px">'
+        '<div class="hint">기준일: %s · 최근 %d개 시계열 꺾은선</div>'
+        '<div class="fin-chart" style="margin-top:12px;position:relative">'
+        '%s<div id="multpl-tip" class="multpl-tip"></div></div>'
+        '</div>'
+        '</div>'
+        % (_esc(label), _esc(freq_txt),
+           _fmt_multpl_val(cur_val, unit), delta_html,
+           _esc(cur_date), shown, chart_html))
+
+
+async def load_multpl(slug=None):
+    box = document.querySelector("#multpl-result")
+    if box is None:
+        return
+    sel = document.querySelector("#multpl-metric")
+    if slug is None:
+        slug = (sel.value if sel is not None and sel.value else "s-p-500-pe-ratio")
+    label, unit = _multpl_label(slug)
+    freq = _multpl_freq()
+    _set_multpl_status("불러오는 중...")
+    try:
+        html = await _fetch_multpl_text(slug, freq)
+        data = _parse_multpl(html)
+    except Exception as exc:
+        _set_multpl_status("오류")
+        box.innerHTML = ('<div class="warn">%s 데이터를 불러오지 못했습니다.<br>%s</div>'
+                         % (_esc(label), _esc(str(exc))))
+        return
+    if not data:
+        _set_multpl_status("데이터 없음")
+        box.innerHTML = '<div class="warn">표 데이터를 찾지 못했습니다.</div>'
+        return
+    box.innerHTML = _multpl_html(slug, label, unit, freq, data)
+    _set_multpl_status("완료 · %d행" % len(data))
+
+
+async def load_multpl_overview():
+    """주요 지표들의 현재값을 한 표에 모아 보여준다."""
+    box = document.querySelector("#multpl-result")
+    if box is None:
+        return
+    _set_multpl_status("전체 요약 불러오는 중...")
+    rows_html = []
+    ok = 0
+    for slug, label, unit in _MULTPL_METRICS:
+        try:
+            html = await _fetch_multpl_text(slug, "by-month")
+            data = _parse_multpl(html)
+        except Exception:
+            data = None
+        if data:
+            ok += 1
+            cur_date, cur_val = data[0]
+            rows_html.append(
+                '<tr><td>%s</td><td>%s</td><td>%s</td></tr>'
+                % (_esc(label), _fmt_multpl_val(cur_val, unit), _esc(cur_date)))
+        else:
+            rows_html.append(
+                '<tr><td>%s</td><td>-</td><td>-</td></tr>' % _esc(label))
+    box.innerHTML = (
+        '<div class="card">'
+        '<div class="card-head"><span class="name">📊 주요 밸류에이션·거시 지표 요약</span>'
+        '<span class="sym">multpl.com</span></div>'
+        '<div class="sec"><div class="fin-table-wrap">'
+        '<table class="fin-table"><thead><tr>'
+        '<th>지표</th><th>현재값</th><th>기준일</th></tr></thead>'
+        '<tbody>%s</tbody></table></div></div></div>'
+        % "".join(rows_html))
+    _set_multpl_status("완료 · %d/%d" % (ok, len(_MULTPL_METRICS)))
+
+
 # ===================== 이벤트 =====================
 
 @when("click", "#lookupBtn")
@@ -4297,6 +4748,11 @@ def on_tab(event):
     # 공포·탐욕 탭을 처음 열면 자동으로 1회 조회한다.
     if name == "feargreed" and not _FG_LOADED["done"]:
         document.querySelector("#fgBtn").click()
+    # 밸류에이션 탭: 지표 목록을 채우고 처음 열면 기본 지표를 1회 조회한다.
+    if name == "multpl":
+        _populate_multpl_select()
+        if not _MULTPL_LOADED["done"]:
+            document.querySelector("#multplBtn").click()
 
 
 @when("click", "#fgBtn")
@@ -4315,6 +4771,106 @@ async def on_fear_greed(event):
             % _esc(str(exc)))
     finally:
         btn.disabled = False
+
+
+@when("click", "#multplBtn")
+async def on_multpl(event):
+    btn = document.querySelector("#multplBtn")
+    btn.disabled = True
+    try:
+        await load_multpl()
+        _MULTPL_LOADED["done"] = True
+    finally:
+        btn.disabled = False
+
+
+@when("click", "#multplOverviewBtn")
+async def on_multpl_overview(event):
+    btn = document.querySelector("#multplOverviewBtn")
+    btn.disabled = True
+    try:
+        await load_multpl_overview()
+        _MULTPL_LOADED["done"] = True
+    finally:
+        btn.disabled = False
+
+
+@when("change", "#multpl-metric")
+async def on_multpl_change(event):
+    await load_multpl()
+
+
+@when("click", "#multpl-period button")
+async def on_multpl_period(event):
+    target = event.target
+    btns = document.querySelectorAll("#multpl-period button")
+    for i in range(btns.length):
+        b = btns.item(i)
+        if b is target:
+            b.classList.add("on")
+        else:
+            b.classList.remove("on")
+    await load_multpl()
+
+
+@when("mousemove", "#multpl-result")
+def on_multpl_hover(event):
+    """꺾은선 그래프 위에서 가장 가까운 점의 날짜·값 툴팁을 표시한다."""
+    pts = _MULTPL_CHART["pts"]
+    if not pts:
+        return
+    svg = document.querySelector("#multpl-result svg.chart-svg")
+    tip = document.querySelector("#multpl-tip")
+    if svg is None or tip is None:
+        return
+    rect = svg.getBoundingClientRect()
+    if not rect.width or not rect.height:
+        return
+    # 커서가 그래프(SVG) 영역을 벗어나면 툴팁/가이드를 숨긴다.
+    if (event.clientX < rect.left or event.clientX > rect.right
+            or event.clientY < rect.top or event.clientY > rect.bottom):
+        for sel in ("#multpl-tip", "#multpl-guide", "#multpl-guide-dot"):
+            el = document.querySelector(sel)
+            if el is not None:
+                el.style.display = "none"
+        return
+    W = _MULTPL_CHART["W"]
+    H = _MULTPL_CHART["H"]
+    # 마우스 x 를 SVG 좌표계로 변환한 뒤 가장 가까운 점을 찾는다.
+    sx = (event.clientX - rect.left) / rect.width * W
+    best = min(pts, key=lambda p: abs(p["x"] - sx))
+
+    guide = document.querySelector("#multpl-guide")
+    dot = document.querySelector("#multpl-guide-dot")
+    if guide is not None:
+        guide.setAttribute("x1", "%g" % best["x"])
+        guide.setAttribute("x2", "%g" % best["x"])
+        guide.setAttribute("y1", "%g" % _MULTPL_CHART["y1"])
+        guide.setAttribute("y2", "%g" % _MULTPL_CHART["y2"])
+        guide.style.display = "block"
+    if dot is not None:
+        dot.setAttribute("cx", "%g" % best["x"])
+        dot.setAttribute("cy", "%g" % best["y"])
+        dot.style.display = "block"
+
+    # 툴팁을 래퍼(.fin-chart) 기준 픽셀 좌표로 배치한다.
+    wrap = svg.parentElement
+    wrect = wrap.getBoundingClientRect()
+    left_px = (rect.left - wrect.left) + best["x"] / W * rect.width
+    top_px = (rect.top - wrect.top) + best["y"] / H * rect.height
+    tip.style.left = "%gpx" % left_px
+    tip.style.top = "%gpx" % top_px
+    tip.innerHTML = ('<span class="d">%s</span><span class="v">%s</span>'
+                     % (_esc(best["date"]), _esc(best["val"])))
+    tip.style.display = "block"
+
+
+@when("mouseleave", "#multpl-result")
+def on_multpl_leave(event):
+    for sel in ("#multpl-tip", "#multpl-guide", "#multpl-guide-dot"):
+        el = document.querySelector(sel)
+        if el is not None:
+            el.style.display = "none"
 
 
 @when("click", "#macroBtn")

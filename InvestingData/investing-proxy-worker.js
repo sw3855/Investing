@@ -73,6 +73,8 @@ const ALLOWED_HOSTS = [
   "www.sec.gov",
   // CNN Business: 공포·탐욕 지수(Fear & Greed Index) 데이터
   "production.dataviz.cnn.io",
+  // multpl.com: S&P 500 PER·Shiller PE·배당수익률·국채금리·인플레이션 등 시장/거시 지표
+  "www.multpl.com",
 ];
 
 function isAllowed(hostname) {
