@@ -321,6 +321,7 @@
     <button class="tab-btn" data-tab="guru">13F</button>
     <button class="tab-btn" data-tab="feargreed">공포·탐욕</button>
     <button class="tab-btn" data-tab="multpl">밸류에이션</button>
+    <button class="tab-btn" data-tab="liquidity">유동성</button>
   </div>
 
   <div class="tab-panel active" id="tab-stock">
@@ -493,6 +494,19 @@
     </fieldset>
 
     <div id="multpl-result"></div>
+  </div>
+
+  <div class="tab-panel" id="tab-liquidity">
+    <fieldset>
+      <legend>연준 유동성 · 순유동성(Net Liquidity) 지표 (FRED)</legend>
+      <div class="row">
+        <span class="fin-quick">FRED API 키는 '경제지표' 탭에 입력한 키를 함께 사용합니다.</span>
+        <button class="primary" id="liqBtn">조회 / 새로고침</button>
+        <span id="liq-status"></span>
+      </div>
+    </fieldset>
+
+    <div id="liq-result"></div>
   </div>
 </main>
 
@@ -1557,6 +1571,44 @@ def _cmp_hide_hover():
             el.style.display = "none"
 
 
+def _place_tip_clamped(tip, svg, cx_svg, cy_svg, W, H):
+    """툴팁을 (cx_svg, cy_svg) SVG 좌표 근처에 배치하되 차트(SVG) 표시 영역을
+    벗어나지 않도록 좌표를 클램핑한다. 툴팁 내용(innerHTML)은 호출 전에
+    채워져 있어야 크기(offsetWidth/Height)를 정확히 측정할 수 있다."""
+    rect = svg.getBoundingClientRect()
+    wrap = svg.parentElement
+    wrect = wrap.getBoundingClientRect()
+    chart_left = rect.left - wrect.left
+    chart_top = rect.top - wrect.top
+    chart_right = chart_left + rect.width
+    chart_bottom = chart_top + rect.height
+    cx = chart_left + cx_svg / W * rect.width
+    cy = chart_top + cy_svg / H * rect.height
+    # CSS transform 대신 좌상단 좌표로 직접 배치(클램핑을 위해).
+    tip.style.transform = "none"
+    tip.style.display = "block"
+    tip_w = tip.offsetWidth
+    tip_h = tip.offsetHeight
+    # 가로: 점 중앙 정렬하되 차트 좌우 경계를 넘지 않도록 클램핑.
+    left_px = cx - tip_w / 2.0
+    if left_px < chart_left:
+        left_px = chart_left
+    if left_px + tip_w > chart_right:
+        left_px = chart_right - tip_w
+    if left_px < chart_left:
+        left_px = chart_left
+    # 세로: 기본은 점 위쪽, 위로 넘치면 점 아래쪽에 표시하고 하단도 클램핑.
+    top_px = cy - tip_h - 10.0
+    if top_px < chart_top:
+        top_px = cy + 14.0
+    if top_px + tip_h > chart_bottom:
+        top_px = chart_bottom - tip_h
+    if top_px < chart_top:
+        top_px = chart_top
+    tip.style.left = "%gpx" % left_px
+    tip.style.top = "%gpx" % top_px
+
+
 @when("mousemove", "#compare-section")
 def on_cmp_hover(event):
     """지표 비교 꺾은선 위에서 가장 가까운 기간의 라벨과 종목별 값을 표시."""
@@ -1607,14 +1659,8 @@ def on_cmp_hover(event):
                     % (it["color"], _esc(it["name"]), _esc(it["val"])))
     tip.innerHTML = "".join(rows)
 
-    wrap = svg.parentElement
-    wrect = wrap.getBoundingClientRect()
     top_y = min((it["y"] for it in items), default=H / 2.0)
-    left_px = (rect.left - wrect.left) + best["x"] / W * rect.width
-    top_px = (rect.top - wrect.top) + top_y / H * rect.height
-    tip.style.left = "%gpx" % left_px
-    tip.style.top = "%gpx" % top_px
-    tip.style.display = "block"
+    _place_tip_clamped(tip, svg, best["x"], top_y, W, H)
 
 
 @when("mouseleave", "#compare-section")
@@ -1872,6 +1918,8 @@ def render_holdings(full_symbol, meta, holdings, report_ts):
 # ===================== 연도별 지표 (표 + 막대/꺾은선 차트) =====================
 
 _FIN_STATE = {}
+# 재무 지표 차트 호버 툴팁용 좌표/치수 캐시
+_FIN_CHART_HOVER = {"pts": None, "W": 0.0, "H": 0.0, "y1": 0.0, "y2": 0.0}
 _PROXIES = []
 
 
@@ -2156,7 +2204,22 @@ def _fin_chart_svg(metric, sel_years, cur):
         parts.append('<text x="%g" y="%g" class="ax-x">%s</text>'
                      % (X(i), H - padB + 22, _esc(str(yr))))
 
+    # 마우스 호버 가이드(세로선 + 점) — JS 에서 위치를 갱신한다.
+    parts.append('<line id="fin-guide" class="guide-line" x1="0" y1="%g" '
+                 'x2="0" y2="%g" style="display:none"/>' % (padT, H - padB))
+    parts.append('<circle id="fin-guide-dot" class="guide-dot" r="4" '
+                 'cx="0" cy="0" style="display:none"/>')
     parts.append('</svg>')
+
+    # 호버 툴팁용 좌표/치수 캐시 갱신(값이 있는 점만)
+    _FIN_CHART_HOVER["pts"] = [
+        {"x": X(i), "y": Y(v), "date": str(yr),
+         "val": _metric_axis_fmt(kind, v)}
+        for i, (yr, v) in enumerate(data) if v is not None]
+    _FIN_CHART_HOVER["W"] = W
+    _FIN_CHART_HOVER["H"] = H
+    _FIN_CHART_HOVER["y1"] = padT
+    _FIN_CHART_HOVER["y2"] = H - padB
     return "".join(parts)
 
 
@@ -2226,7 +2289,8 @@ def refresh_financials():
     html.append('</div>')
 
     # 차트(막대 + 꺾은선)
-    html.append('<div class="fin-chart">%s</div>'
+    html.append('<div class="fin-chart" style="position:relative">%s'
+                '<div id="fin-tip" class="multpl-tip"></div></div>'
                 % _fin_chart_svg(metric, sel_years, cur))
 
     # 표
@@ -2674,6 +2738,9 @@ FREQ_META = {
 # 현재 선택된 차트 상태(지표 · 주기)
 _MACRO_CHART = {"series": None, "freq": "q"}
 
+# 매크로 차트 호버 툴팁용 좌표/치수 캐시
+_MACRO_CHART_HOVER = {"pts": None, "W": 0.0, "H": 0.0, "y1": 0.0, "y2": 0.0}
+
 
 def _freq_label(d, freq):
     """주기에 맞게 카테고리축 라벨 생성. 연도=YYYY, 분기='YY Qn, 월='YY.MM."""
@@ -2821,7 +2888,21 @@ def _macro_chart_svg(ind, points):
         parts.append('<text x="%g" y="%g" class="ax-x">%s</text>'
                      % (X(i), H - padB + 24, _esc(lb)))
 
+    # 마우스 호버 가이드(세로선 + 점) — JS 에서 위치를 갱신한다.
+    parts.append('<line id="macro-guide" class="guide-line" x1="0" y1="%g" '
+                 'x2="0" y2="%g" style="display:none"/>' % (padT, H - padB))
+    parts.append('<circle id="macro-guide-dot" class="guide-dot" r="4" '
+                 'cx="0" cy="0" style="display:none"/>')
     parts.append('</svg>')
+
+    # 호버 툴팁용 좌표/치수 캐시 갱신(값이 있는 점만)
+    _MACRO_CHART_HOVER["pts"] = [
+        {"x": X(i), "y": Y(v), "date": lb, "val": _macro_fmt(ind, v)}
+        for i, (lb, v) in enumerate(data) if v is not None]
+    _MACRO_CHART_HOVER["W"] = W
+    _MACRO_CHART_HOVER["H"] = H
+    _MACRO_CHART_HOVER["y1"] = padT
+    _MACRO_CHART_HOVER["y2"] = H - padB
     return "".join(parts)
 
 
@@ -2889,7 +2970,9 @@ async def _show_macro_chart(series, freq=None):
                 % (_esc(ind["label"]), _esc(ind["series"]), _esc(freq_label)))
     html.append('<div class="sec">')
     html.append(_freq_toggle_html(freq))
-    html.append('<div class="fin-chart">%s</div>' % _macro_chart_svg(ind, pts))
+    html.append('<div class="fin-chart" style="position:relative">%s'
+                '<div id="macro-tip" class="multpl-tip"></div></div>'
+                % _macro_chart_svg(ind, pts))
     html.append('<div class="hint">출처: %s · 최근 %d개 %s(%s 평균) 기준'
                 '%s. 막대=값, 꺾은선=추세.</div>'
                 % (_esc(src_txt), len(pts), _esc(freq_label), _esc(freq_label), unit_txt))
@@ -2974,6 +3057,352 @@ def _set_macro_status(msg):
 
 def _macro_busy(busy):
     document.querySelector("#macroBtn").disabled = busy
+
+
+# ===================== 연준 유동성 (Net Liquidity) =====================
+
+# 유동성 지표는 모두 FRED. 표시는 십억 달러(USD Billion) 기준으로 통일한다.
+#   WALCL/WTREGEN: 백만 달러(주간) → /1000, RRPONTSYD: 십억 달러(일간) → 그대로
+_LIQ_LOADED = {"done": False}
+
+# 순유동성 차트 호버 툴팁용 좌표/치수 캐시
+_LIQ_CHART = {"pts": None, "W": 0.0, "H": 0.0, "y1": 0.0, "y2": 0.0}
+
+# 조회 결과(주간 rows) 캐시 — S&P500 오버레이 토글 시 차트 재렌더에 사용
+_LIQ_STATE = {"rows": None}
+
+
+async def fetch_fred_obs(series_id, api_key, limit=120):
+    """FRED 관측치를 최신→과거 순 [(date, float), ...] 로 반환. 실패 시 None."""
+    params = {
+        "series_id": series_id, "api_key": api_key, "file_type": "json",
+        "sort_order": "desc", "limit": limit,
+    }
+    try:
+        data = await _get_json(FRED_OBS_URL, params)
+    except InvestingApiError:
+        return None
+    obs = data.get("observations") if isinstance(data, dict) else None
+    if not obs:
+        return None
+    out = []
+    for o in obs:
+        s = o.get("value")
+        if s in (None, ".", ""):
+            continue
+        try:
+            out.append((o.get("date"), float(s)))
+        except (ValueError, TypeError):
+            continue
+    return out or None
+
+
+def _latest_on_or_before(obs_desc, date_str):
+    """최신→과거 정렬 리스트에서 date_str 이하의 첫 값을 반환. 없으면 None."""
+    if not obs_desc:
+        return None
+    for d, v in obs_desc:
+        if d <= date_str:
+            return v
+    return None
+
+
+def _liq_label(date_str):
+    """FRED 날짜(YYYY-MM-DD)를 'YY.MM.DD 형식 라벨로 변환."""
+    try:
+        y, m, d = date_str.split("-")
+        return "'%s.%s.%s" % (y[2:], m, d)
+    except (ValueError, AttributeError):
+        return date_str or ""
+
+
+async def load_liquidity(api_key):
+    """WALCL·WTREGEN·RRPONTSYD 를 조회해 주간 순유동성 시계열을 계산.
+
+    WALCL(연준 대차대조표) 발표일을 기준으로, TGA·역레포는 해당일 이하의
+    가장 최근 관측치를 맞춰 정렬한다. 반환: 최신→과거 순 dict 리스트.
+    """
+    walcl, wtregen, rrp = await asyncio.gather(
+        fetch_fred_obs("WALCL", api_key, 120),
+        fetch_fred_obs("WTREGEN", api_key, 400),
+        fetch_fred_obs("RRPONTSYD", api_key, 800),
+    )
+    if not walcl:
+        return None
+    # S&P 500 지수(FRED SP500, 일간)도 함께 조회해 WALCL 발표일 기준으로 정렬한다.
+    # (실패해도 순유동성 표시는 계속되도록 예외를 흡수한다)
+    sp500 = await fetch_fred_obs("SP500", api_key, 400)
+    rows = []
+    for date, walcl_v in walcl:  # 최신→과거
+        # 모든 값을 백만 달러 기준으로 통일한다.
+        #   WALCL·WTREGEN: 원본이 백만 달러 → 그대로
+        #   RRPONTSYD: 원본이 십억 달러 → ×1000 으로 백만 달러 환산
+        fed = walcl_v
+        tga_raw = _latest_on_or_before(wtregen, date)
+        repo_raw = _latest_on_or_before(rrp, date)
+        tga = tga_raw if tga_raw is not None else None
+        repo = repo_raw * 1000.0 if repo_raw is not None else None
+        net = fed
+        if tga is not None:
+            net -= tga
+        if repo is not None:
+            net -= repo
+        sp = _latest_on_or_before(sp500, date) if sp500 else None
+        rows.append({"date": date, "fed": fed, "tga": tga,
+                     "repo": repo, "net": net, "sp500": sp})
+    # 주간 변화(직전 주 대비) 계산: rows 는 최신→과거 순
+    for i in range(len(rows)):
+        cur = rows[i]
+        nxt = rows[i + 1] if i + 1 < len(rows) else None
+        cur["net_chg"] = (cur["net"] - nxt["net"]) if nxt else None
+        cur["fed_chg"] = (cur["fed"] - nxt["fed"]) if nxt else None
+        if cur["tga"] is not None and nxt and nxt["tga"] is not None:
+            cur["tga_chg"] = cur["tga"] - nxt["tga"]
+        else:
+            cur["tga_chg"] = None
+        if cur["repo"] is not None and nxt and nxt["repo"] is not None:
+            cur["repo_chg"] = cur["repo"] - nxt["repo"]
+        else:
+            cur["repo_chg"] = None
+    return rows
+
+
+def _liq_num(v, dec=0):
+    if v is None:
+        return "-"
+    return "{:,.{d}f}".format(v, d=dec)
+
+
+def _liq_delta_cell(v, dec=0):
+    """변화값을 부호/색상 포함 <td> 로 반환."""
+    if v is None:
+        return '<td class="num">-</td>'
+    cls = "up" if v >= 0 else "down"
+    return '<td class="num %s">%s</td>' % (cls, _esc("{:+,.{d}f}".format(v, d=dec)))
+
+
+def _liq_line_svg(series, dec=0):
+    """순유동성(+선택적 S&P500) 시계열 꺾은선 SVG.
+
+    series = [{"label": str, "net": float, "sp": float|None}, ...] 연대순.
+    sp 값이 2개 이상 있으면 오른쪽 보조축에 S&P500 선을 겹쳐 그린다.
+    """
+    data = [d for d in (series or []) if d.get("net") is not None]
+    if len(data) < 2:
+        return '<div class="hint">차트를 표시할 데이터가 없습니다.</div>'
+    nets = [d["net"] for d in data]
+    vmax = max(nets)
+    vmin = min(nets)
+    pad = (vmax - vmin) * 0.12 or (abs(vmax) * 0.02 or 1.0)
+    vmax += pad
+    vmin -= pad
+    if vmax == vmin:
+        vmax = vmin + 1.0
+
+    sp_vals = [d["sp"] for d in data if d.get("sp") is not None]
+    has_sp = len(sp_vals) >= 2
+    smax = smin = 0.0
+    if has_sp:
+        smax = max(sp_vals)
+        smin = min(sp_vals)
+        spad = (smax - smin) * 0.12 or (abs(smax) * 0.02 or 1.0)
+        smax += spad
+        smin -= spad
+        if smax == smin:
+            smax = smin + 1.0
+
+    W, H = 820.0, 320.0
+    padL = 70.0
+    padR = 62.0 if has_sp else 18.0
+    padT, padB = 22.0, 46.0
+    plot_w = W - padL - padR
+    plot_h = H - padT - padB
+    n = len(data)
+    SP_COLOR = "#f23645"
+
+    def X(i):
+        return padL + plot_w * (i / (n - 1))
+
+    def Y(v):
+        return padT + (vmax - v) / (vmax - vmin) * plot_h
+
+    def YS(v):
+        return padT + (smax - v) / (smax - smin) * plot_h
+
+    def axfmt(v):
+        return "{:,.{d}f}".format(v, d=dec)
+
+    def spfmt(v):
+        return "{:,.2f}".format(v)
+
+    parts = ['<svg viewBox="0 0 %g %g" class="chart-svg" '
+             'preserveAspectRatio="xMidYMid meet">' % (W, H)]
+    # 왼쪽(순유동성) 그리드 + 축 라벨
+    for gv in (vmax, (vmax + vmin) / 2.0, vmin):
+        gy = Y(gv)
+        parts.append('<line x1="%g" y1="%g" x2="%g" y2="%g" stroke="#eaecef"/>'
+                     % (padL, gy, W - padR, gy))
+        parts.append('<text x="%g" y="%g" class="ax-y">%s</text>'
+                     % (padL - 8, gy + 4, _esc(axfmt(gv))))
+    # 오른쪽(S&P500) 보조축 라벨
+    if has_sp:
+        for gv in (smax, (smax + smin) / 2.0, smin):
+            gy = YS(gv)
+            parts.append('<text x="%g" y="%g" class="ax-y" text-anchor="start" '
+                         'style="fill:%s">%s</text>'
+                         % (W - padR + 8, gy + 4, SP_COLOR, _esc(spfmt(gv))))
+        parts.append('<text x="%g" y="%g" text-anchor="middle" '
+                     'style="fill:%s;font-size:11px;font-weight:700" '
+                     'transform="rotate(90 %g %g)">S&amp;P 500</text>'
+                     % (W - 12, H / 2.0, SP_COLOR, W - 12, H / 2.0))
+    # 순유동성 선
+    line_pts = ["%g,%g" % (X(i), Y(d["net"])) for i, d in enumerate(data)]
+    parts.append('<polyline points="%s" class="line-path" fill="none"/>'
+                 % " ".join(line_pts))
+    # S&P500 선(값이 있는 점만 연결)
+    if has_sp:
+        sp_pts = ["%g,%g" % (X(i), YS(d["sp"]))
+                  for i, d in enumerate(data) if d.get("sp") is not None]
+        if len(sp_pts) >= 2:
+            parts.append('<polyline points="%s" fill="none" stroke="%s" '
+                         'stroke-width="2" stroke-linejoin="round" '
+                         'stroke-linecap="round"/>' % (" ".join(sp_pts), SP_COLOR))
+    step = 1 if n <= 14 else (n // 14 + 1)
+    for i, d in enumerate(data):
+        parts.append('<circle cx="%g" cy="%g" r="3" class="line-dot"/>'
+                     % (X(i), Y(d["net"])))
+        if has_sp and d.get("sp") is not None:
+            parts.append('<circle cx="%g" cy="%g" r="2.6" style="fill:%s"/>'
+                         % (X(i), YS(d["sp"]), SP_COLOR))
+        if i % step == 0 or i == n - 1:
+            parts.append('<text x="%g" y="%g" class="pt-val">%s</text>'
+                         % (X(i), Y(d["net"]) - 8, _esc(axfmt(d["net"]))))
+            parts.append('<text x="%g" y="%g" class="ax-x">%s</text>'
+                         % (X(i), H - padB + 24, _esc(d["label"])))
+    # 마우스 호버 가이드(세로선 + 점) — JS 에서 위치를 갱신한다.
+    parts.append('<line id="liq-guide" class="guide-line" x1="0" y1="%g" '
+                 'x2="0" y2="%g" style="display:none"/>' % (padT, H - padB))
+    parts.append('<circle id="liq-guide-dot" class="guide-dot" r="4" '
+                 'cx="0" cy="0" style="display:none"/>')
+    parts.append('</svg>')
+
+    # 호버 툴팁용 좌표/치수 캐시 갱신
+    cache = []
+    for i, d in enumerate(data):
+        tip = ('<span class="d">%s</span>'
+               '<span class="v">%s 백만 달러</span>'
+               % (_esc(d["label"]), _esc(axfmt(d["net"]))))
+        if has_sp and d.get("sp") is not None:
+            tip += ('<br><span class="d" style="color:%s">S&amp;P 500</span>'
+                    '<span class="v">%s</span>' % (SP_COLOR, _esc(spfmt(d["sp"]))))
+        cache.append({"x": X(i), "y": Y(d["net"]), "tip": tip})
+    _LIQ_CHART["pts"] = cache
+    _LIQ_CHART["W"] = W
+    _LIQ_CHART["H"] = H
+    _LIQ_CHART["y1"] = padT
+    _LIQ_CHART["y2"] = H - padB
+    return "".join(parts)
+
+
+def _render_liq_chart():
+    """순유동성 추세 차트를 (S&P500 오버레이 체크박스 상태 반영해) 재렌더링."""
+    rows = _LIQ_STATE.get("rows")
+    box = document.querySelector("#liq-chart-box")
+    if not rows or box is None:
+        return
+    cb = document.querySelector("#liq-sp500")
+    show_sp = bool(cb and cb.checked)
+    chart_rows = list(reversed(rows[:52]))
+    series = [{"label": _liq_label(r["date"]), "net": r["net"],
+               "sp": (r.get("sp500") if show_sp else None)}
+              for r in chart_rows]
+    box.innerHTML = ('<div class="fin-chart" style="position:relative">%s'
+                     '<div id="liq-tip" class="multpl-tip"></div></div>'
+                     % _liq_line_svg(series))
+
+
+def render_liquidity(rows):
+    """순유동성 요약·차트·주간 추이 표를 렌더링."""
+    box = document.querySelector("#liq-result")
+    if not rows:
+        box.innerHTML = ('<div class="warn">유동성 데이터를 불러오지 못했습니다. '
+                         'FRED API 키와 CORS 프록시 설정을 확인하세요.</div>')
+        return
+    latest = rows[0]
+
+    html = ['<div class="card">']
+    html.append('<div class="card-head"><div>'
+                '<span class="name">미국 연준 순유동성 (Net Liquidity)</span>'
+                '<span class="sym">[FRED · 백만 달러(USD Million)]</span></div>'
+                '<div class="price">기준일 %s</div></div>' % _esc(latest["date"]))
+
+    # 요약 섹션
+    def _chg_span(v):
+        if v is None:
+            return ""
+        cls = "up" if v >= 0 else "down"
+        arrow = "▲" if v >= 0 else "▼"
+        return ' <span class="%s">%s %s</span>' % (
+            cls, arrow, _esc("{:+,.0f}".format(v)))
+
+    def _kv_raw(k, val_html):
+        return ('<div class="kv"><span class="k">%s</span>'
+                '<span class="v">%s</span></div>' % (_esc(k), val_html))
+
+    html.append('<div class="sec"><h3>현재값 (직전 주 대비 변화) · 단위: 백만 달러</h3><div class="grid">')
+    html.append(_kv_raw("순유동성",
+                        _esc(_liq_num(latest["net"]) + " 백만 달러") + _chg_span(latest.get("net_chg"))))
+    html.append(_kv_raw("연준 대차대조표 (WALCL)",
+                        _esc(_liq_num(latest["fed"]) + " 백만 달러") + _chg_span(latest.get("fed_chg"))))
+    html.append(_kv_raw("TGA 잔고 (WTREGEN)",
+                        _esc(_liq_num(latest["tga"]) + " 백만 달러") + _chg_span(latest.get("tga_chg"))))
+    html.append(_kv_raw("역레포 잔고 (RRPONTSYD×1000)",
+                        _esc(_liq_num(latest["repo"]) + " 백만 달러") + _chg_span(latest.get("repo_chg"))))
+    html.append('</div></div>')
+
+    # 순유동성 추세 차트(연대순, 최근 52주)
+    n_weeks = min(len(rows), 52)
+    has_sp = any(r.get("sp500") is not None for r in rows[:52])
+    html.append('<div class="sec"><h3>순유동성 추세 (최근 %d주)</h3>' % n_weeks)
+    sp_dis = "" if has_sp else " disabled"
+    sp_note = "" if has_sp else ' <span class="hint" style="margin:0">(S&P500 데이터를 불러오지 못함)</span>'
+    html.append('<label style="display:inline-flex;align-items:center;gap:6px;'
+                'font-size:13px;margin-bottom:8px;cursor:pointer">'
+                '<input type="checkbox" id="liq-sp500"%s> '
+                '<span style="color:#f23645;font-weight:600">S&P 500 지수</span> 겹쳐 보기%s</label>'
+                % (sp_dis, sp_note))
+    html.append('<div id="liq-chart-box"></div>')
+    html.append('<div class="hint">기울기 > 0 (우상향): 돈의 흐름이 시장으로 계속 유입되는 중 ➔ 증시 상승/멀티플 확장<br>기울기 = 0 (평행): 유동성 공급 정체 ➔ 증시 숨고르기/박스권<br>기울기 < 0 (우하향): 돈이 시장에서 빠져나가는 중 ➔ 증시 조정/밸류에이션 축소</div></div>')
+
+    # 주간 추이 표(최근 26주)
+    html.append('<div class="sec"><h3>주간 추이 (최근 26주)</h3>')
+    html.append('<div class="table-wrap"><table class="holdings"><thead><tr>'
+                '<th>기준일</th>'
+                '<th class="num">연준 대차대조표<br>(백만 달러)</th>'
+                '<th class="num">TGA 잔고<br>(백만 달러)</th>'
+                '<th class="num">역레포 잔고<br>(백만 달러)</th>'
+                '<th class="num">순유동성<br>(백만 달러)</th>'
+                '<th class="num">순유동성 변화<br>(백만 달러)</th></tr></thead><tbody>')
+    for r in rows[:26]:
+        html.append('<tr><td class="mono">%s</td>'
+                    '<td class="num">%s</td><td class="num">%s</td>'
+                    '<td class="num">%s</td><td class="num">%s</td>%s</tr>'
+                    % (_esc(r["date"]), _esc(_liq_num(r["fed"])),
+                       _esc(_liq_num(r["tga"])), _esc(_liq_num(r["repo"])),
+                       _esc(_liq_num(r["net"])), _liq_delta_cell(r.get("net_chg"))))
+    html.append('</tbody></table></div>')
+    html.append('</div>')
+    box.innerHTML = "".join(html)
+
+    # 조회 결과를 캐시하고 차트를 그린 뒤 S&P500 체크박스를 바인딩한다.
+    _LIQ_STATE["rows"] = rows
+    _render_liq_chart()
+    _bind(document.querySelector("#liq-sp500"), "change",
+          lambda evt: _render_liq_chart())
+
+
+def _set_liq_status(msg):
+    document.querySelector("#liq-status").textContent = msg
 
 
 # ===================== 원/달러 환율 (헤더 상시 표시) =====================
@@ -4753,6 +5182,9 @@ def on_tab(event):
         _populate_multpl_select()
         if not _MULTPL_LOADED["done"]:
             document.querySelector("#multplBtn").click()
+    # 유동성 탭을 처음 열면 자동으로 1회 조회한다.
+    if name == "liquidity" and not _LIQ_LOADED["done"]:
+        document.querySelector("#liqBtn").click()
 
 
 @when("click", "#fgBtn")
@@ -4853,16 +5285,10 @@ def on_multpl_hover(event):
         dot.setAttribute("cy", "%g" % best["y"])
         dot.style.display = "block"
 
-    # 툴팁을 래퍼(.fin-chart) 기준 픽셀 좌표로 배치한다.
-    wrap = svg.parentElement
-    wrect = wrap.getBoundingClientRect()
-    left_px = (rect.left - wrect.left) + best["x"] / W * rect.width
-    top_px = (rect.top - wrect.top) + best["y"] / H * rect.height
-    tip.style.left = "%gpx" % left_px
-    tip.style.top = "%gpx" % top_px
+    # 툴팁 내용을 먼저 채운 뒤 차트 영역 안으로 클램핑해 배치한다.
     tip.innerHTML = ('<span class="d">%s</span><span class="v">%s</span>'
                      % (_esc(best["date"]), _esc(best["val"])))
-    tip.style.display = "block"
+    _place_tip_clamped(tip, svg, best["x"], best["y"], W, H)
 
 
 @when("mouseleave", "#multpl-result")
@@ -4929,6 +5355,195 @@ def on_macro_mode(event):
     rows = _MACRO_LAST.get("rows")
     if rows:
         render_macro(rows, mode)
+
+
+@when("click", "#liqBtn")
+async def on_liquidity(event):
+    key = document.querySelector("#fredKey").value.strip()
+    if not key:
+        window.alert("'경제지표' 탭에서 FRED API 키를 먼저 입력하세요.")
+        return
+    btn = document.querySelector("#liqBtn")
+    btn.disabled = True
+    _set_liq_status("불러오는 중...")
+    try:
+        rows = await load_liquidity(key)
+        render_liquidity(rows)
+        if rows:
+            _LIQ_LOADED["done"] = True
+            _set_liq_status("완료 · %d주" % len(rows))
+        else:
+            _set_liq_status("실패 · 데이터 없음 (API 키/프록시 확인)")
+    except InvestingApiError as exc:
+        _set_liq_status("오류")
+        document.querySelector("#liq-result").innerHTML = (
+            '<div class="warn">유동성 데이터를 불러오지 못했습니다.<br>%s</div>'
+            % _esc(str(exc)))
+    except Exception as exc:
+        _set_liq_status("오류")
+        document.querySelector("#liq-result").innerHTML = (
+            '<div class="warn">조회 중 오류가 발생했습니다.<br>%s</div>'
+            % _esc(str(exc)))
+    finally:
+        btn.disabled = False
+
+
+@when("mousemove", "#liq-result")
+def on_liq_hover(event):
+    """순유동성 꺾은선 위에서 가장 가까운 점의 날짜·값 툴팁을 표시한다.
+
+    툴팁 박스는 차트(SVG) 영역을 벗어나지 않도록 좌표를 클램핑한다.
+    """
+    pts = _LIQ_CHART["pts"]
+    if not pts:
+        return
+    svg = document.querySelector("#liq-result svg.chart-svg")
+    tip = document.querySelector("#liq-tip")
+    if svg is None or tip is None:
+        return
+    rect = svg.getBoundingClientRect()
+    if not rect.width or not rect.height:
+        return
+    # 커서가 그래프(SVG) 영역을 벗어나면 툴팁/가이드를 숨긴다.
+    if (event.clientX < rect.left or event.clientX > rect.right
+            or event.clientY < rect.top or event.clientY > rect.bottom):
+        for sel in ("#liq-tip", "#liq-guide", "#liq-guide-dot"):
+            el = document.querySelector(sel)
+            if el is not None:
+                el.style.display = "none"
+        return
+    W = _LIQ_CHART["W"]
+    H = _LIQ_CHART["H"]
+    # 마우스 x 를 SVG 좌표계로 변환한 뒤 가장 가까운 점을 찾는다.
+    sx = (event.clientX - rect.left) / rect.width * W
+    best = min(pts, key=lambda p: abs(p["x"] - sx))
+
+    guide = document.querySelector("#liq-guide")
+    dot = document.querySelector("#liq-guide-dot")
+    if guide is not None:
+        guide.setAttribute("x1", "%g" % best["x"])
+        guide.setAttribute("x2", "%g" % best["x"])
+        guide.setAttribute("y1", "%g" % _LIQ_CHART["y1"])
+        guide.setAttribute("y2", "%g" % _LIQ_CHART["y2"])
+        guide.style.display = "block"
+    if dot is not None:
+        dot.setAttribute("cx", "%g" % best["x"])
+        dot.setAttribute("cy", "%g" % best["y"])
+        dot.style.display = "block"
+
+    # 툴팁 내용을 먼저 채운 뒤 차트 영역 안으로 클램핑해 배치한다.
+    tip.innerHTML = best["tip"]
+    _place_tip_clamped(tip, svg, best["x"], best["y"], W, H)
+
+
+@when("mouseleave", "#liq-result")
+def on_liq_leave(event):
+    for sel in ("#liq-tip", "#liq-guide", "#liq-guide-dot"):
+        el = document.querySelector(sel)
+        if el is not None:
+            el.style.display = "none"
+
+
+@when("mousemove", "#macro-chart")
+def on_macro_hover(event):
+    """매크로 지표 차트 위에서 가장 가까운 점의 기간·값 툴팁을 표시한다."""
+    pts = _MACRO_CHART_HOVER["pts"]
+    if not pts:
+        return
+    svg = document.querySelector("#macro-chart svg.chart-svg")
+    tip = document.querySelector("#macro-tip")
+    if svg is None or tip is None:
+        return
+    rect = svg.getBoundingClientRect()
+    if not rect.width or not rect.height:
+        return
+    if (event.clientX < rect.left or event.clientX > rect.right
+            or event.clientY < rect.top or event.clientY > rect.bottom):
+        for sel in ("#macro-tip", "#macro-guide", "#macro-guide-dot"):
+            el = document.querySelector(sel)
+            if el is not None:
+                el.style.display = "none"
+        return
+    W = _MACRO_CHART_HOVER["W"]
+    H = _MACRO_CHART_HOVER["H"]
+    sx = (event.clientX - rect.left) / rect.width * W
+    best = min(pts, key=lambda p: abs(p["x"] - sx))
+
+    guide = document.querySelector("#macro-guide")
+    dot = document.querySelector("#macro-guide-dot")
+    if guide is not None:
+        guide.setAttribute("x1", "%g" % best["x"])
+        guide.setAttribute("x2", "%g" % best["x"])
+        guide.setAttribute("y1", "%g" % _MACRO_CHART_HOVER["y1"])
+        guide.setAttribute("y2", "%g" % _MACRO_CHART_HOVER["y2"])
+        guide.style.display = "block"
+    if dot is not None:
+        dot.setAttribute("cx", "%g" % best["x"])
+        dot.setAttribute("cy", "%g" % best["y"])
+        dot.style.display = "block"
+
+    tip.innerHTML = ('<span class="d">%s</span><span class="v">%s</span>'
+                     % (_esc(best["date"]), _esc(best["val"])))
+    _place_tip_clamped(tip, svg, best["x"], best["y"], W, H)
+
+
+@when("mouseleave", "#macro-chart")
+def on_macro_leave(event):
+    for sel in ("#macro-tip", "#macro-guide", "#macro-guide-dot"):
+        el = document.querySelector(sel)
+        if el is not None:
+            el.style.display = "none"
+
+
+@when("mousemove", "#result")
+def on_fin_hover(event):
+    """재무 지표(막대+꺾은선) 차트 위에서 가장 가까운 점의 기간·값을 표시한다."""
+    pts = _FIN_CHART_HOVER["pts"]
+    if not pts:
+        return
+    svg = document.querySelector("#fin-section svg.chart-svg")
+    tip = document.querySelector("#fin-tip")
+    if svg is None or tip is None:
+        return
+    rect = svg.getBoundingClientRect()
+    if not rect.width or not rect.height:
+        return
+    if (event.clientX < rect.left or event.clientX > rect.right
+            or event.clientY < rect.top or event.clientY > rect.bottom):
+        for sel in ("#fin-tip", "#fin-guide", "#fin-guide-dot"):
+            el = document.querySelector(sel)
+            if el is not None:
+                el.style.display = "none"
+        return
+    W = _FIN_CHART_HOVER["W"]
+    H = _FIN_CHART_HOVER["H"]
+    sx = (event.clientX - rect.left) / rect.width * W
+    best = min(pts, key=lambda p: abs(p["x"] - sx))
+
+    guide = document.querySelector("#fin-guide")
+    dot = document.querySelector("#fin-guide-dot")
+    if guide is not None:
+        guide.setAttribute("x1", "%g" % best["x"])
+        guide.setAttribute("x2", "%g" % best["x"])
+        guide.setAttribute("y1", "%g" % _FIN_CHART_HOVER["y1"])
+        guide.setAttribute("y2", "%g" % _FIN_CHART_HOVER["y2"])
+        guide.style.display = "block"
+    if dot is not None:
+        dot.setAttribute("cx", "%g" % best["x"])
+        dot.setAttribute("cy", "%g" % best["y"])
+        dot.style.display = "block"
+
+    tip.innerHTML = ('<span class="d">%s</span><span class="v">%s</span>'
+                     % (_esc(best["date"]), _esc(best["val"])))
+    _place_tip_clamped(tip, svg, best["x"], best["y"], W, H)
+
+
+@when("mouseleave", "#result")
+def on_fin_leave(event):
+    for sel in ("#fin-tip", "#fin-guide", "#fin-guide-dot"):
+        el = document.querySelector(sel)
+        if el is not None:
+            el.style.display = "none"
 
 
 @when("input", "#guru-search")
