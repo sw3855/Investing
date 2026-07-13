@@ -491,6 +491,12 @@
         <button id="multplOverviewBtn">전체 요약</button>
         <span id="multpl-status"></span>
       </div>
+      <div class="row">
+        <label style="color:#f23645;font-weight:600">비교 지표:
+          <select id="multpl-compare" style="min-width:260px"></select>
+        </label>
+        <span class="hint" style="margin:0">선택하면 오른쪽 축에 겹쳐 표시합니다(비교는 1개만 가능).</span>
+      </div>
     </fieldset>
 
     <div id="multpl-result"></div>
@@ -4851,13 +4857,23 @@ def _multpl_freq():
 
 def _populate_multpl_select():
     sel = document.querySelector("#multpl-metric")
-    if sel is None or sel.options.length > 0:
-        return
-    for slug, label, unit in _MULTPL_METRICS:
-        opt = document.createElement("option")
-        opt.value = slug
-        opt.textContent = label
-        sel.appendChild(opt)
+    if sel is not None and sel.options.length == 0:
+        for slug, label, unit in _MULTPL_METRICS:
+            opt = document.createElement("option")
+            opt.value = slug
+            opt.textContent = label
+            sel.appendChild(opt)
+    cmp = document.querySelector("#multpl-compare")
+    if cmp is not None and cmp.options.length == 0:
+        opt0 = document.createElement("option")
+        opt0.value = ""
+        opt0.textContent = "(비교 안 함)"
+        cmp.appendChild(opt0)
+        for slug, label, unit in _MULTPL_METRICS:
+            opt = document.createElement("option")
+            opt.value = slug
+            opt.textContent = label
+            cmp.appendChild(opt)
 
 
 async def _fetch_multpl_text(slug, freq):
@@ -4936,8 +4952,12 @@ def _fmt_multpl_val(val, unit):
     return _esc(txt)
 
 
-def _multpl_chart_svg(data, unit):
-    """최근 120개(최신순 data)를 시간순 꺾은선 그래프 SVG 로 반환."""
+def _multpl_chart_svg(data, unit, cmp_data=None, cmp_unit="", cmp_label=""):
+    """최근 120개(최신순 data)를 시간순 꺾은선 그래프 SVG 로 반환.
+
+    cmp_data 가 주어지면 오른쪽 보조축에 비교 지표를 겹쳐 그린다.
+    비교 지표는 기본 지표의 각 시점(월/연 라벨)에 맞춰 정렬한다.
+    """
     recent = list(reversed(data[:120]))
     pts = [(d, _multpl_num(v)) for d, v in recent]
     pts = [(d, v) for d, v in pts if v is not None]
@@ -4952,12 +4972,43 @@ def _multpl_chart_svg(data, unit):
         pad = (vmax - vmin) * 0.08
         vmax += pad
         vmin -= pad
+
+    def _mkey(d):
+        # "Jul 9, 2026" → "Jul 2026" (일 제거) 로 시점 키를 만든다.
+        return re.sub(r"\s+\d{1,2},", "", d)
+
+    # 비교 지표를 시점 키로 매핑해 기본 지표 시점에 정렬한다.
+    CMP_COLOR = "#f23645"
+    cmp_at = []
+    has_cmp = False
+    if cmp_data:
+        cmap = {}
+        for d, v in cmp_data:
+            nv = _multpl_num(v)
+            if nv is not None:
+                cmap.setdefault(_mkey(d), nv)
+        cmp_at = [cmap.get(_mkey(d)) for d, _ in pts]
+        cvals = [c for c in cmp_at if c is not None]
+        has_cmp = len(cvals) >= 2
+        if has_cmp:
+            cmax, cmin = max(cvals), min(cvals)
+            if cmax == cmin:
+                cmax += 1.0
+                cmin -= 1.0
+            else:
+                cpad = (cmax - cmin) * 0.08
+                cmax += cpad
+                cmin -= cpad
+
     W, H = 820.0, 300.0
-    padL, padR, padT, padB = 66.0, 18.0, 20.0, 40.0
+    padL = 66.0
+    padR = 62.0 if has_cmp else 18.0
+    padT, padB = 20.0, 40.0
     plot_w = W - padL - padR
     plot_h = H - padT - padB
     n = len(pts)
     suf = unit if unit else ""
+    csuf = cmp_unit if cmp_unit else ""
 
     def X(i):
         return padL + plot_w * (i / (n - 1))
@@ -4965,8 +5016,14 @@ def _multpl_chart_svg(data, unit):
     def Y(v):
         return padT + (vmax - v) / (vmax - vmin) * plot_h
 
+    def YC(v):
+        return padT + (cmax - v) / (cmax - cmin) * plot_h
+
     def axfmt(v):
         return "{:,.2f}{}".format(v, suf)
+
+    def cfmt(v):
+        return "{:,.2f}{}".format(v, csuf)
 
     def xlabel(d):
         # "Jul 9, 2026" → "Jul 2026" 로 축약해 축 라벨 혼잡을 줄인다.
@@ -4980,9 +5037,23 @@ def _multpl_chart_svg(data, unit):
                      % (padL, gy, W - padR, gy))
         parts.append('<text x="%g" y="%g" class="ax-y">%s</text>'
                      % (padL - 8, gy + 4, _esc(axfmt(gv))))
+    # 오른쪽(비교 지표) 보조축 라벨
+    if has_cmp:
+        for gv in (cmax, (cmax + cmin) / 2.0, cmin):
+            gy = YC(gv)
+            parts.append('<text x="%g" y="%g" class="ax-y" text-anchor="start" '
+                         'style="fill:%s">%s</text>'
+                         % (W - padR + 8, gy + 4, CMP_COLOR, _esc(cfmt(gv))))
 
     poly = " ".join("%g,%g" % (X(i), Y(v)) for i, (d, v) in enumerate(pts))
     parts.append('<polyline points="%s" class="line-path" fill="none"/>' % poly)
+    # 비교 지표 선(값이 있는 점만 연결)
+    if has_cmp:
+        cpoly = " ".join("%g,%g" % (X(i), YC(cmp_at[i]))
+                         for i in range(n) if cmp_at[i] is not None)
+        parts.append('<polyline points="%s" fill="none" stroke="%s" '
+                     'stroke-width="2" stroke-linejoin="round" '
+                     'stroke-linecap="round"/>' % (cpoly, CMP_COLOR))
     # 최신 점 강조 + 값 라벨
     lx, ly, lv = X(n - 1), Y(pts[-1][1]), pts[-1][1]
     parts.append('<circle cx="%g" cy="%g" r="4" class="line-dot"/>' % (lx, ly))
@@ -5001,10 +5072,17 @@ def _multpl_chart_svg(data, unit):
                  'cx="0" cy="0" style="display:none"/>')
     parts.append('</svg>')
 
-    # 호버 툴팁용 좌표/치수 캐시 갱신
-    _MULTPL_CHART["pts"] = [
-        {"x": X(i), "y": Y(v), "date": d, "val": axfmt(v)}
-        for i, (d, v) in enumerate(pts)]
+    # 호버 툴팁용 좌표/치수 캐시 갱신(비교 지표 값 포함)
+    cache = []
+    for i, (d, v) in enumerate(pts):
+        tip = ('<span class="d">%s</span><span class="v">%s</span>'
+               % (_esc(d), _esc(axfmt(v))))
+        if has_cmp and cmp_at[i] is not None:
+            tip += ('<br><span class="d" style="color:%s">%s</span>'
+                    '<span class="v">%s</span>'
+                    % (CMP_COLOR, _esc(cmp_label or "비교"), _esc(cfmt(cmp_at[i]))))
+        cache.append({"x": X(i), "y": Y(v), "tip": tip})
+    _MULTPL_CHART["pts"] = cache
     _MULTPL_CHART["W"] = W
     _MULTPL_CHART["H"] = H
     _MULTPL_CHART["y1"] = padT
@@ -5012,7 +5090,8 @@ def _multpl_chart_svg(data, unit):
     return "".join(parts)
 
 
-def _multpl_html(slug, label, unit, freq, data):
+def _multpl_html(slug, label, unit, freq, data, cmp_data=None,
+                 cmp_label="", cmp_unit=""):
     cur_date, cur_val = data[0]
     delta_html = ""
     if len(data) > 1:
@@ -5025,9 +5104,13 @@ def _multpl_html(slug, label, unit, freq, data):
             delta_html = ('<span class="%s" style="font-size:14px;margin-left:8px">'
                           '%s %+.2f (직전 %s)</span>'
                           % (cls, arrow, diff, _esc(data[1][0])))
-    chart_html = _multpl_chart_svg(data, unit)
+    chart_html = _multpl_chart_svg(data, unit, cmp_data, cmp_unit, cmp_label)
     shown = min(len(data), 120)
     freq_txt = "월별" if freq == "by-month" else "연도별"
+    legend = ('<span style="color:#2962ff;font-weight:600">━ %s</span>' % _esc(label))
+    if cmp_data:
+        legend += ('&nbsp;&nbsp;<span style="color:#f23645;font-weight:600">'
+                   '━ %s (오른쪽 축)</span>' % _esc(cmp_label))
     return (
         '<div class="card">'
         '<div class="card-head">'
@@ -5037,13 +5120,14 @@ def _multpl_html(slug, label, unit, freq, data):
         '</div>'
         '<div style="padding:16px 18px">'
         '<div class="hint">기준일: %s · 최근 %d개 시계열 꺾은선</div>'
+        '<div style="margin-top:6px;font-size:13px">%s</div>'
         '<div class="fin-chart" style="margin-top:12px;position:relative">'
         '%s<div id="multpl-tip" class="multpl-tip"></div></div>'
         '</div>'
         '</div>'
         % (_esc(label), _esc(freq_txt),
            _fmt_multpl_val(cur_val, unit), delta_html,
-           _esc(cur_date), shown, chart_html))
+           _esc(cur_date), shown, legend, chart_html))
 
 
 async def load_multpl(slug=None):
@@ -5068,8 +5152,31 @@ async def load_multpl(slug=None):
         _set_multpl_status("데이터 없음")
         box.innerHTML = '<div class="warn">표 데이터를 찾지 못했습니다.</div>'
         return
-    box.innerHTML = _multpl_html(slug, label, unit, freq, data)
-    _set_multpl_status("완료 · %d행" % len(data))
+
+    # 비교 지표(선택 시) 조회 — 기본 지표와 다를 때만.
+    cmp_sel = document.querySelector("#multpl-compare")
+    cmp_slug = cmp_sel.value if cmp_sel is not None else ""
+    cmp_data = None
+    cmp_label = ""
+    cmp_unit = ""
+    if cmp_slug and cmp_slug != slug:
+        cmp_label, cmp_unit = _multpl_label(cmp_slug)
+        try:
+            chtml = await _fetch_multpl_text(cmp_slug, freq)
+            cmp_data = _parse_multpl(chtml)
+        except Exception:
+            cmp_data = None
+        if not cmp_data:
+            _set_multpl_status("완료(비교 지표 '%s' 불러오기 실패) · %d행"
+                               % (cmp_label, len(data)))
+            cmp_data = None
+
+    box.innerHTML = _multpl_html(slug, label, unit, freq, data,
+                                 cmp_data, cmp_label, cmp_unit)
+    if cmp_data:
+        _set_multpl_status("완료 · %s + %s 비교" % (label, cmp_label))
+    else:
+        _set_multpl_status("완료 · %d행" % len(data))
 
 
 async def load_multpl_overview():
@@ -5232,6 +5339,11 @@ async def on_multpl_change(event):
     await load_multpl()
 
 
+@when("change", "#multpl-compare")
+async def on_multpl_compare_change(event):
+    await load_multpl()
+
+
 @when("click", "#multpl-period button")
 async def on_multpl_period(event):
     target = event.target
@@ -5286,8 +5398,7 @@ def on_multpl_hover(event):
         dot.style.display = "block"
 
     # 툴팁 내용을 먼저 채운 뒤 차트 영역 안으로 클램핑해 배치한다.
-    tip.innerHTML = ('<span class="d">%s</span><span class="v">%s</span>'
-                     % (_esc(best["date"]), _esc(best["val"])))
+    tip.innerHTML = best["tip"]
     _place_tip_clamped(tip, svg, best["x"], best["y"], W, H)
 
 
