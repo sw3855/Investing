@@ -146,11 +146,11 @@
   .fin-table thead th.cur-col { background:#fdf1c9; color:#7a5c00; }
   @media (max-width:640px){ .grid{ grid-template-columns:1fr; } }
 
-  .tabs { display:flex; gap:4px; border-bottom:2px solid var(--bd);
+  .tabs { display:flex; flex-wrap:wrap; gap:4px; border-bottom:2px solid var(--bd);
     margin:0 0 16px; }
   .tab-btn { border:1px solid var(--bd); border-bottom:none; background:var(--bg);
     padding:9px 16px; border-radius:8px 8px 0 0; cursor:pointer; font-size:14px;
-    color:var(--mut); margin-bottom:-2px; }
+    color:var(--mut); margin-bottom:-2px; white-space:nowrap; }
   .tab-btn.active { background:#fff; color:#1f2328; font-weight:600;
     border-bottom:2px solid #fff; }
   .tab-panel { display:none; }
@@ -330,16 +330,6 @@
       <div class="row">
         <input type="text" id="ticker" class="grow"
                placeholder="티커 (개별종목: AAPL, TSLA · ETF: QQQ, SPY, QQQA · 또는 NASDAQ:MSFT)">
-        <label>거래소:
-          <input type="text" id="exchange" style="width:120px"
-                 placeholder="자동(선택)">
-        </label>
-        <label>언어:
-          <select id="lang">
-            <option value="en">en</option>
-            <option value="ko">ko</option>
-          </select>
-        </label>
         <button class="primary" id="lookupBtn" disabled>조회</button>
         <button id="sp500MapBtn" type="button"
                 title="finviz S&amp;P 500 섹터 맵을 새 탭에서 엽니다">S&amp;P 500 Map</button>
@@ -722,43 +712,169 @@ def _extract_array(text, key):
     return None
 
 
-async def search_symbol(ticker, lang="en"):
-    """티커로 Investing 심볼 검색. (full_symbol, description) 반환, 실패 시 None."""
+# 파생상품/펀드보다 실제 주식을 우선하기 위한 유형별 가중치
+_TYPE_SCORE = {"stock": 100, "dr": 70, "fund": 60}
+_TYPE_PENALTY = {"futures", "warrant", "option", "index"}
+
+
+def _norm(text):
+    """비교용 정규화: 태그 제거 + 공백 제거 + 대문자화."""
+    return re.sub(r"\s+", "", strip_tags(text or "")).upper()
+
+
+def _has_hangul(text):
+    return any("\uac00" <= ch <= "\ud7a3" for ch in (text or ""))
+
+
+def _build_full_symbol(item):
+    symbol = strip_tags(item.get("symbol", "")).upper()
+    prefix = item.get("prefix") or item.get("exchange") or ""
+    prefix = strip_tags(prefix).upper()
+    if not symbol or not prefix:
+        return None
+    desc = strip_tags(item.get("description", ""))
+    return "%s:%s" % (prefix, symbol), desc
+
+
+def _score_item(item, query_norm, prefer_kr=False):
+    """검색 항목 점수와 텍스트 일치도(0~3)를 반환. (score, text_match)"""
+    typ = (item.get("type") or "").lower()
+    symbol_norm = _norm(item.get("symbol"))
+    desc_norm = _norm(item.get("description"))
+
+    text_match = 0
+    if query_norm:
+        if symbol_norm == query_norm:
+            text_match = 3
+        elif desc_norm.startswith(query_norm):
+            text_match = 2
+        elif query_norm in desc_norm:
+            text_match = 1
+
+    if typ in _TYPE_PENALTY:
+        type_score = -100
+    else:
+        type_score = _TYPE_SCORE.get(typ, 0)
+    score = type_score + text_match * 20
+
+    # 한글 회사명 검색은 국내 상장(KRX) 결과를 우선한다. 설명이 영문으로 저장된
+    # 종목(예: 'LS ELECTRIC')이라 이름이 literal 일치하지 않아도 TradingView 의
+    # 자체 관련도 순위를 신뢰하도록 KRX 거래소에 가점을 준다.
+    if prefer_kr:
+        exch = strip_tags(item.get("prefix") or item.get("exchange") or "").upper()
+        if exch == "KRX":
+            score += 30
+    return score, text_match
+
+
+async def _raw_search(text, lang):
+    """심볼 검색 API 호출 후 항목 리스트 반환(실패 시 빈 리스트)."""
     params = {
-        "text": ticker, "hl": 0, "lang": lang, "type": "", "domain": "production",
+        "text": text, "hl": 0, "lang": lang, "type": "", "domain": "production",
     }
     try:
         data = await _get_json(SYMBOL_SEARCH_URL, params)
     except InvestingApiError:
-        return None
-
+        return []
     if isinstance(data, dict):
-        items = data.get("symbols", [])
-    else:
-        items = data
+        return data.get("symbols", []) or []
+    return data or []
+
+
+# 네이버 증권 자동완성: 한글 회사명 -> KRX 종목코드(예: 삼성전자 -> 005930).
+# TradingView 검색은 종목명 표기(에스케이하이닉스 등) 때문에 한글명이 잘 안 맞아,
+# 국내 상장사는 네이버에서 정확한 코드를 먼저 확보한 뒤 'KRX:코드' 로 조회한다.
+NAVER_AC_URL = "https://ac.stock.naver.com/ac"
+
+
+async def _naver_kr_code(name):
+    """한글 회사명을 네이버 증권에서 KRX 코드로 해석. (full_symbol, name) 반환, 실패 시 None."""
+    params = {"q": name, "target": "stock,index,marketindicator,coin,ipo"}
+    try:
+        data = await _get_json(NAVER_AC_URL, params)
+    except InvestingApiError:
+        return None
+    items = data.get("items") if isinstance(data, dict) else None
     if not items:
         return None
 
-    ticker_upper = ticker.upper()
+    # 국내(대한민국) 상장 주식만 대상 (typeCode: KOSPI/KOSDAQ/KONEX)
+    kr_items = [
+        it for it in items
+        if it.get("nationCode") == "KOR"
+        and it.get("typeCode") in ("KOSPI", "KOSDAQ", "KONEX")
+    ]
+    if not kr_items:
+        return None
 
-    def build(item):
+    # 이름 완전 일치를 우선, 없으면 관련도 1순위(네이버 정렬 기준) 항목 사용
+    name_norm = _norm(name)
+    chosen = None
+    for it in kr_items:
+        if _norm(it.get("name")) == name_norm:
+            chosen = it
+            break
+    if chosen is None:
+        chosen = kr_items[0]
+
+    code = (chosen.get("code") or "").upper()
+    if not code:
+        return None
+    return "KRX:%s" % code, (chosen.get("name") or name)
+
+
+async def search_symbol(ticker, lang="en"):
+    """티커 또는 회사명으로 Investing 심볼 검색. (full_symbol, description) 반환.
+
+    한글 회사명은 네이버 증권에서 KRX 종목코드를 먼저 확보해 'KRX:코드' 로 정확히
+    해석하고, 실패 시 TradingView 심볼 검색으로 폴백한다.
+    """
+    name_search = _has_hangul(ticker)
+
+    # 한글 회사명 우선 경로: 네이버 증권 코드 조회
+    if name_search:
+        kr = await _naver_kr_code(ticker)
+        if kr:
+            return kr
+
+    # 한글 회사명은 설명이 한글로 와야 이름 매칭이 되므로 검색은 항상 'ko' 로.
+    # (표시 언어와 무관하게 검색 결과의 설명 언어만 결정한다.)
+    search_lang = "ko" if name_search else lang
+
+    # 검색 결과를 중복 제거하며 수집
+    merged = []
+    seen = set()
+    for item in await _raw_search(ticker, search_lang):
         symbol = strip_tags(item.get("symbol", "")).upper()
-        prefix = item.get("prefix") or item.get("exchange") or ""
-        prefix = strip_tags(prefix).upper()
-        if not symbol or not prefix:
-            return None
-        desc = strip_tags(item.get("description", ""))
-        return "%s:%s" % (prefix, symbol), desc
+        prefix = strip_tags(item.get("prefix") or item.get("exchange") or "")
+        key = (prefix.upper(), symbol)
+        if not symbol or not prefix or key in seen:
+            continue
+        seen.add(key)
+        merged.append(item)
+    if not merged:
+        return None
 
-    for item in items:
-        built = build(item)
-        if built and built[0].split(":", 1)[1] == ticker_upper:
-            return built
-    for item in items:
-        built = build(item)
-        if built:
-            return built
-    return None
+    query_norm = _norm(ticker)
+    best = None
+    best_score = None
+    best_match = 0
+    for item in merged:
+        built = _build_full_symbol(item)
+        if not built:
+            continue
+        score, text_match = _score_item(item, query_norm, prefer_kr=name_search)
+        if best_score is None or score > best_score:
+            best, best_score, best_match = built, score, text_match
+
+    # 회사명 검색은 엉뚱한 종목을 확신 있게 반환하지 않도록, 선택된 항목의
+    # 심볼/설명이 실제로 쿼리와 일치할 때만 결과로 인정한다. 다만 국내 상장
+    # (KRX) 종목은 TradingView 관련도 순위를 신뢰해 이름이 영문으로 저장된
+    # 경우(LS ELECTRIC 등)도 허용한다.
+    if name_search and best_match < 1:
+        if not (best and best[0].startswith("KRX:")):
+            return None
+    return best
 
 
 async def fetch_forecast(full_symbol):
@@ -1284,7 +1400,6 @@ def _make_detail_handler(sym):
     def handler(event):
         # 선택한 종목의 심볼을 조회 입력창에 넣고 조회를 실행한다.
         document.querySelector("#ticker").value = sym
-        document.querySelector("#exchange").value = ""
         document.querySelector("#lookupBtn").click()
         try:
             document.querySelector("#tab-stock").scrollIntoView()
@@ -4400,7 +4515,6 @@ def _update_folder_datalist(favs):
 def _make_fav_load_handler(symbol):
     def handler(evt):
         document.querySelector("#ticker").value = symbol
-        document.querySelector("#exchange").value = ""
         document.querySelector("#lookupBtn").click()
     return handler
 
@@ -5224,8 +5338,8 @@ async def on_lookup(event):
     if not ticker:
         window.alert("티커를 입력하세요.")
         return
-    exchange = document.querySelector("#exchange").value.strip() or None
-    lang = document.querySelector("#lang").value
+    exchange = None
+    lang = "en"
 
     _set_busy(True)
     _set_status("조회 중...")

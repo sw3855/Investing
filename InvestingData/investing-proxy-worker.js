@@ -6,7 +6,7 @@
  *
  * 브라우저는 보안(CORS) 정책상 symbol-search.tradingview.com /
  * scanner.tradingview.com / api.stlouisfed.org(FRED) /
- * api.db.nomics.world(DBnomics) 를 직접 호출하지
+ * api.db.nomics.world(DBnomics) / ac.stock.naver.com(네이버 증권) 를 직접 호출하지
  * 못하므로 이 Worker 가 프록시 역할을 한다. (KOSIS HTML 의 CORS 프록시와 동일 개념)
  *
  * ── 배포 방법 ──────────────────────────────────────────────
@@ -75,6 +75,8 @@ const ALLOWED_HOSTS = [
   "production.dataviz.cnn.io",
   // multpl.com: S&P 500 PER·Shiller PE·배당수익률·국채금리·인플레이션 등 시장/거시 지표
   "www.multpl.com",
+  // 네이버 증권 자동완성: 한글 회사명 -> KRX 종목코드(예: 삼성전자 -> 005930)
+  "ac.stock.naver.com",
 ];
 
 function isAllowed(hostname) {
