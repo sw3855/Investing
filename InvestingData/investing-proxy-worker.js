@@ -38,6 +38,8 @@
  *    같은 계정 ID + 키를 입력하면 어느 기기에서든 같은 목록을 공유한다.
  *    GET    https://<worker>/favorites?account=<id>            → {favorites:[...], folders:[...], exists}
  *    POST   https://<worker>/favorites?account=<id>&register=1  → 계정 등록(중복 시 409)
+ *    POST   https://<worker>/favorites?account=<id>&pw_op=reset  → 키 검증 없이 공유 키를 "0000"으로 초기화(미등록 시 404)
+ *    POST   https://<worker>/favorites?account=<id>&pw_op=change → 본문 {newKey} 로그인 상태에서 공유 키 변경
  *    POST   https://<worker>/favorites?account=<id>&folder_op=create → 본문 {folder} 빈 폴더 생성
  *    POST   https://<worker>/favorites?account=<id>&folder_op=rename → 본문 {folder,newFolder} 폴더 이름 변경
  *    POST   https://<worker>/favorites?account=<id>            → 본문 {symbol,name,folder} 추가/이동
@@ -239,12 +241,31 @@ async function handleFavorites(request, env, reqUrl) {
     return jsonResponse({ error: "invalid account id" }, 400);
   }
 
+  const kvKey = "fav:" + account;
+
+  // 비밀번호 리셋: 키 검증 없이 계정 ID만으로 공유 키를 "0000"으로 초기화한다.
+  // (POST ?pw_op=reset) — 등록된 계정에서만 동작하고, 없으면 404.
+  // 키를 모를 때 복구용이므로 X-Fav-Key 검증 이전에 처리한다.
+  if (request.method === "POST" && reqUrl.searchParams.get("pw_op") === "reset") {
+    let resetRecord = null;
+    try {
+      const raw = await env.FAVORITES.get(kvKey);
+      if (raw) resetRecord = JSON.parse(raw);
+    } catch {
+      resetRecord = null;
+    }
+    if (!resetRecord) {
+      return jsonResponse({ error: "등록되지 않은 계정입니다." }, 404);
+    }
+    resetRecord.keyHash = await sha256Hex(FAV_SALT + ":" + "0000");
+    await env.FAVORITES.put(kvKey, JSON.stringify(resetRecord));
+    return jsonResponse({ reset: true });
+  }
+
   const authKey = request.headers.get("X-Fav-Key") || "";
   if (authKey.length < 4 || authKey.length > FAV_MAX_LEN) {
     return jsonResponse({ error: "공유 키는 4자 이상이어야 합니다." }, 400);
   }
-
-  const kvKey = "fav:" + account;
 
   // 기존 레코드 로드
   let record = null;
@@ -293,6 +314,21 @@ async function handleFavorites(request, env, reqUrl) {
       payload = await request.json();
     } catch {
       return jsonResponse({ error: "invalid json body" }, 400);
+    }
+
+    // 비밀번호 변경 요청: ?pw_op=change, 본문 {newKey}
+    // 현재 키(X-Fav-Key) 검증을 통과한 로그인 상태에서만 가능하다.
+    if (reqUrl.searchParams.get("pw_op") === "change") {
+      const newKey = payload && typeof payload.newKey === "string" ? payload.newKey : "";
+      if (newKey.length < 4 || newKey.length > FAV_MAX_LEN) {
+        return jsonResponse({ error: "새 공유 키는 4자 이상이어야 합니다." }, 400);
+      }
+      const newHash = await sha256Hex(FAV_SALT + ":" + newKey);
+      await env.FAVORITES.put(
+        kvKey,
+        JSON.stringify({ keyHash: newHash, favorites, folders })
+      );
+      return jsonResponse({ favorites, folders, changed: true });
     }
 
     // 빈 폴더 생성 요청: ?folder_op=create, 본문 {folder}

@@ -355,12 +355,16 @@
         </label>
         <button id="favLoginBtn">로그인</button>
         <button id="favRegisterBtn">계정 등록</button>
+        <button id="favResetBtn">비밀번호 리셋</button>
+        <button id="favChangePwBtn" style="display:none">비밀번호 변경</button>
         <button id="favLogoutBtn" style="display:none">로그아웃</button>
         <button id="favDeleteBtn" style="display:none">계정 삭제</button>
         <span id="fav-login-status"></span>
       </div>
       <div class="hint">같은 계정 ID·공유 키를 입력하면 어느 기기에서든 같은 즐겨찾기를
-        공유합니다. 처음 쓰는 계정은 "계정 등록"으로 먼저 만든 뒤 로그인하세요.</div>
+        공유합니다. 처음 쓰는 계정은 "계정 등록"으로 먼저 만든 뒤 로그인하세요.
+        공유 키를 잊었다면 "비밀번호 리셋"으로 0000 으로 초기화한 뒤 로그인하고,
+        로그인 후 "비밀번호 변경"으로 새 키를 지정하세요.</div>
       <div class="fav-head">
         <span class="fav-title">⭐ 내 즐겨찾기</span>
         <label>폴더:
@@ -4396,6 +4400,39 @@ async def fav_delete_account():
     return True
 
 
+async def fav_reset_password(account):
+    """로그아웃 상태에서 계정 ID만으로 공유 키를 '0000'으로 초기화한다.
+
+    등록된 계정에서만 동작한다. 반환: (성공 bool, error 문자열 또는 None).
+    """
+    # 리셋은 키 검증을 거치지 않으므로 임의의 자리표시 키를 보낸다.
+    data, err, status = await _fav_api(
+        "POST", account, "0000", extra_query="&pw_op=reset", body=json.dumps({}))
+    if status == 404:
+        return False, "등록되지 않은 계정입니다."
+    if err:
+        return False, err
+    return True, None
+
+
+async def fav_change_password(new_key):
+    """로그인 상태에서 현재 계정의 공유 키를 새 키로 변경한다.
+
+    반환: (성공 bool, error 문자열 또는 None). 성공 시 세션 키도 갱신한다.
+    """
+    acct, key = _fav_creds()
+    if not (acct and key):
+        return False, "먼저 로그인하세요."
+    data, err, status = await _fav_api(
+        "POST", acct, key, extra_query="&pw_op=change",
+        body=json.dumps({"newKey": new_key}))
+    if err:
+        return False, err
+    _FAV_CREDS["key"] = new_key
+    return True, None
+
+
+
 async def fav_new_folder(name):
     """서버에 빈 폴더를 생성하고 갱신된 목록을 반환."""
     body = json.dumps({"folder": name})
@@ -4600,6 +4637,8 @@ def _update_fav_login_ui():
     acct, key = _fav_creds()
     login_btn = document.querySelector("#favLoginBtn")
     register_btn = document.querySelector("#favRegisterBtn")
+    reset_btn = document.querySelector("#favResetBtn")
+    change_pw_btn = document.querySelector("#favChangePwBtn")
     logout_btn = document.querySelector("#favLogoutBtn")
     delete_btn = document.querySelector("#favDeleteBtn")
     if _fav_logged_in():
@@ -4609,6 +4648,10 @@ def _update_fav_login_ui():
             login_btn.style.display = "none"
         if register_btn is not None:
             register_btn.style.display = "none"
+        if reset_btn is not None:
+            reset_btn.style.display = "none"
+        if change_pw_btn is not None:
+            change_pw_btn.style.display = "inline-block"
         if logout_btn is not None:
             logout_btn.style.display = "inline-block"
         if delete_btn is not None:
@@ -4619,6 +4662,10 @@ def _update_fav_login_ui():
             login_btn.style.display = "inline-block"
         if register_btn is not None:
             register_btn.style.display = "inline-block"
+        if reset_btn is not None:
+            reset_btn.style.display = "inline-block"
+        if change_pw_btn is not None:
+            change_pw_btn.style.display = "none"
         if logout_btn is not None:
             logout_btn.style.display = "none"
         if delete_btn is not None:
@@ -5896,6 +5943,56 @@ async def on_fav_register(event):
     _update_fav_login_ui()
     render_favorites([])
     _set_fav_status("계정 '%s' 등록 완료 · 로그인됨" % acct)
+
+
+@when("click", "#favResetBtn")
+async def on_fav_reset_password(event):
+    acct = document.querySelector("#favAccount").value.strip()
+    if not acct:
+        window.alert("비밀번호를 리셋할 계정 ID를 입력하세요.")
+        return
+    if not window.confirm(
+            "'%s' 계정의 공유 키를 '0000'으로 초기화합니다.\n"
+            "초기화 후 공유 키 0000 으로 로그인한 뒤 비밀번호를 변경하세요.\n"
+            "계속할까요?" % acct):
+        return
+    _set_fav_login_status("비밀번호 리셋 중...")
+    ok, err = await fav_reset_password(acct)
+    if not ok:
+        _set_fav_login_status("로그아웃 상태 · 계정 ID와 공유 키를 입력하세요")
+        window.alert("비밀번호 리셋 실패: %s" % err)
+        return
+    document.querySelector("#favKey").value = "0000"
+    _set_fav_login_status("비밀번호가 0000 으로 초기화됨 · 로그인하세요")
+    window.alert(
+        "'%s' 계정의 공유 키가 0000 으로 초기화되었습니다.\n"
+        "이제 0000 으로 로그인한 뒤 비밀번호를 변경하세요." % acct)
+
+
+@when("click", "#favChangePwBtn")
+async def on_fav_change_password(event):
+    if not _fav_logged_in():
+        window.alert("먼저 로그인하세요.")
+        return
+    new_key = window.prompt("새 공유 키를 입력하세요(4자 이상)") or ""
+    if not new_key:
+        return
+    if len(new_key) < 4:
+        window.alert("공유 키는 4자 이상이어야 합니다.")
+        return
+    confirm_key = window.prompt("확인을 위해 새 공유 키를 한 번 더 입력하세요") or ""
+    if new_key != confirm_key:
+        window.alert("두 번 입력한 공유 키가 서로 다릅니다.")
+        return
+    _set_fav_status("비밀번호 변경 중...")
+    ok, err = await fav_change_password(new_key)
+    if not ok:
+        _set_fav_status("")
+        window.alert("비밀번호 변경 실패: %s" % err)
+        return
+    document.querySelector("#favKey").value = new_key
+    _update_fav_login_ui()
+    _set_fav_status("공유 키가 변경되었습니다.")
 
 
 @when("click", "#favLogoutBtn")
