@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400">
+  <rect width="400" height="400" fill="#fff3df"/>
+  <!-- mane -->
+  <g fill="#c8791f">
+    <circle cx="200" cy="200" r="150"/>
+  </g>
+  <g fill="#e08e2a">
+    <circle cx="200" cy="70" r="30"/><circle cx="130" cy="95" r="30"/><circle cx="270" cy="95" r="30"/>
+    <circle cx="80" cy="160" r="30"/><circle cx="320" cy="160" r="30"/>
+    <circle cx="70" cy="230" r="30"/><circle cx="330" cy="230" r="30"/>
+    <circle cx="110" cy="300" r="30"/><circle cx="290" cy="300" r="30"/>
+    <circle cx="200" cy="330" r="30"/>
+  </g>
+  <!-- face -->
+  <circle cx="200" cy="205" r="98" fill="#f5b856"/>
+  <!-- ears -->
+  <circle cx="150" cy="140" r="20" fill="#e08e2a"/>
+  <circle cx="250" cy="140" r="20" fill="#e08e2a"/>
+  <!-- muzzle -->
+  <ellipse cx="200" cy="245" rx="55" ry="42" fill="#ffe6bf"/>
+  <!-- eyes -->
+  <ellipse cx="168" cy="195" rx="12" ry="15" fill="#3a2410"/>
+  <ellipse cx="232" cy="195" rx="12" ry="15" fill="#3a2410"/>
+  <circle cx="172" cy="190" r="4" fill="#fff"/>
+  <circle cx="236" cy="190" r="4" fill="#fff"/>
+  <!-- nose + mouth -->
+  <polygon points="200,240 184,224 216,224" fill="#7a4a1a"/>
+  <path d="M200 242 v16 M200 258 q-16 10 -28 2 M200 258 q16 10 28 2" stroke="#7a4a1a" stroke-width="4" fill="none"/>
+</svg>

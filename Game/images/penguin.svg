@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400">
+  <rect width="400" height="400" fill="#e6f4fb"/>
+  <!-- body -->
+  <ellipse cx="200" cy="235" rx="95" ry="130" fill="#2b2b33"/>
+  <!-- belly -->
+  <ellipse cx="200" cy="250" rx="62" ry="105" fill="#fdfdfd"/>
+  <!-- head -->
+  <circle cx="200" cy="120" r="70" fill="#2b2b33"/>
+  <ellipse cx="200" cy="135" rx="46" ry="42" fill="#fdfdfd"/>
+  <!-- eyes -->
+  <circle cx="180" cy="120" r="8" fill="#2b2b33"/>
+  <circle cx="220" cy="120" r="8" fill="#2b2b33"/>
+  <!-- beak -->
+  <polygon points="200,132 184,150 216,150" fill="#f5a623"/>
+  <polygon points="200,150 188,162 212,162" fill="#e08e10"/>
+  <!-- feet -->
+  <ellipse cx="172" cy="360" rx="22" ry="12" fill="#f5a623"/>
+  <ellipse cx="228" cy="360" rx="22" ry="12" fill="#f5a623"/>
+  <!-- wings -->
+  <path d="M108 220 q-14 60 20 110 q10 -70 6 -120 z" fill="#20202a"/>
+  <path d="M292 220 q14 60 -20 110 q-10 -70 -6 -120 z" fill="#20202a"/>
+</svg>

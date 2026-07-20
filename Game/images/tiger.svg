@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400">
+  <rect width="400" height="400" fill="#fff4e0"/>
+  <!-- ears -->
+  <circle cx="135" cy="130" r="34" fill="#f5a623"/>
+  <circle cx="265" cy="130" r="34" fill="#f5a623"/>
+  <circle cx="135" cy="130" r="16" fill="#2b1a10"/>
+  <circle cx="265" cy="130" r="16" fill="#2b1a10"/>
+  <!-- head -->
+  <circle cx="200" cy="230" r="105" fill="#f5a623"/>
+  <ellipse cx="200" cy="255" rx="70" ry="60" fill="#fff2df"/>
+  <!-- stripes -->
+  <path d="M200 128 l-10 40 20 0 z" fill="#2b1a10"/>
+  <path d="M150 140 l6 40 14 -8 z" fill="#2b1a10"/>
+  <path d="M250 140 l-6 40 -14 -8 z" fill="#2b1a10"/>
+  <path d="M110 210 q30 6 46 22" stroke="#2b1a10" stroke-width="9" fill="none" stroke-linecap="round"/>
+  <path d="M290 210 q-30 6 -46 22" stroke="#2b1a10" stroke-width="9" fill="none" stroke-linecap="round"/>
+  <!-- eyes -->
+  <ellipse cx="165" cy="215" rx="14" ry="17" fill="#2b1a10"/>
+  <ellipse cx="235" cy="215" rx="14" ry="17" fill="#2b1a10"/>
+  <circle cx="170" cy="209" r="4" fill="#fff"/>
+  <circle cx="240" cy="209" r="4" fill="#fff"/>
+  <!-- nose -->
+  <polygon points="200,262 186,246 214,246" fill="#c0392b"/>
+  <path d="M200 264 v18 M200 282 q-14 8 -24 2 M200 282 q14 8 24 2" stroke="#2b1a10" stroke-width="4" fill="none"/>
+</svg>

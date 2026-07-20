@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>동물 이름 맞히기 게임</title>
+<style>
+  :root { --grass1:#7ec850; --grass2:#5aa62f; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: "Segoe UI", "Malgun Gothic", sans-serif;
+    min-height: 100vh; display: flex; flex-direction: column; align-items: center;
+    /* 들판 느낌의 배경 (원하면 이미지 URL 로 교체) */
+    background:
+      radial-gradient(circle at 50% 120%, #cdeffb 0%, #bfe9f7 40%, transparent 60%),
+      repeating-linear-gradient(180deg, var(--grass1) 0, var(--grass1) 20px, var(--grass2) 20px, var(--grass2) 40px);
+    color: #204020;
+  }
+  header { margin: 20px 0 8px; text-align: center; }
+  header h1 { margin: 0; font-size: 24px; color: #fff; text-shadow: 0 2px 4px rgba(0,0,0,.35); }
+  .config {
+    background: rgba(255,255,255,.9); border-radius: 10px; padding: 10px 14px;
+    margin: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    box-shadow: 0 3px 8px rgba(0,0,0,.15); font-size: 13px;
+  }
+  .config input { padding: 6px 8px; border: 1px solid #bbb; border-radius: 6px; min-width: 260px; }
+  .stage {
+    background: rgba(255,255,255,.92); border-radius: 16px; padding: 20px;
+    margin: 12px; width: min(420px, 92vw); text-align: center;
+    box-shadow: 0 8px 24px rgba(0,0,0,.2);
+  }
+  .imgbox {
+    width: 100%; height: 300px; border-radius: 12px; overflow: hidden;
+    background: #eef6e6; display: flex; align-items: center; justify-content: center;
+    border: 3px solid #cfe8bd;
+  }
+  .imgbox img { width: 100%; height: 100%; object-fit: contain; }
+  .hint { margin: 10px 0 4px; color: #557; font-size: 17px; min-height: 20px; }
+  .choices { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
+  .choices button {
+    width: 100%; padding: 14px; font-size: 17px; border-radius: 12px;
+    background: #fff; color: #244; border: 2px solid #9bc47a; font-weight: 600;
+  }
+  .choices button:hover:not(:disabled) { background: #f0f8e8; }
+  .choices button:disabled { cursor: default; opacity: 0.95; }
+  .choices button.correct { background: #3fae4a; color: #fff; border-color: #3fae4a; }
+  .choices button.wrong { background: #e05a4a; color: #fff; border-color: #e05a4a; }
+  button {
+    padding: 12px 16px; font-size: 15px; border: none; border-radius: 10px;
+    background: #4a8f2c; color: #fff; cursor: pointer; font-weight: 600;
+  }
+  button:hover { background: #3c7822; }
+  button.ghost { background: #eee; color: #333; }
+  .feedback { margin-top: 12px; font-size: 18px; font-weight: 700; min-height: 26px; }
+  .feedback.ok { color: #2e8b2e; }
+  .feedback.no { color: #c0392b; }
+  .score { margin-top: 6px; color: #333; font-size: 14px; }
+  .loading { color: #888; }
+</style>
+</head>
+<body>
+  <header><h1>🌿 동물 이름 맞히기 🐾</h1></header>
+
+  <div class="stage">
+    <div class="imgbox">
+      <img id="animalImg" alt="동물" />
+    </div>
+    <div class="hint" id="hint"></div>
+
+    <div class="choices" id="choices"></div>
+    <div class="feedback" id="feedback"></div>
+    <div class="score" id="score">맞힌 개수: 0</div>
+    <button class="ghost" id="skipBtn" style="margin-top:10px;">다른 동물 보기 ↻</button>
+  </div>
+
+<script>
+  // ── Worker 주소 (코드에 고정, 화면에는 표시하지 않음) ──────────
+  const WORKER_BASE = "https://animal-proxy.sw3855.workers.dev";
+  const $ = (id) => document.getElementById(id);
+
+  let current = null;   // 현재 동물 { id, image, hint, choices }
+  let score = 0;
+
+  function api(path) { return WORKER_BASE + path; }
+
+  async function loadNext(excludeId) {
+    $("hint").textContent = "";
+    $("feedback").textContent = "";
+    $("choices").innerHTML = "";
+    $("animalImg").removeAttribute("src");
+    $("hint").innerHTML = '<span class="loading">불러오는 중…</span>';
+
+    try {
+      const url = api("/game/next") + (excludeId ? "?exclude=" + encodeURIComponent(excludeId) : "");
+      const res = await fetch(url);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      showAnimal(data);
+    } catch (e) {
+      $("hint").innerHTML = "";
+      $("feedback").textContent = "불러오기 실패: " + e.message;
+      $("feedback").className = "feedback no";
+    }
+  }
+
+  function showAnimal(animal) {
+    current = animal;
+    $("animalImg").src = api("/game/image?key=" + encodeURIComponent(animal.image));
+    $("hint").innerHTML = animal.hint ? "힌트: <strong>" + animal.hint + "</strong>" : "";
+    renderChoices(animal.choices || []);
+  }
+
+  // 객관식 보기 버튼 생성
+  function renderChoices(choices) {
+    const box = $("choices");
+    box.innerHTML = "";
+    choices.forEach((name) => {
+      const btn = document.createElement("button");
+      btn.textContent = name;
+      btn.onclick = () => submitAnswer(name, btn);
+      box.appendChild(btn);
+    });
+  }
+
+  async function submitAnswer(answer, btn) {
+    if (!current) return;
+    const buttons = $("choices").querySelectorAll("button");
+    buttons.forEach((b) => (b.disabled = true)); // 중복 클릭 방지
+
+    try {
+      const res = await fetch(api("/game/check"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: current.id, answer }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+
+      if (data.correct) {
+        score++;
+        $("score").textContent = "맞힌 개수: " + score;
+        if (btn) btn.classList.add("correct");
+        $("feedback").textContent = "정답! 🎉 (" + data.name + ")";
+        $("feedback").className = "feedback ok";
+        setTimeout(() => showAnimal(data.next), 1000); // 다음 동물
+      } else {
+        if (btn) btn.classList.add("wrong");
+        $("feedback").textContent = "땡! 다시 골라보세요 ❌";
+        $("feedback").className = "feedback no";
+        // 틀린 보기만 비활성 유지, 나머지는 다시 활성화
+        buttons.forEach((b) => { if (b !== btn) b.disabled = false; });
+      }
+    } catch (e) {
+      $("feedback").textContent = "채점 실패: " + e.message;
+      $("feedback").className = "feedback no";
+      buttons.forEach((b) => (b.disabled = false));
+    }
+  }
+
+  $("skipBtn").onclick = () => loadNext(current && current.id);
+
+  // 시작
+  loadNext();
+</script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400">
+  <rect width="400" height="400" fill="#eef7ef"/>
+  <!-- ears -->
+  <circle cx="130" cy="135" r="34" fill="#2b2b2b"/>
+  <circle cx="270" cy="135" r="34" fill="#2b2b2b"/>
+  <!-- head -->
+  <circle cx="200" cy="220" r="110" fill="#fdfdfd" stroke="#e6e6e6" stroke-width="3"/>
+  <!-- eye patches -->
+  <ellipse cx="158" cy="205" rx="30" ry="40" fill="#2b2b2b" transform="rotate(-15 158 205)"/>
+  <ellipse cx="242" cy="205" rx="30" ry="40" fill="#2b2b2b" transform="rotate(15 242 205)"/>
+  <!-- eyes -->
+  <circle cx="162" cy="210" r="12" fill="#fff"/>
+  <circle cx="238" cy="210" r="12" fill="#fff"/>
+  <circle cx="164" cy="212" r="6" fill="#2b2b2b"/>
+  <circle cx="236" cy="212" r="6" fill="#2b2b2b"/>
+  <!-- nose + mouth -->
+  <ellipse cx="200" cy="258" rx="14" ry="9" fill="#2b2b2b"/>
+  <path d="M200 267 v14 M200 281 q-14 8 -24 0 M200 281 q14 8 24 0" stroke="#2b2b2b" stroke-width="4" fill="none"/>
+</svg>

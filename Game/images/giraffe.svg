@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400">
+  <rect width="400" height="400" fill="#fef7e0"/>
+  <!-- neck -->
+  <rect x="178" y="150" width="44" height="210" rx="18" fill="#e9b84a"/>
+  <!-- spots on neck -->
+  <circle cx="192" cy="200" r="10" fill="#b9822a"/>
+  <circle cx="212" cy="240" r="10" fill="#b9822a"/>
+  <circle cx="190" cy="290" r="10" fill="#b9822a"/>
+  <circle cx="210" cy="330" r="10" fill="#b9822a"/>
+  <!-- head -->
+  <ellipse cx="200" cy="120" rx="52" ry="46" fill="#e9b84a"/>
+  <!-- snout -->
+  <ellipse cx="200" cy="150" rx="34" ry="26" fill="#d9a63a"/>
+  <!-- ossicones -->
+  <line x1="180" y1="80" x2="176" y2="52" stroke="#c98f2a" stroke-width="8" stroke-linecap="round"/>
+  <line x1="220" y1="80" x2="224" y2="52" stroke="#c98f2a" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="175" cy="50" r="8" fill="#8a5a1a"/>
+  <circle cx="225" cy="50" r="8" fill="#8a5a1a"/>
+  <!-- ears -->
+  <ellipse cx="152" cy="110" rx="16" ry="9" fill="#d9a63a"/>
+  <ellipse cx="248" cy="110" rx="16" ry="9" fill="#d9a63a"/>
+  <!-- eyes -->
+  <circle cx="182" cy="112" r="8" fill="#2b1a10"/>
+  <circle cx="218" cy="112" r="8" fill="#2b1a10"/>
+  <!-- nostrils -->
+  <circle cx="190" cy="150" r="4" fill="#8a5a1a"/>
+  <circle cx="210" cy="150" r="4" fill="#8a5a1a"/>
+</svg>

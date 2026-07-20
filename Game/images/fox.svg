@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400">
+  <rect width="400" height="400" fill="#f4fbe8"/>
+  <!-- ears -->
+  <polygon points="120,140 90,60 175,120" fill="#e2711d"/>
+  <polygon points="280,140 310,60 225,120" fill="#e2711d"/>
+  <polygon points="128,132 108,82 168,120" fill="#3a2417"/>
+  <polygon points="272,132 292,82 232,120" fill="#3a2417"/>
+  <!-- head -->
+  <polygon points="200,320 110,150 290,150" fill="#e2711d"/>
+  <polygon points="200,300 150,200 250,200" fill="#ffffff"/>
+  <polygon points="200,320 175,250 225,250" fill="#ffffff"/>
+  <!-- eyes -->
+  <ellipse cx="165" cy="200" rx="14" ry="18" fill="#2b1a10"/>
+  <ellipse cx="235" cy="200" rx="14" ry="18" fill="#2b1a10"/>
+  <circle cx="170" cy="194" r="4" fill="#fff"/>
+  <circle cx="240" cy="194" r="4" fill="#fff"/>
+  <!-- nose -->
+  <polygon points="200,275 188,258 212,258" fill="#2b1a10"/>
+</svg>
