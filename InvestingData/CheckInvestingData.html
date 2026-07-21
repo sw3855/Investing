@@ -156,6 +156,38 @@
   .tab-panel { display:none; }
   .tab-panel.active { display:block; }
 
+  /* AI 기업 평가 결과(마크다운) */
+  .ai-card { border:1px solid var(--bd); border-radius:10px; margin-top:16px;
+    overflow:hidden; }
+  .ai-card-head { background:#131722; color:#fff; padding:14px 18px;
+    font-size:16px; font-weight:600; }
+  .ai-body { padding:16px 20px; font-size:14px; line-height:1.7; color:#1f2328; }
+  .ai-body h1, .ai-body h2, .ai-body h3 { color:#131722; line-height:1.35;
+    margin:18px 0 8px; }
+  .ai-body h1 { font-size:20px; border-bottom:2px solid var(--bd); padding-bottom:6px; }
+  .ai-body h2 { font-size:17px; }
+  .ai-body h3 { font-size:15px; color:var(--pri); }
+  .ai-body h1:first-child, .ai-body h2:first-child { margin-top:0; }
+  .ai-body p { margin:8px 0; }
+  .ai-body ul, .ai-body ol { margin:8px 0; padding-left:22px; }
+  .ai-body li { margin:3px 0; }
+  .ai-body strong { color:#131722; }
+  .ai-body hr { border:0; border-top:1px solid var(--bd); margin:16px 0; }
+  .ai-body code { background:var(--bg); border:1px solid var(--bd); border-radius:4px;
+    padding:1px 5px; font-family:Consolas,"Courier New",monospace; font-size:13px; }
+  .ai-body table { border-collapse:collapse; width:100%; margin:12px 0; font-size:13px; }
+  .ai-body th, .ai-body td { border:1px solid var(--bd); padding:6px 10px;
+    text-align:left; }
+  .ai-body th { background:var(--bg); color:var(--mut); }
+  .ai-sources { padding:12px 20px; border-top:1px solid var(--bd); background:var(--bg);
+    font-size:13px; }
+  .ai-sources h4 { margin:0 0 8px; color:var(--mut); font-size:13px; }
+  .ai-sources ol { margin:0; padding-left:20px; }
+  .ai-sources li { margin:3px 0; }
+  .ai-sources a { color:var(--pri); word-break:break-all; }
+  .ai-error { color:var(--sell); background:#fff0f0; border:1px solid #f5c2c7;
+    border-radius:8px; padding:12px 14px; margin-top:16px; font-size:14px; }
+
   /* 공포·탐욕 지수 */
   .fg-score { font-size:56px; font-weight:800; line-height:1; text-align:center; }
   .fg-rating { text-align:center; font-size:18px; font-weight:700; margin-top:6px; }
@@ -315,8 +347,38 @@
     </div>
   </fieldset>
 
+  <fieldset class="fav-fieldset">
+    <legend>계정</legend>
+    <button id="acctCollapseBtn" class="fav-collapse-btn" type="button"
+            title="계정 접기/펴기">▲</button>
+    <div id="acct-body">
+    <div class="row">
+      <label>계정 ID:
+        <input type="text" id="favAccount" style="width:150px"
+               placeholder="예: my-list" autocomplete="username">
+      </label>
+      <label>공유 키:
+        <input type="password" id="favKey" style="width:150px"
+               placeholder="비밀 키(4자 이상)" autocomplete="current-password">
+      </label>
+      <button id="favLoginBtn">로그인</button>
+      <button id="favRegisterBtn">계정 등록</button>
+      <button id="favResetBtn">비밀번호 리셋</button>
+      <button id="favChangePwBtn" style="display:none">비밀번호 변경</button>
+      <button id="favLogoutBtn" style="display:none">로그아웃</button>
+      <button id="favDeleteBtn" style="display:none">계정 삭제</button>
+      <span id="fav-login-status"></span>
+    </div>
+    <div class="hint">같은 계정 ID·공유 키를 입력하면 어느 기기에서든 같은 즐겨찾기를
+      공유합니다. 처음 쓰는 계정은 "계정 등록"으로 먼저 만든 뒤 로그인하세요.
+      공유 키를 잊었다면 "비밀번호 리셋"으로 0000 으로 초기화한 뒤 로그인하고,
+      로그인 후 "비밀번호 변경"으로 새 키를 지정하세요.</div>
+    </div>
+  </fieldset>
+
   <div class="tabs">
     <button class="tab-btn active" data-tab="stock">종목</button>
+    <button class="tab-btn" data-tab="ai">AI 평가</button>
     <button class="tab-btn" data-tab="macro">경제지표</button>
     <button class="tab-btn" data-tab="guru">13F</button>
     <button class="tab-btn" data-tab="feargreed">공포·탐욕</button>
@@ -344,27 +406,6 @@
       <button id="favCollapseBtn" class="fav-collapse-btn" type="button"
               title="즐겨찾기 접기/펴기">▲</button>
       <div id="fav-body">
-      <div class="row">
-        <label>계정 ID:
-          <input type="text" id="favAccount" style="width:150px"
-                 placeholder="예: my-list" autocomplete="username">
-        </label>
-        <label>공유 키:
-          <input type="password" id="favKey" style="width:150px"
-                 placeholder="비밀 키(4자 이상)" autocomplete="current-password">
-        </label>
-        <button id="favLoginBtn">로그인</button>
-        <button id="favRegisterBtn">계정 등록</button>
-        <button id="favResetBtn">비밀번호 리셋</button>
-        <button id="favChangePwBtn" style="display:none">비밀번호 변경</button>
-        <button id="favLogoutBtn" style="display:none">로그아웃</button>
-        <button id="favDeleteBtn" style="display:none">계정 삭제</button>
-        <span id="fav-login-status"></span>
-      </div>
-      <div class="hint">같은 계정 ID·공유 키를 입력하면 어느 기기에서든 같은 즐겨찾기를
-        공유합니다. 처음 쓰는 계정은 "계정 등록"으로 먼저 만든 뒤 로그인하세요.
-        공유 키를 잊었다면 "비밀번호 리셋"으로 0000 으로 초기화한 뒤 로그인하고,
-        로그인 후 "비밀번호 변경"으로 새 키를 지정하세요.</div>
       <div class="fav-head">
         <span class="fav-title">⭐ 내 즐겨찾기</span>
         <label>폴더:
@@ -509,6 +550,36 @@
     </fieldset>
 
     <div id="liq-result"></div>
+  </div>
+
+  <div class="tab-panel" id="tab-ai">
+    <fieldset>
+      <legend>AI 기업 평가 · Gemini(제미나이) 실시간 분석</legend>
+      <div class="row">
+        <input type="text" id="aiTicker" class="grow"
+               placeholder="평가할 기업/종목 (예: 삼성전자, AAPL, TSLA)">
+        <button class="primary" id="aiEvalBtn">AI 평가</button>
+        <button id="aiUseTickerBtn" type="button"
+                title="'종목' 탭에 입력한 티커를 가져옵니다">종목 탭 티커 가져오기</button>
+        <span id="ai-status"></span>
+      </div>
+    </fieldset>
+
+    <fieldset id="ai-admin" style="display:none">
+      <legend>AI 평가 접근 관리 (관리자 전용)</legend>
+      <div class="row">
+        <input type="text" id="aiGrantAccount" style="width:180px"
+               placeholder="허가할 계정 ID">
+        <button id="aiGrantBtn">접근 허가</button>
+        <button id="aiAccessRefreshBtn" type="button">목록 새로고침</button>
+        <span id="ai-admin-status"></span>
+      </div>
+      <div class="hint">허가된 계정만 AI 평가를 사용할 수 있습니다.
+        관리자 계정은 항상 사용할 수 있습니다.</div>
+      <div id="ai-access-list" class="fav-list"></div>
+    </fieldset>
+
+    <div id="ai-result"></div>
   </div>
 </main>
 
@@ -4655,7 +4726,8 @@ def _update_fav_login_ui():
         if logout_btn is not None:
             logout_btn.style.display = "inline-block"
         if delete_btn is not None:
-            delete_btn.style.display = "inline-block"
+            # 관리자 계정은 계정 삭제를 미표시한다(관리자 여부는 비동기 확인).
+            delete_btn.style.display = "none" if _is_ai_admin() else "inline-block"
         _set_fav_login_status("로그인됨 · %s" % acct)
     else:
         if login_btn is not None:
@@ -4672,6 +4744,7 @@ def _update_fav_login_ui():
             delete_btn.style.display = "none"
         _set_fav_login_status("로그아웃 상태 · 계정 ID와 공유 키를 입력하세요")
     _update_fav_add_btn()
+    _update_ai_admin_ui()
 
 
 def _mark_favoritable(symbol, name):
@@ -5377,6 +5450,313 @@ async def load_multpl_overview():
     _set_multpl_status("완료 · %d/%d" % (ok, len(_MULTPL_METRICS)))
 
 
+# ===================== AI 기업 평가 (Gemini) =====================
+
+_AI_BUSY = {"on": False}
+
+# AI 평가 관리자 여부는 워커(/ai-access)에서 판별한다(관리자 계정은 KV 에 저장).
+_AI_ADMIN = {"is": False}
+
+
+def _gemini_base():
+    """CORS 프록시 접두어에서 Worker 주소를 뽑아 /gemini 엔드포인트를 만든다."""
+    prefix = document.querySelector("#proxy").value.strip()
+    if not prefix:
+        return None
+    base = prefix.split("?")[0].rstrip("/")
+    if not base.startswith("http"):
+        return None
+    return base + "/gemini"
+
+
+def _is_ai_admin():
+    """현재 세션이 관리자로 확인된 상태면 True. (워커 응답 기준)"""
+    return bool(_AI_ADMIN.get("is"))
+
+
+def _ai_access_base():
+    """CORS 프록시 접두어에서 Worker 주소를 뽑아 /ai-access 엔드포인트를 만든다."""
+    prefix = document.querySelector("#proxy").value.strip()
+    if not prefix:
+        return None
+    base = prefix.split("?")[0].rstrip("/")
+    if not base.startswith("http"):
+        return None
+    return base + "/ai-access"
+
+
+def _set_ai_admin_status(msg):
+    el = document.querySelector("#ai-admin-status")
+    if el is not None:
+        el.textContent = msg or ""
+
+
+async def _ai_access_api(method, extra_query="", body=None):
+    """관리자 계정으로 /ai-access API 를 호출한다.
+
+    반환: (data 또는 None, error 문자열 또는 None)
+    """
+    base = _ai_access_base()
+    if not base:
+        return None, "Worker(프록시) 주소가 설정돼 있어야 합니다."
+    acct, key = _fav_creds()
+    if not (acct and key):
+        return None, "먼저 로그인하세요."
+    url = "%s?account=%s%s" % (base, js.encodeURIComponent(acct), extra_query)
+    headers = {"X-Fav-Key": key}
+    kwargs = {"method": method, "headers": headers}
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+        kwargs["body"] = body
+    try:
+        resp = await pyfetch(url, **kwargs)
+        data = json.loads(await resp.string())
+    except Exception as exc:
+        return None, str(exc)
+    if resp.status >= 400:
+        return None, (data.get("error") or ("HTTP %s" % resp.status))
+    return data, None
+
+
+def _make_ai_revoke_handler(target):
+    async def _do():
+        _set_ai_admin_status("취소 중...")
+        data, err = await _ai_access_api(
+            "DELETE", extra_query="&target=%s" % js.encodeURIComponent(target))
+        if err:
+            _set_ai_admin_status("실패: %s" % err)
+            return
+        render_ai_access(data.get("allowed") or [])
+        _set_ai_admin_status("취소됨 · %s" % target)
+
+    def handler(evt):
+        evt.preventDefault()
+        evt.stopPropagation()
+        if not window.confirm("'%s' 계정의 AI 평가 접근 권한을 취소할까요?" % target):
+            return
+        asyncio.ensure_future(_do())
+    return handler
+
+
+def render_ai_access(allowed):
+    """허가된 계정 목록을 렌더링한다(취소 버튼 포함)."""
+    box = document.querySelector("#ai-access-list")
+    if box is None:
+        return
+    if not allowed:
+        box.innerHTML = ('<div class="hint" style="margin-top:8px">아직 허가된 계정이 '
+                         '없습니다. 관리자 외에는 AI 평가를 사용할 수 없습니다.</div>')
+        return
+    chips = []
+    for a in allowed:
+        chips.append(
+            '<span class="fav-chip"><span class="fav-load">'
+            '<span class="fav-sym">%s</span></span>'
+            '<button class="fav-del ai-revoke" data-account="%s" '
+            'title="접근 취소">×</button></span>' % (_esc(a), _esc(a)))
+    box.innerHTML = '<div class="fav-chips" style="margin-top:8px">%s</div>' % "".join(chips)
+    revokes = document.querySelectorAll("#ai-access-list .ai-revoke")
+    for i in range(revokes.length):
+        el = revokes.item(i)
+        _bind(el, "click", _make_ai_revoke_handler(el.getAttribute("data-account")))
+
+
+async def _load_ai_access():
+    data, err = await _ai_access_api("GET")
+    if err:
+        _set_ai_admin_status("목록 조회 실패: %s" % err)
+        render_ai_access([])
+        return
+    render_ai_access(data.get("allowed") or [])
+    _set_ai_admin_status("")
+
+
+def _update_ai_admin_ui():
+    """관리자 여부를 워커(/ai-access)에서 확인해 관리 패널을 노출/숨김한다."""
+    asyncio.ensure_future(_refresh_ai_admin())
+
+
+async def _refresh_ai_admin():
+    panel = document.querySelector("#ai-admin")
+    if panel is None:
+        return
+    if not _fav_logged_in():
+        _AI_ADMIN["is"] = False
+        panel.style.display = "none"
+        return
+    # 관리자 전용 엔드포인트를 호출해 성공하면 관리자, 403이면 일반 사용자.
+    data, err = await _ai_access_api("GET")
+    delete_btn = document.querySelector("#favDeleteBtn")
+    if err:
+        _AI_ADMIN["is"] = False
+        panel.style.display = "none"
+        # 관리자가 아니면(그리고 로그인 상태면) 계정 삭제 버튼을 다시 노출한다.
+        if delete_btn is not None and _fav_logged_in():
+            delete_btn.style.display = "inline-block"
+        return
+    _AI_ADMIN["is"] = True
+    panel.style.display = ""
+    # 관리자 계정은 계정 삭제 버튼을 숨긴다.
+    if delete_btn is not None:
+        delete_btn.style.display = "none"
+    render_ai_access(data.get("allowed") or [])
+    _set_ai_admin_status("")
+
+
+def _set_ai_status(msg):
+    el = document.querySelector("#ai-status")
+    if el is not None:
+        el.textContent = msg or ""
+
+
+def _md_inline(text):
+    """인라인 마크다운(굵게/기울임/코드)을 변환. 입력은 이미 HTML 이스케이프됨."""
+    text = re.sub(r"`([^`]+)`", r"<code>\1</code>", text)
+    text = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", text)
+    text = re.sub(r"(?<!\*)\*([^*\s][^*]*?)\*(?!\*)", r"<em>\1</em>", text)
+    return text
+
+
+def _render_markdown(md):
+    """제미나이가 반환한 마크다운을 HTML 로 변환한다.
+    XSS 방지를 위해 원문을 먼저 이스케이프한 뒤 서식만 다시 입힌다."""
+    lines = _esc(md).split("\n")
+    html = []
+    state = {"list": None}  # None / "ul" / "ol"
+    table_buf = []
+
+    def close_list():
+        if state["list"]:
+            html.append("</%s>" % state["list"])
+            state["list"] = None
+
+    def flush_table():
+        if not table_buf:
+            return
+        rows = [r for r in table_buf if r.strip()]
+        table_buf.clear()
+        body = [r for r in rows
+                if not re.match(r"^\s*\|?[\s:\-|]+\|?\s*$", r)]
+        if not body:
+            return
+        html.append("<table>")
+        for i, r in enumerate(body):
+            cells = [c.strip() for c in r.strip().strip("|").split("|")]
+            tag = "th" if i == 0 else "td"
+            html.append("<tr>" + "".join(
+                "<%s>%s</%s>" % (tag, _md_inline(c), tag) for c in cells) + "</tr>")
+        html.append("</table>")
+
+    for raw in lines:
+        line = raw.rstrip()
+        stripped = line.strip()
+        if stripped.startswith("|") and stripped.count("|") >= 2:
+            close_list()
+            table_buf.append(line)
+            continue
+        flush_table()
+        if not stripped:
+            close_list()
+            continue
+        if re.match(r"^(-{3,}|\*{3,}|_{3,})$", stripped):
+            close_list()
+            html.append("<hr>")
+            continue
+        m = re.match(r"^(#{1,6})\s+(.*)$", stripped)
+        if m:
+            close_list()
+            level = min(len(m.group(1)), 3)
+            html.append("<h%d>%s</h%d>" % (level, _md_inline(m.group(2)), level))
+            continue
+        m = re.match(r"^\d+[.)]\s+(.*)$", stripped)
+        if m:
+            if state["list"] != "ol":
+                close_list()
+                html.append("<ol>")
+                state["list"] = "ol"
+            html.append("<li>%s</li>" % _md_inline(m.group(1)))
+            continue
+        m = re.match(r"^[-*+]\s+(.*)$", stripped)
+        if m:
+            if state["list"] != "ul":
+                close_list()
+                html.append("<ul>")
+                state["list"] = "ul"
+            html.append("<li>%s</li>" % _md_inline(m.group(1)))
+            continue
+        close_list()
+        html.append("<p>%s</p>" % _md_inline(stripped))
+
+    flush_table()
+    close_list()
+    return "".join(html)
+
+
+async def _run_ai_eval():
+    company = document.querySelector("#aiTicker").value.strip()
+    box = document.querySelector("#ai-result")
+    if not company:
+        _set_ai_status("평가할 기업/종목을 입력하세요.")
+        return
+    if not _fav_logged_in():
+        box.innerHTML = ('<div class="ai-error">AI 평가는 로그인 후 사용할 수 있습니다. '
+                         '상단 계정 영역에서 로그인하세요.</div>')
+        _set_ai_status("로그인 필요")
+        return
+    acct, key = _fav_creds()
+    base = _gemini_base()
+    if not base:
+        box.innerHTML = ('<div class="ai-error">Worker(프록시) 주소가 설정돼 있어야 '
+                         'AI 평가를 사용할 수 있습니다.</div>')
+        return
+    _AI_BUSY["on"] = True
+    document.querySelector("#aiEvalBtn").disabled = True
+    _set_ai_status("Gemini 가 실시간으로 분석 중입니다… (최대 40초 소요)")
+    box.innerHTML = ('<div class="ai-card">'
+                     '<div class="ai-card-head">🤖 AI 기업 평가 · %s</div>'
+                     '<div class="ai-body"><p>Google 검색으로 최신 실적·공시를 '
+                     '수집하며 분석 중입니다…</p></div></div>' % _esc(company))
+    try:
+        url = "%s?account=%s" % (base, js.encodeURIComponent(acct))
+        headers = {"Content-Type": "application/json", "X-Fav-Key": key}
+        body = json.dumps({"company": company})
+        resp = await pyfetch(url, method="POST", headers=headers, body=body)
+        data = json.loads(await resp.string())
+    except Exception as exc:
+        box.innerHTML = ('<div class="ai-error">요청에 실패했습니다: %s</div>'
+                         % _esc(str(exc)))
+        _set_ai_status("")
+        _AI_BUSY["on"] = False
+        document.querySelector("#aiEvalBtn").disabled = False
+        return
+    if resp.status >= 400 or data.get("error"):
+        msg = data.get("error") or ("HTTP %s" % resp.status)
+        box.innerHTML = ('<div class="ai-error">%s</div>' % _esc(msg))
+        _set_ai_status("")
+    else:
+        content = _render_markdown(data.get("text") or "")
+        sources = data.get("sources") or []
+        model = data.get("model") or ""
+        src_html = ""
+        if sources:
+            items = "".join(
+                '<li><a href="%s" target="_blank" rel="noopener">%s</a></li>'
+                % (_esc(s.get("uri") or ""),
+                   _esc(s.get("title") or s.get("uri") or ""))
+                for s in sources)
+            src_html = ('<div class="ai-sources"><h4>📎 참고 출처(실시간 검색)</h4>'
+                        '<ol>%s</ol></div>' % items)
+        model_html = (' <span class="sym">%s</span>' % _esc(model)) if model else ""
+        box.innerHTML = (
+            '<div class="ai-card">'
+            '<div class="ai-card-head">🤖 AI 기업 평가 · %s%s</div>'
+            '<div class="ai-body">%s</div>%s</div>'
+            % (_esc(company), model_html, content, src_html))
+        _set_ai_status("완료")
+    _AI_BUSY["on"] = False
+    document.querySelector("#aiEvalBtn").disabled = False
+
+
 # ===================== 이벤트 =====================
 
 @when("click", "#lookupBtn")
@@ -5422,6 +5802,54 @@ async def on_lookup(event):
 @when("click", "#sp500MapBtn")
 def on_sp500_map(event):
     window.open("https://finviz.com/map?t=sec", "_blank")
+
+
+@when("click", "#aiEvalBtn")
+async def on_ai_eval(event):
+    if _AI_BUSY["on"]:
+        return
+    await _run_ai_eval()
+
+
+@when("click", "#aiUseTickerBtn")
+def on_ai_use_ticker(event):
+    t = document.querySelector("#ticker").value.strip()
+    if t:
+        document.querySelector("#aiTicker").value = t
+
+
+@when("keydown", "#aiTicker")
+def on_ai_enter(event):
+    if event.key == "Enter":
+        document.querySelector("#aiEvalBtn").click()
+
+
+@when("click", "#aiGrantBtn")
+async def on_ai_grant(event):
+    if not _is_ai_admin():
+        window.alert("관리자만 사용할 수 있습니다.")
+        return
+    target = document.querySelector("#aiGrantAccount").value.strip()
+    if not target:
+        window.alert("허가할 계정 ID를 입력하세요.")
+        return
+    _set_ai_admin_status("허가 중...")
+    data, err = await _ai_access_api("POST", body=json.dumps({"target": target}))
+    if err:
+        _set_ai_admin_status("실패: %s" % err)
+        window.alert("접근 허가 실패: %s" % err)
+        return
+    document.querySelector("#aiGrantAccount").value = ""
+    render_ai_access(data.get("allowed") or [])
+    _set_ai_admin_status("허가됨 · %s" % target)
+
+
+@when("click", "#aiAccessRefreshBtn")
+async def on_ai_access_refresh(event):
+    if not _is_ai_admin():
+        return
+    _set_ai_admin_status("불러오는 중...")
+    await _load_ai_access()
 
 
 @when("keydown", "#ticker")
@@ -5859,6 +6287,23 @@ def on_fav_collapse(event):
         body.style.display = "none"
         btn.textContent = "▼"
         btn.title = "즐겨찾기 펴기"
+
+
+@when("click", "#acctCollapseBtn")
+def on_acct_collapse(event):
+    """계정 영역 전체를 접거나 편다(제목·버튼만 남기고 최소화)."""
+    body = document.querySelector("#acct-body")
+    btn = document.querySelector("#acctCollapseBtn")
+    if body is None or btn is None:
+        return
+    if body.style.display == "none":
+        body.style.display = ""
+        btn.textContent = "▲"
+        btn.title = "계정 접기"
+    else:
+        body.style.display = "none"
+        btn.textContent = "▼"
+        btn.title = "계정 펴기"
 
 
 @when("click", "#favNewFolderBtn")

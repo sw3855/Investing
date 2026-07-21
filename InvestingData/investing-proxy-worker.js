@@ -46,14 +46,157 @@
  *    DELETE https://<worker>/favorites?account=<id>&symbol=..  → 해당 심볼 삭제
  *    DELETE https://<worker>/favorites?account=<id>&folder=..  → 폴더와 그 안의 종목 삭제
  *    DELETE https://<worker>/favorites?account=<id>            → (symbol 없이) 계정 전체 삭제
+ *
+ * ── Gemini AI 기업 평가 (POST /gemini) ─────────────────────
+ *  평가 프롬프트(Evaluation_Prompt.md 내용)를 시스템 지시로 사용해 제미나이가
+ *  Google 검색 그라운딩으로 최신 실적·공시를 수집하여 기업을 채점한다.
+ *  API 키는 요청 헤더 X-Gemini-Key 로 전달하거나 Worker 환경변수 GEMINI_API_KEY 로 설정한다.
+ *    POST https://<worker>/gemini   본문 {company:"삼성전자"}
+ *      → { text:"<마크다운 분석>", sources:[{title,uri}, ...] }
+ *
+ *  ● 평가 프롬프트는 워커 코드에 넣지 않고 KV 에 파일로 바인딩한다.
+ *    1) 대시보드: Workers & Pages → KV → Create namespace
+ *         (이름 예: investing_prompts)
+ *    2) 이 Worker → Settings → Variables → KV Namespace Bindings
+ *         Variable name(바인딩 이름): PROMPTS
+ *         KV namespace: 위에서 만든 investing_prompts 선택
+ *    3) Evaluation_Prompt.md 내용을 'evaluation' 키 값으로 업로드한다.
+ *         (wrangler:  wrangler kv:key put --binding=PROMPTS "evaluation" \
+ *                       --path=Evaluation_Prompt.md )
+ *         (또는 대시보드 KV 화면에서 Key=evaluation, Value=파일내용 붙여넣기)
+ *    (wrangler.toml 예)
+ *         [[kv_namespaces]]
+ *         binding = "PROMPTS"
+ *         id = "<네임스페이스 ID>"
+ *
+ *  ● AI 평가 접근 제어 (로그인 + 관리자 허가)
+ *    - /gemini 는 즐겨찾기 계정으로 로그인해야 하며(계정 ID ?account=, 공유 키 X-Fav-Key),
+ *      관리자 계정 또는 관리자가 허가한 계정만 사용할 수 있다.
+ *    - 관리자 계정 ID 는 FAVORITES KV 의 'ai_admin' 키에 저장된다(최초 1회 '이성원'으로 시드).
+ *      관리자를 바꾸려면 KV 의 'ai_admin' 값을 수정한다.
+ *    - 허용 계정 목록은 FAVORITES KV 의 'ai_access' 키(JSON 배열)에 저장된다.
+ *    - 관리자 전용 관리 API:
+ *        GET    /ai-access?account=<admin>            → { admin, allowed:[...] }
+ *        POST   /ai-access?account=<admin>  본문 {target} → 계정 접근 허가
+ *        DELETE /ai-access?account=<admin>&target=..   → 계정 접근 취소
  */
-
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, X-Fav-Key",
+  "Access-Control-Allow-Headers": "Content-Type, X-Fav-Key, X-Gemini-Key",
   "Access-Control-Max-Age": "86400",
 };
+
+// 항상 "최신" Gemini 모델을 자동으로 선택한다.
+//  1순위: ListModels API 로 generateContent 를 지원하는 gemini-flash 계열 중
+//         버전이 가장 높은 안정 모델을 실시간으로 탐색한다.
+//  2순위(폴백): 구글이 유지·관리하는 최신 별칭(항상 최신 Flash 를 가리킴).
+const GEMINI_MODEL_FALLBACK = "gemini-flash-latest";
+// 탐색 결과는 일정 시간 캐시해 매 요청마다 ListModels 를 부르지 않는다.
+const MODEL_CACHE_MS = 6 * 60 * 60 * 1000; // 6시간
+let _modelCache = { name: null, at: 0 };
+
+// Google Gemini 호출은 회사망/엣지 경로에 따라 "User location is not supported"
+// 오류가 날 수 있다. GEMINI_RELAY_URL(예: Vercel 미국 고정 함수)이 설정돼 있으면
+// 그 릴레이를 통해 호출해 항상 지원 지역에서 나가도록 한다. 없으면 직접 호출.
+const GEMINI_DIRECT_BASE = "https://generativelanguage.googleapis.com/v1beta/";
+
+async function geminiFetch(env, endpoint, method, payload, apiKey) {
+  const relayUrl = env && env.GEMINI_RELAY_URL;
+  if (relayUrl) {
+    // 릴레이 경유: API 키는 릴레이(Vercel) 쪽에 있으므로 워커는 보내지 않는다.
+    return fetch(relayUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-relay-secret": (env && env.GEMINI_RELAY_SECRET) || "",
+      },
+      body: JSON.stringify({ endpoint, method, payload: payload || null }),
+    });
+  }
+  // 직접 호출(하위 호환)
+  const sep = endpoint.includes("?") ? "&" : "?";
+  const url =
+    GEMINI_DIRECT_BASE + endpoint + sep + "key=" + encodeURIComponent(apiKey || "");
+  const init = { method };
+  if (method === "POST") {
+    init.headers = { "Content-Type": "application/json" };
+    init.body = JSON.stringify(payload || {});
+  }
+  return fetch(url, init);
+}
+
+// "models/gemini-2.5-flash" → 205 처럼 버전 비교용 점수를 만든다.
+function _modelVersionScore(name) {
+  const m = String(name || "").match(/gemini-(\d+)\.(\d+)/);
+  if (!m) return -1;
+  return parseInt(m[1], 10) * 100 + parseInt(m[2], 10);
+}
+
+// ListModels 로 최신 gemini-flash(안정판) 모델명을 찾는다. 실패 시 별칭 폴백.
+async function resolveLatestModel(env, apiKey) {
+  const now = Date.now();
+  if (_modelCache.name && now - _modelCache.at < MODEL_CACHE_MS) {
+    return _modelCache.name;
+  }
+  try {
+    const resp = await geminiFetch(env, "models?pageSize=1000", "GET", null, apiKey);
+    if (resp.ok) {
+      const data = await resp.json();
+      const models = Array.isArray(data.models) ? data.models : [];
+      const candidates = models.filter((m) => {
+        const n = m && m.name ? m.name : "";
+        const methods = (m && m.supportedGenerationMethods) || [];
+        // gemini-flash 계열 + 텍스트 생성 지원 + 실험/프리뷰/특수 변형 제외(안정판 우선)
+        return (
+          n.includes("gemini") &&
+          n.includes("flash") &&
+          methods.includes("generateContent") &&
+          !/exp|preview|lite|thinking|image|tts|audio|native|vision/i.test(n)
+        );
+      });
+      candidates.sort(
+        (a, b) => _modelVersionScore(b.name) - _modelVersionScore(a.name)
+      );
+      if (candidates.length && _modelVersionScore(candidates[0].name) >= 0) {
+        const best = candidates[0].name.replace(/^models\//, "");
+        _modelCache = { name: best, at: now };
+        return best;
+      }
+    }
+  } catch {
+    // 무시하고 폴백 별칭 사용
+  }
+  _modelCache = { name: GEMINI_MODEL_FALLBACK, at: now };
+  return GEMINI_MODEL_FALLBACK;
+}
+
+// 평가 프롬프트(Evaluation_Prompt.md)는 워커 코드에 넣지 않고 PROMPTS(KV)에
+// 파일로 바인딩한다. 아래 키 값으로 저장된 텍스트를 런타임에 읽어 사용한다.
+const EVALUATION_PROMPT_KEY = "evaluation";
+// 프롬프트가 아직 KV 에 없을 때 안내할 오류 문구
+const PROMPT_MISSING_MSG =
+  "평가 프롬프트가 설정되지 않았습니다. Worker 의 PROMPTS(KV) 바인딩에 " +
+  "'evaluation' 키로 Evaluation_Prompt.md 내용을 업로드하세요.";
+// 같은 아이솔레이트 내 반복 KV 읽기를 줄이기 위한 메모리 캐시
+let _promptCache = null;
+
+// PROMPTS(KV)에서 평가 프롬프트 텍스트를 읽어온다. 없으면 null.
+async function getEvaluationPrompt(env) {
+  if (_promptCache) return _promptCache;
+  if (!env || !env.PROMPTS) return null;
+  let text = null;
+  try {
+    text = await env.PROMPTS.get(EVALUATION_PROMPT_KEY);
+  } catch {
+    text = null;
+  }
+  if (text && text.trim()) {
+    _promptCache = text;
+    return text;
+  }
+  return null;
+}
 
 // 즐겨찾기 저장 한도(계정별) 및 문자열 길이 제한 (악용 방지)
 const FAV_MAX_ITEMS = 300;
@@ -62,6 +205,15 @@ const FAV_MAX_LEN = 200;
 const FAV_MAX_FOLDERS = 100;
 // 공유 키 해시에 사용하는 고정 솔트 (레인보우 테이블 완화용)
 const FAV_SALT = "investing-fav-v1";
+
+// AI 평가 접근 제어: 관리자 계정·허용 계정 목록을 FAVORITES KV 에 저장한다.
+//  - ai_admin : 관리자 계정 ID (없으면 아래 기본값으로 최초 1회 시드)
+//  - ai_access: 허용 계정 ID 목록(JSON 배열)
+const AI_ADMIN_KEY = "ai_admin";
+const AI_ADMIN_DEFAULT = "이성원";
+const AI_ACCESS_KEY = "ai_access";
+// 같은 아이솔레이트 내 반복 KV 읽기를 줄이기 위한 관리자 계정 캐시
+let _adminCache = null;
 
 // 프록시를 허용할 대상 호스트 (오픈 프록시 악용 방지)
 const ALLOWED_HOSTS = [
@@ -97,6 +249,16 @@ export default {
     // ── 즐겨찾기 API (Cloudflare KV 저장) ──
     if (reqUrl.pathname === "/favorites") {
       return handleFavorites(request, env, reqUrl);
+    }
+
+    // ── AI 평가 접근 권한 관리 (관리자 전용) ──
+    if (reqUrl.pathname === "/ai-access") {
+      return handleAiAccess(request, env, reqUrl);
+    }
+
+    // ── Gemini AI 기업 평가 ──
+    if (reqUrl.pathname === "/gemini") {
+      return handleGemini(request, env, reqUrl);
     }
 
     if (request.method !== "GET") {
@@ -186,6 +348,299 @@ function jsonResponse(obj, status = 200) {
   const headers = new Headers(CORS_HEADERS);
   headers.set("Content-Type", "application/json; charset=utf-8");
   return new Response(JSON.stringify(obj), { status, headers });
+}
+
+// ===================== AI 평가 접근 제어 =====================
+
+// 관리자 계정 ID 를 FAVORITES KV(ai_admin)에서 읽어온다.
+// 키가 없으면 기본값(AI_ADMIN_DEFAULT)으로 최초 1회 시드해 KV 에 등록한다.
+async function getAdminAccount(env) {
+  if (_adminCache) return _adminCache;
+  if (!env || !env.FAVORITES) return AI_ADMIN_DEFAULT;
+  let value = null;
+  try {
+    value = await env.FAVORITES.get(AI_ADMIN_KEY);
+  } catch {
+    value = null;
+  }
+  if (value && value.trim()) {
+    _adminCache = value.trim();
+    return _adminCache;
+  }
+  // 미등록 상태면 기본 관리자 계정을 KV 에 등록(시드)한다.
+  try {
+    await env.FAVORITES.put(AI_ADMIN_KEY, AI_ADMIN_DEFAULT);
+  } catch {
+    // 쓰기 실패해도 기본값으로 동작
+  }
+  _adminCache = AI_ADMIN_DEFAULT;
+  return _adminCache;
+}
+
+// FAVORITES KV 에 저장된 허용 계정 목록을 읽어온다.
+async function loadAiAccess(env) {
+  if (!env || !env.FAVORITES) return [];
+  try {
+    const raw = await env.FAVORITES.get(AI_ACCESS_KEY);
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) return arr;
+    }
+  } catch {
+    // 무시하고 빈 목록 반환
+  }
+  return [];
+}
+
+async function saveAiAccess(env, list) {
+  await env.FAVORITES.put(AI_ACCESS_KEY, JSON.stringify(list));
+}
+
+// 계정 자격 증명(계정 ID + 공유 키)을 즐겨찾기 레코드로 검증.
+// 성공 시 record, 실패 시 null. (즐겨찾기 로그인과 동일한 자격 사용)
+async function verifyCredentials(env, account, authKey) {
+  if (!env || !env.FAVORITES) return null;
+  if (!isValidAccount(account)) return null;
+  if (typeof authKey !== "string" || authKey.length < 4) return null;
+  let record = null;
+  try {
+    const raw = await env.FAVORITES.get("fav:" + account);
+    if (raw) record = JSON.parse(raw);
+  } catch {
+    record = null;
+  }
+  if (!record || !record.keyHash) return null;
+  const authHash = await sha256Hex(FAV_SALT + ":" + authKey);
+  if (!timingSafeEqual(record.keyHash, authHash)) return null;
+  return record;
+}
+
+// AI 평가 사용 권한: 관리자이거나 허용 목록에 포함되면 true.
+async function isAiAuthorized(env, account) {
+  const admin = await getAdminAccount(env);
+  if (account === admin) return true;
+  const list = await loadAiAccess(env);
+  return list.includes(account);
+}
+
+/**
+ * GET/POST/DELETE /ai-access  (관리자 전용)
+ *   인증: 계정 ID(?account=) + 공유 키(X-Fav-Key). 계정이 관리자(ai_admin) 여야 한다.
+ *   GET                 → { admin, allowed:[...] }
+ *   POST   본문 {target} → 해당 계정에 AI 평가 접근 허가
+ *   DELETE ?target=..   → 해당 계정의 접근 허가 취소
+ */
+async function handleAiAccess(request, env, reqUrl) {
+  if (!env || !env.FAVORITES) {
+    return jsonResponse({ error: "KV 바인딩(FAVORITES)이 설정되지 않았습니다." }, 500);
+  }
+  const account = reqUrl.searchParams.get("account") || "";
+  const authKey = request.headers.get("X-Fav-Key") || "";
+  const record = await verifyCredentials(env, account, authKey);
+  const admin = await getAdminAccount(env);
+  if (!record || account !== admin) {
+    return jsonResponse({ error: "관리자만 접근할 수 있습니다." }, 403);
+  }
+
+  if (request.method === "GET") {
+    return jsonResponse({ admin, allowed: await loadAiAccess(env) });
+  }
+
+  if (request.method === "POST") {
+    let payload;
+    try {
+      payload = await request.json();
+    } catch {
+      return jsonResponse({ error: "invalid json body" }, 400);
+    }
+    const target = cleanStr(payload && payload.target);
+    if (!isValidAccount(target)) {
+      return jsonResponse(
+        { error: "허가할 계정 ID가 올바르지 않습니다.", allowed: await loadAiAccess(env) },
+        400
+      );
+    }
+    if (target === admin) {
+      return jsonResponse(
+        { error: "관리자 계정은 이미 접근 가능합니다.", allowed: await loadAiAccess(env) },
+        400
+      );
+    }
+    const list = await loadAiAccess(env);
+    if (!list.includes(target)) {
+      if (list.length >= 500) {
+        return jsonResponse({ error: "허용 계정이 너무 많습니다.", allowed: list }, 400);
+      }
+      list.push(target);
+      await saveAiAccess(env, list);
+    }
+    return jsonResponse({ allowed: list });
+  }
+
+  if (request.method === "DELETE") {
+    const target = cleanStr(reqUrl.searchParams.get("target"));
+    let list = await loadAiAccess(env);
+    list = list.filter((a) => a !== target);
+    await saveAiAccess(env, list);
+    return jsonResponse({ allowed: list });
+  }
+
+  return jsonResponse({ error: "method not allowed" }, 405);
+}
+
+// ===================== Gemini AI 기업 평가 =====================
+
+/**
+ * POST /gemini
+ *   본문: { "company": "삼성전자" }  (분석할 기업/티커)
+ *   인증: Gemini API 키를 요청 헤더 X-Gemini-Key 로 전달하거나
+ *         Worker 환경변수(secret) GEMINI_API_KEY 를 설정한다.
+ *
+ * PROMPTS(KV)에서 읽은 평가 프롬프트를 시스템 지시로, 사용자가 입력한 기업명을
+ * 사용자 발화로 넣어 Google 검색 그라운딩을 켠 상태로 Gemini generateContent 를 호출한다.
+ *   응답: { text: "<마크다운 분석 결과>", sources: [{title, uri}, ...] }
+ */
+async function handleGemini(request, env, reqUrl) {
+  if (request.method !== "POST") {
+    return jsonResponse({ error: "Only POST is allowed" }, 405);
+  }
+
+  // ── 로그인 및 AI 평가 접근 권한 확인 ──
+  const account = (reqUrl && reqUrl.searchParams.get("account")) || "";
+  const authKey = request.headers.get("X-Fav-Key") || "";
+  const authRecord = await verifyCredentials(env, account, authKey);
+  if (!authRecord) {
+    return jsonResponse(
+      { error: "로그인이 필요합니다. 상단 계정 영역에서 로그인하세요." },
+      401
+    );
+  }
+  if (!(await isAiAuthorized(env, account))) {
+    return jsonResponse(
+      { error: "AI 평가 사용 권한이 없습니다. 관리자에게 접근 허가를 요청하세요." },
+      403
+    );
+  }
+
+  const apiKey =
+    request.headers.get("X-Gemini-Key") ||
+    (env && env.GEMINI_API_KEY) ||
+    "";
+  // 릴레이(Vercel)를 쓰는 경우 API 키는 릴레이 쪽에 있으므로 워커에는 없어도 된다.
+  const usingRelay = !!(env && env.GEMINI_RELAY_URL);
+  if (!apiKey && !usingRelay) {
+    return jsonResponse(
+      { error: "Gemini API 키가 없습니다. 웹페이지에 키를 입력하거나 Worker 에 GEMINI_API_KEY 를 설정하세요." },
+      400
+    );
+  }
+
+  let payload;
+  try {
+    payload = await request.json();
+  } catch {
+    return jsonResponse({ error: "invalid json body" }, 400);
+  }
+
+  const company = (payload && payload.company ? String(payload.company) : "").trim();
+  if (!company) {
+    return jsonResponse({ error: "분석할 기업명(종목)을 입력하세요." }, 400);
+  }
+  if (company.length > 100) {
+    return jsonResponse({ error: "기업명이 너무 깁니다." }, 400);
+  }
+
+  const evaluationPrompt = await getEvaluationPrompt(env);
+  if (!evaluationPrompt) {
+    return jsonResponse({ error: PROMPT_MISSING_MSG }, 500);
+  }
+
+  const model = await resolveLatestModel(env, apiKey);
+
+  const geminiBody = {
+    systemInstruction: {
+      parts: [{ text: evaluationPrompt }],
+    },
+    contents: [
+      {
+        role: "user",
+        parts: [{ text: "다음 종목을 평가 기준에 따라 분석해줘: " + company }],
+      },
+    ],
+    tools: [{ google_search: {} }],
+    generationConfig: {
+      temperature: 0.4,
+    },
+  };
+
+  let upstream;
+  try {
+    upstream = await geminiFetch(
+      env,
+      "models/" + model + ":generateContent",
+      "POST",
+      geminiBody,
+      apiKey
+    );
+  } catch (err) {
+    return jsonResponse({ error: "Gemini 호출 실패: " + err }, 502);
+  }
+
+  // 응답 본문을 먼저 텍스트로 받고 JSON 파싱을 시도한다. (릴레이 타임아웃 시
+  // Vercel 이 HTML 오류 페이지를 반환할 수 있어, 그 경우 실제 원인을 그대로 노출)
+  const rawBody = await upstream.text();
+  let data;
+  try {
+    data = JSON.parse(rawBody);
+  } catch {
+    const snippet = (rawBody || "").slice(0, 300).replace(/\s+/g, " ").trim();
+    return jsonResponse(
+      {
+        error:
+          "Gemini 응답을 해석할 수 없습니다 (HTTP " +
+          upstream.status +
+          "). 릴레이/타임아웃 오류일 수 있습니다: " +
+          (snippet || "(빈 응답)"),
+      },
+      502
+    );
+  }
+
+  if (upstream.status >= 400) {
+    // Google 오류는 data.error.message, 릴레이 오류는 data.error(문자열) 형태다.
+    let msg = "HTTP " + upstream.status;
+    if (data && data.error) {
+      if (typeof data.error === "string") msg = data.error;
+      else if (data.error.message) msg = data.error.message;
+    }
+    return jsonResponse({ error: "Gemini 오류: " + msg }, upstream.status);
+  }
+
+  const candidate = data && data.candidates && data.candidates[0];
+  let text = "";
+  if (candidate && candidate.content && Array.isArray(candidate.content.parts)) {
+    text = candidate.content.parts
+      .map((p) => (p && p.text ? p.text : ""))
+      .join("");
+  }
+  if (!text) {
+    return jsonResponse(
+      { error: "Gemini 가 빈 응답을 반환했습니다. 잠시 후 다시 시도하세요." },
+      502
+    );
+  }
+
+  // 검색 그라운딩 출처 추출
+  const sources = [];
+  const gm = candidate && candidate.groundingMetadata;
+  const chunks = gm && Array.isArray(gm.groundingChunks) ? gm.groundingChunks : [];
+  for (const c of chunks) {
+    if (c && c.web && c.web.uri) {
+      sources.push({ title: c.web.title || c.web.uri, uri: c.web.uri });
+    }
+  }
+
+  return jsonResponse({ text, sources, model });
 }
 
 // 계정 ID(로그인 이름). 유니코드 문자/숫자 및 _.- 공백 1~64자만 허용(한글 등 지원).
