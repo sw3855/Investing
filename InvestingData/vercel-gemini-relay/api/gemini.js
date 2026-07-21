@@ -20,6 +20,10 @@
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/";
 
+// Vercel 함수 최대 실행 시간(초). 무료(Hobby) 등급 상한은 60초.
+// (vercel.json 의 functions.maxDuration 과 함께 명시해 확실히 적용한다)
+export const config = { maxDuration: 60 };
+
 // endpoint 화이트리스트: models 조회 / generateContent 만 허용(오남용 방지)
 function isAllowedEndpoint(endpoint) {
   if (typeof endpoint !== "string" || !endpoint) return false;

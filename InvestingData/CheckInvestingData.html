@@ -565,8 +565,11 @@
       </div>
     </fieldset>
 
-    <fieldset id="ai-admin" style="display:none">
+    <fieldset id="ai-admin" class="fav-fieldset" style="display:none">
       <legend>AI 평가 접근 관리 (관리자 전용)</legend>
+      <button id="aiAdminCollapseBtn" class="fav-collapse-btn" type="button"
+              title="접근 관리 펴기">▼</button>
+      <div id="ai-admin-body" style="display:none">
       <div class="row">
         <input type="text" id="aiGrantAccount" style="width:180px"
                placeholder="허가할 계정 ID">
@@ -577,6 +580,7 @@
       <div class="hint">허가된 계정만 AI 평가를 사용할 수 있습니다.
         관리자 계정은 항상 사용할 수 있습니다.</div>
       <div id="ai-access-list" class="fav-list"></div>
+      </div>
     </fieldset>
 
     <div id="ai-result"></div>
@@ -6304,6 +6308,23 @@ def on_acct_collapse(event):
         body.style.display = "none"
         btn.textContent = "▼"
         btn.title = "계정 펴기"
+
+
+@when("click", "#aiAdminCollapseBtn")
+def on_ai_admin_collapse(event):
+    """AI 평가 접근 관리 영역을 접거나 편다(제목·버튼만 남기고 최소화)."""
+    body = document.querySelector("#ai-admin-body")
+    btn = document.querySelector("#aiAdminCollapseBtn")
+    if body is None or btn is None:
+        return
+    if body.style.display == "none":
+        body.style.display = ""
+        btn.textContent = "▲"
+        btn.title = "접근 관리 접기"
+    else:
+        body.style.display = "none"
+        btn.textContent = "▼"
+        btn.title = "접근 관리 펴기"
 
 
 @when("click", "#favNewFolderBtn")

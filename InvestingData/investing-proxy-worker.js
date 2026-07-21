@@ -570,6 +570,10 @@ async function handleGemini(request, env, reqUrl) {
     tools: [{ google_search: {} }],
     generationConfig: {
       temperature: 0.4,
+      // gemini-2.5 계열은 기본적으로 내부 "thinking"(추론)을 수행해 응답이 느리다.
+      // 검색 그라운딩까지 겹치면 릴레이(Vercel) 60초 한계를 넘겨 504가 나기 쉬우므로
+      // thinking 예산을 0으로 두어 속도를 크게 높인다. (thinking 미지원 모델은 무시됨)
+      thinkingConfig: { thinkingBudget: 0 },
     },
   };
 
