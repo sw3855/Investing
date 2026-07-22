@@ -396,6 +396,31 @@ async function saveAiAccess(env, list) {
   await env.FAVORITES.put(AI_ACCESS_KEY, JSON.stringify(list));
 }
 
+// 등록된 모든 계정 ID 목록을 반환한다. (KV 의 'fav:<account>' 키를 나열)
+// 관리자 화면에서 접근 허가 대상 계정을 검색·선택할 때 사용한다.
+async function listAllAccounts(env) {
+  if (!env || !env.FAVORITES) return [];
+  const out = [];
+  let cursor;
+  try {
+    // KV list 는 한 번에 최대 1000개. 커서로 여러 번 순회한다(안전 상한 20회).
+    for (let i = 0; i < 20; i++) {
+      const res = await env.FAVORITES.list({ prefix: "fav:", cursor });
+      for (const k of res.keys || []) {
+        const name = (k.name || "").slice(4); // "fav:" 접두어 제거
+        if (name) out.push(name);
+      }
+      if (res.list_complete) break;
+      cursor = res.cursor;
+      if (!cursor) break;
+    }
+  } catch {
+    // 조회 실패 시 빈 목록
+  }
+  out.sort((a, b) => a.localeCompare(b));
+  return out;
+}
+
 // 계정 자격 증명(계정 ID + 공유 키)을 즐겨찾기 레코드로 검증.
 // 성공 시 record, 실패 시 null. (즐겨찾기 로그인과 동일한 자격 사용)
 async function verifyCredentials(env, account, authKey) {
@@ -443,7 +468,11 @@ async function handleAiAccess(request, env, reqUrl) {
   }
 
   if (request.method === "GET") {
-    return jsonResponse({ admin, allowed: await loadAiAccess(env) });
+    return jsonResponse({
+      admin,
+      allowed: await loadAiAccess(env),
+      accounts: await listAllAccounts(env),
+    });
   }
 
   if (request.method === "POST") {
@@ -556,6 +585,28 @@ async function handleGemini(request, env, reqUrl) {
   }
 
   const model = await resolveLatestModel(env, apiKey);
+  // 모델 세대에 따라 검색 그라운딩 도구 필드가 다르다.
+  //  - Gemini 2.0 이상: tools: [{ google_search: {} }]
+  //  - Gemini 1.5 이하: tools: [{ google_search_retrieval: {} }]
+  // 세대를 잘못 넣으면 Google 이 "Request contains an invalid argument"(400)를 낸다.
+  const versionScore = _modelVersionScore("gemini-" + model.replace(/^gemini-/, ""));
+  const searchTool =
+    versionScore >= 200 || versionScore < 0
+      ? { google_search: {} }
+      : { google_search_retrieval: {} };
+
+  const generationConfig = { temperature: 0.4 };
+  // "thinking"(내부 추론)은 응답을 느리게 하고 검색 그라운딩과 겹치면 릴레이(Vercel)
+  // 60초 한계를 넘겨 504가 나기 쉽다. 그래서 추론을 최소화해 속도/비용을 낮춘다.
+  // 다만 세대마다 제어 필드가 다르므로 버전에 맞춰 넣어야 400(invalid argument)을 피한다.
+  //  - Gemini 2.5 계열(205~299): thinkingBudget=0 으로 추론 완전 차단
+  //  - Gemini 3.x 이상(>=300)   : thinkingBudget 이 없어지고 thinkingLevel 로 대체됨
+  //                               → thinkingLevel="low" 로 추론 최소화
+  if (versionScore >= 300) {
+    generationConfig.thinkingConfig = { thinkingLevel: "low" };
+  } else if (versionScore >= 205) {
+    generationConfig.thinkingConfig = { thinkingBudget: 0 };
+  }
 
   const geminiBody = {
     systemInstruction: {
@@ -567,14 +618,8 @@ async function handleGemini(request, env, reqUrl) {
         parts: [{ text: "다음 종목을 평가 기준에 따라 분석해줘: " + company }],
       },
     ],
-    tools: [{ google_search: {} }],
-    generationConfig: {
-      temperature: 0.4,
-      // gemini-2.5 계열은 기본적으로 내부 "thinking"(추론)을 수행해 응답이 느리다.
-      // 검색 그라운딩까지 겹치면 릴레이(Vercel) 60초 한계를 넘겨 504가 나기 쉬우므로
-      // thinking 예산을 0으로 두어 속도를 크게 높인다. (thinking 미지원 모델은 무시됨)
-      thinkingConfig: { thinkingBudget: 0 },
-    },
+    tools: [searchTool],
+    generationConfig,
   };
 
   let upstream;
@@ -615,8 +660,32 @@ async function handleGemini(request, env, reqUrl) {
     let msg = "HTTP " + upstream.status;
     if (data && data.error) {
       if (typeof data.error === "string") msg = data.error;
-      else if (data.error.message) msg = data.error.message;
+      else if (data.error.message) {
+        msg = data.error.message;
+        // 400(invalid argument) 등은 어떤 필드가 문제인지 details 에 담겨 온다.
+        if (data.error.details) {
+          try {
+            msg += " | details: " + JSON.stringify(data.error.details);
+          } catch {
+            // 직렬화 실패 시 무시
+          }
+        }
+      }
     }
+    // 실제로 어떤 모델/도구/경로로 호출했는지 함께 노출해 원인 진단을 돕는다.
+    const toolField = Object.keys(searchTool)[0];
+    const thinkingDiag = generationConfig.thinkingConfig
+      ? JSON.stringify(generationConfig.thinkingConfig)
+      : "off";
+    msg +=
+      " | diag: model=" +
+      model +
+      ", tool=" +
+      toolField +
+      ", thinking=" +
+      thinkingDiag +
+      ", relay=" +
+      (usingRelay ? "on" : "off");
     return jsonResponse({ error: "Gemini 오류: " + msg }, upstream.status);
   }
 

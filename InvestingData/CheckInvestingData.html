@@ -188,6 +188,18 @@
   .ai-error { color:var(--sell); background:#fff0f0; border:1px solid #f5c2c7;
     border-radius:8px; padding:12px 14px; margin-top:16px; font-size:14px; }
 
+  /* AI 평가 접근 관리: 계정 검색 자동완성 드롭다운 */
+  .ai-grant-wrap { position:relative; display:inline-block; }
+  .ai-suggest { position:absolute; top:100%; left:0; right:0; z-index:30;
+    background:#fff; border:1px solid var(--bd); border-radius:6px; margin-top:2px;
+    max-height:220px; overflow:auto; box-shadow:0 4px 12px rgba(0,0,0,.14);
+    display:none; }
+  .ai-suggest.open { display:block; }
+  .ai-suggest-item { padding:6px 10px; font-size:13px; cursor:pointer;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .ai-suggest-item:hover, .ai-suggest-item.active { background:#eef3ff; }
+  .ai-suggest-empty { padding:6px 10px; font-size:12px; color:var(--mut); }
+
   /* 공포·탐욕 지수 */
   .fg-score { font-size:56px; font-weight:800; line-height:1; text-align:center; }
   .fg-rating { text-align:center; font-size:18px; font-weight:700; margin-top:6px; }
@@ -571,14 +583,18 @@
               title="접근 관리 펴기">▼</button>
       <div id="ai-admin-body" style="display:none">
       <div class="row">
-        <input type="text" id="aiGrantAccount" style="width:180px"
-               placeholder="허가할 계정 ID">
+        <span class="ai-grant-wrap">
+          <input type="text" id="aiGrantAccount" style="width:180px"
+                 placeholder="허가할 계정 ID (검색)" autocomplete="off">
+          <div id="aiGrantSuggest" class="ai-suggest"></div>
+        </span>
         <button id="aiGrantBtn">접근 허가</button>
         <button id="aiAccessRefreshBtn" type="button">목록 새로고침</button>
         <span id="ai-admin-status"></span>
       </div>
       <div class="hint">허가된 계정만 AI 평가를 사용할 수 있습니다.
-        관리자 계정은 항상 사용할 수 있습니다.</div>
+        관리자 계정은 항상 사용할 수 있습니다. 입력창을 클릭하거나 검색어를 입력하면
+        등록된 계정 목록이 아래에 필터링되어 표시됩니다.</div>
       <div id="ai-access-list" class="fav-list"></div>
       </div>
     </fieldset>
@@ -5461,6 +5477,10 @@ _AI_BUSY = {"on": False}
 # AI 평가 관리자 여부는 워커(/ai-access)에서 판별한다(관리자 계정은 KV 에 저장).
 _AI_ADMIN = {"is": False}
 
+# 접근 허가 검색용: 워커에서 받은 전체 계정 목록과 현재 허가된 계정 목록.
+_AI_ACCOUNTS = {"list": []}
+_AI_ALLOWED = {"list": []}
+
 
 def _gemini_base():
     """CORS 프록시 접두어에서 Worker 주소를 뽑아 /gemini 엔드포인트를 만든다."""
@@ -5544,6 +5564,7 @@ def _make_ai_revoke_handler(target):
 
 def render_ai_access(allowed):
     """허가된 계정 목록을 렌더링한다(취소 버튼 포함)."""
+    _AI_ALLOWED["list"] = list(allowed or [])
     box = document.querySelector("#ai-access-list")
     if box is None:
         return
@@ -5565,12 +5586,78 @@ def render_ai_access(allowed):
         _bind(el, "click", _make_ai_revoke_handler(el.getAttribute("data-account")))
 
 
+def _render_grant_suggest():
+    """입력한 검색어에 부합하는 계정만 드롭다운으로 표시한다.
+
+    관리자 계정과 이미 허가된 계정은 후보에서 제외한다.
+    """
+    box = document.querySelector("#aiGrantSuggest")
+    inp = document.querySelector("#aiGrantAccount")
+    if box is None or inp is None:
+        return
+    q = (inp.value or "").strip().lower()
+    admin_acct, _ = _fav_creds()
+    allowed = set(_AI_ALLOWED.get("list") or [])
+    cands = []
+    for a in (_AI_ACCOUNTS.get("list") or []):
+        if a == admin_acct or a in allowed:
+            continue
+        if q and q not in a.lower():
+            continue
+        cands.append(a)
+    if not cands:
+        # 검색어가 있는데 결과가 없을 때만 '없음' 안내를 띄운다.
+        if q:
+            box.innerHTML = '<div class="ai-suggest-empty">일치하는 계정이 없습니다.</div>'
+            box.classList.add("open")
+        else:
+            box.classList.remove("open")
+            box.innerHTML = ""
+        return
+    html = []
+    for a in cands[:50]:
+        html.append('<div class="ai-suggest-item" data-account="%s">%s</div>'
+                    % (_esc(a), _esc(a)))
+    box.innerHTML = "".join(html)
+    box.classList.add("open")
+    items = document.querySelectorAll("#aiGrantSuggest .ai-suggest-item")
+    for i in range(items.length):
+        el = items.item(i)
+        _bind(el, "mousedown",
+              _make_grant_suggest_handler(el.getAttribute("data-account")))
+
+
+def _make_grant_suggest_handler(account):
+    def handler(evt):
+        # mousedown 기본동작(포커스 이동/blur)을 막아 선택이 안정적으로 처리되게 한다.
+        evt.preventDefault()
+        inp = document.querySelector("#aiGrantAccount")
+        if inp is not None:
+            inp.value = account
+        box = document.querySelector("#aiGrantSuggest")
+        if box is not None:
+            box.classList.remove("open")
+            box.innerHTML = ""
+    return handler
+
+
+def _hide_grant_suggest():
+    box = document.querySelector("#aiGrantSuggest")
+    if box is not None:
+        box.classList.remove("open")
+
+
+# blur 시 setTimeout 으로 드롭다운을 닫기 위한 지속 프록시(재사용해 누수 방지)
+_HIDE_SUGGEST_PROXY = create_proxy(_hide_grant_suggest)
+
+
 async def _load_ai_access():
     data, err = await _ai_access_api("GET")
     if err:
         _set_ai_admin_status("목록 조회 실패: %s" % err)
         render_ai_access([])
         return
+    _AI_ACCOUNTS["list"] = data.get("accounts") or []
     render_ai_access(data.get("allowed") or [])
     _set_ai_admin_status("")
 
@@ -5603,6 +5690,7 @@ async def _refresh_ai_admin():
     # 관리자 계정은 계정 삭제 버튼을 숨긴다.
     if delete_btn is not None:
         delete_btn.style.display = "none"
+    _AI_ACCOUNTS["list"] = data.get("accounts") or []
     render_ai_access(data.get("allowed") or [])
     _set_ai_admin_status("")
 
@@ -5846,6 +5934,25 @@ async def on_ai_grant(event):
     document.querySelector("#aiGrantAccount").value = ""
     render_ai_access(data.get("allowed") or [])
     _set_ai_admin_status("허가됨 · %s" % target)
+    _hide_grant_suggest()
+
+
+@when("input", "#aiGrantAccount")
+def on_ai_grant_input(event):
+    if _is_ai_admin():
+        _render_grant_suggest()
+
+
+@when("focus", "#aiGrantAccount")
+def on_ai_grant_focus(event):
+    if _is_ai_admin():
+        _render_grant_suggest()
+
+
+@when("blur", "#aiGrantAccount")
+def on_ai_grant_blur(event):
+    # 항목 클릭(mousedown)이 먼저 처리되도록 약간 지연 후 닫는다.
+    window.setTimeout(_HIDE_SUGGEST_PROXY, 150)
 
 
 @when("click", "#aiAccessRefreshBtn")
