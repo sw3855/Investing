@@ -27,6 +27,10 @@
   .idx-bar .idx b { font-weight:600; color:#aeb4bd; margin-right:4px; }
   .idx-bar .up { color:#3fd1a2; }
   .idx-bar .down { color:#ff6b6b; }
+  .index-box { background:#131722; border:1px solid #131722; border-radius:8px;
+    margin:0 0 14px; padding:12px 16px; display:flex; align-items:center;
+    justify-content:space-between; gap:8px 20px; flex-wrap:wrap; }
+  .index-box .idx-bar { justify-content:flex-start; }
   main { max-width:900px; margin:0 auto; padding:18px 20px 60px; }
   fieldset { border:1px solid var(--bd); border-radius:8px; margin:0 0 14px;
              padding:12px 14px; }
@@ -344,19 +348,13 @@
 <body>
 <header>
   <h1>Investing Data</h1>
-  <div class="hdr-right">
-    <span id="indices" class="idx-bar">지수 …</span>
-    <span id="fxrate" class="fx-rate">USD/KRW …</span>
-  </div>
 </header>
 <main>
-  <fieldset>
-    <legend>설정</legend>
-    <div class="row">
-      <input type="text" id="proxy" class="grow"
-             value="https://investing-proxy.sw3855.workers.dev/?url="
-             placeholder="CORS 프록시 URL 접두어 (예: https://tv-proxy.계정.workers.dev/?url=)">
-    </div>
+  <input type="hidden" id="proxy"
+         value="https://investing-proxy.sw3855.workers.dev/?url=">
+  <fieldset class="index-box">
+    <span id="indices" class="idx-bar">지수 …</span>
+    <span id="fxrate" class="fx-rate">USD/KRW …</span>
   </fieldset>
 
   <fieldset class="fav-fieldset">
@@ -3662,6 +3660,11 @@ INDEX_LIST = [
     ("S&P500", "SP:SPX"),
     ("다우", "DJ:DJI"),
     ("러셀2000", "TVC:RUT"),
+    ("미국채10Y", "TVC:US10Y"),
+    ("금", "TVC:GOLD"),
+    ("비트코인", "BITSTAMP:BTCUSD"),
+    ("WTI", "NYMEX:CL1!"),
+    ("달러인덱스", "TVC:DXY"),
 ]
 
 
