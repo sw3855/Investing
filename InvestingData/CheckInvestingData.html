@@ -223,6 +223,20 @@
     white-space:nowrap; padding:1px 2px; border-left:1px solid var(--bd);
     box-sizing:border-box; }
   .fg-zones span:first-child { border-left:none; }
+
+  /* 테크니컬 레이팅 게이지 (요약·오실레이터·무빙 애버리지) */
+  .tech-tabs { display:flex; gap:6px; margin-bottom:14px; }
+  .tech-tab { height:30px; padding:0 14px; border:1px solid var(--bd);
+    border-radius:16px; background:var(--bg); cursor:pointer; font-size:13px;
+    color:var(--mut); }
+  .tech-tab:hover { border-color:var(--pri); color:#1f2328; }
+  .tech-tab.active { background:var(--pri); color:#fff; border-color:var(--pri);
+    font-weight:700; }
+  .tech-gauges { display:grid; grid-template-columns:repeat(3,1fr); gap:18px; }
+  .tech-gauge-block { text-align:center; }
+  .tech-gauge-title { font-size:13px; font-weight:700; color:var(--mut);
+    margin-bottom:6px; }
+  @media (max-width:640px) { .tech-gauges { grid-template-columns:1fr; } }
   .fg-h3 { font-size:14px; color:var(--mut); margin:20px 0 10px;
     border-top:1px solid var(--bd); padding-top:14px; }
   .fg-comp { margin-bottom:12px; }
@@ -651,6 +665,17 @@ FIELDS = [
     "recommendation_buy",
     "recommendation_hold",
     "recommendation_sell",
+    # 테크니컬 레이팅 - TradingView 기술적 분석 게이지와 동일. -1~+1.
+    # 접미사 없음=일봉, |60=1시간봉, |1W=주봉.
+    "Recommend.All",
+    "Recommend.MA",
+    "Recommend.Other",
+    "Recommend.All|60",
+    "Recommend.MA|60",
+    "Recommend.Other|60",
+    "Recommend.All|1W",
+    "Recommend.MA|1W",
+    "Recommend.Other|1W",
     "price_target_average",
     "price_target_median",
     "price_target_high",
@@ -986,6 +1011,29 @@ async def fetch_forecast(full_symbol):
     return data
 
 
+async def fetch_tech_rating(full_symbol):
+    """테크니컬 레이팅(일봉 기준) 3종만 조회. dict 반환, 실패 시 None.
+
+    TradingView 스캐너가 산출한 Recommend.All(종합)/MA(이동평균)/Other(오실레이터)
+    값(-1~+1)을 그대로 가져온다. ETF 등 forecast 를 조회하지 않는 경로용."""
+    params = {
+        "symbol": full_symbol,
+        "fields": ("Recommend.All,Recommend.MA,Recommend.Other,"
+                   "Recommend.All|60,Recommend.MA|60,Recommend.Other|60,"
+                   "Recommend.All|1W,Recommend.MA|1W,Recommend.Other|1W"),
+        "no_404": "true",
+    }
+    try:
+        data = await _get_json(SCANNER_SYMBOL_URL, params)
+    except InvestingApiError:
+        return None
+    if not isinstance(data, dict) or data.get("s") == "error":
+        return None
+    if not any(v is not None for v in data.values()):
+        return None
+    return data
+
+
 async def fetch_valuation(full_symbol):
     """현재 평가비율(PER/PBR/PSR 등)을 조회. dict 반환, 실패 시 None."""
     params = {
@@ -1163,7 +1211,9 @@ async def lookup(ticker, exchange=None, lang="en"):
 
     if is_etf:
         holdings, report_ts = await fetch_holdings(full_symbol)
-        payload = {"meta": meta, "holdings": holdings, "report_ts": report_ts}
+        tech = await fetch_tech_rating(full_symbol)
+        payload = {"meta": meta, "holdings": holdings, "report_ts": report_ts,
+                   "tech": tech}
         return "etf", full_symbol, payload
 
     data = await fetch_forecast(full_symbol)
@@ -1212,6 +1262,193 @@ def rating_label(mark):
     if mark <= 4.5:
         return "매도 (Sell)", "sell"
     return "적극 매도 (Strong Sell)", "sell"
+
+
+# 테크니컬 레이팅 타임프레임: (스캐너 접미사, 라벨). 일봉은 접미사 없음.
+_TECH_TFS = [("60", "1시간봉"), ("1D", "일봉"), ("1W", "주봉")]
+# 선택된 타임프레임과 원본 데이터 dict 보관(탭 전환 시 재렌더용)
+_TECH_STATE = {"data": None, "tf": "1D"}
+
+
+def _tech_field(data, base, tf):
+    """타임프레임별 스캐너 필드 값(일봉=접미사 없음, 그 외=|tf)."""
+    key = base if tf == "1D" else "%s|%s" % (base, tf)
+    return data.get(key)
+
+
+def _tech_scores(data, tf):
+    """(요약, 무빙 애버리지, 오실레이터) 점수 튜플을 반환."""
+    return (_tech_field(data, "Recommend.All", tf),
+            _tech_field(data, "Recommend.MA", tf),
+            _tech_field(data, "Recommend.Other", tf))
+
+
+def _tech_has_any(data):
+    """어느 한 타임프레임이라도 데이터가 있으면 True."""
+    for tf, _lbl in _TECH_TFS:
+        if any(v is not None for v in _tech_scores(data, tf)):
+            return True
+    return False
+
+
+def tech_rating_label(score):
+    """테크니컬 레이팅 점수(-1~+1)를 TradingView 기준 한글 라벨로 변환."""
+    if score is None:
+        return "정보 없음", "hold"
+    if score > 0.5:
+        return "강력 매수 (Strong Buy)", "buy"
+    if score >= 0.1:
+        return "매수 (Buy)", "buy"
+    if score > -0.1:
+        return "중립 (Neutral)", "hold"
+    if score >= -0.5:
+        return "매도 (Sell)", "sell"
+    return "강력 매도 (Strong Sell)", "sell"
+
+
+# 테크니컬 레이팅 게이지 구간(폭%, 색상, 라벨). -1~+1 을 0~100 위치로 매핑.
+#  강력매도 -1~-0.5(25%) · 매도 -0.5~-0.1(20%) · 중립 -0.1~0.1(10%)
+#  · 매수 0.1~0.5(20%) · 강력매수 0.5~1(25%)  (공포·탐욕 게이지와 동일 폭)
+_TECH_ZONES = [
+    (25.0, "#f23645", "강력 매도"),
+    (20.0, "#ff7a45", "매도"),
+    (10.0, "#787b86", "중립"),
+    (20.0, "#3fa86a", "매수"),
+    (25.0, "#089981", "강력 매수"),
+]
+
+
+def _tech_color(score):
+    if score is None:
+        return "#787b86"
+    if score < -0.5:
+        return "#f23645"
+    if score < -0.1:
+        return "#ff7a45"
+    if score <= 0.1:
+        return "#787b86"
+    if score <= 0.5:
+        return "#3fa86a"
+    return "#089981"
+
+
+def _tech_pos(score):
+    """테크니컬 점수(-1~+1)를 게이지 위치(0~100%)로 변환."""
+    s = max(-1.0, min(1.0, score))
+    return (s + 1.0) / 2.0 * 100.0
+
+
+def _tech_gauge(score, mini=False):
+    """공포·탐욕 게이지와 동일한 스타일의 테크니컬 레이팅 바 HTML."""
+    segs = "".join(
+        '<div class="fg-zone" style="width:%.0f%%;background:%s"></div>' % (w, c)
+        for w, c, _lbl in _TECH_ZONES)
+    cls = "fg-gauge fg-gauge-mini" if mini else "fg-gauge"
+    marker = "" if score is None else (
+        '<div class="fg-gauge-marker" style="left:%.1f%%"></div>' % _tech_pos(score))
+    return '<div class="%s"><div class="fg-zones-bar">%s</div>%s</div>' % (
+        cls, segs, marker)
+
+
+def _tech_legend():
+    spans = "".join(
+        '<span style="width:%.0f%%">%s</span>' % (w, _esc(lbl))
+        for w, _c, lbl in _TECH_ZONES)
+    return '<div class="fg-zones">%s</div>' % spans
+
+
+def _tech_rating_section(data):
+    """테크니컬 레이팅 섹션 HTML(공포·탐욕 게이지 스타일). 데이터 없으면 빈 문자열.
+
+    1시간봉/일봉/주봉 탭으로 타임프레임을 전환할 수 있으며, 각 타임프레임에서
+    TradingView 기술적 분석 페이지처럼 요약·오실레이터·무빙 애버리지 3개를
+    동일한 게이지로 표시한다.
+    """
+    if not data or not _tech_has_any(data):
+        return ""
+
+    _TECH_STATE["data"] = data
+    tf = _TECH_STATE.get("tf") or "1D"
+    if not any(v is not None for v in _tech_scores(data, tf)):
+        for t, _lbl in _TECH_TFS:
+            if any(v is not None for v in _tech_scores(data, t)):
+                tf = t
+                break
+    _TECH_STATE["tf"] = tf
+
+    h = ['<div class="sec"><h3>테크니컬 레이팅</h3>']
+    h.append('<div class="tech-tabs">')
+    for t, lbl in _TECH_TFS:
+        active = " active" if t == tf else ""
+        h.append('<button type="button" class="tech-tab%s" data-tf="%s">%s</button>'
+                 % (active, t, _esc(lbl)))
+    h.append('</div>')
+    h.append('<div id="tech-body">%s</div>' % _render_tech_body())
+    h.append('<div class="hint">TradingView 기술적 분석 지표(무빙 애버리지 15종 '
+             '+ 오실레이터 11종)를 종합한 등급입니다. 투자 판단이 아닌 참고용 '
+             '시장 정보입니다.</div>')
+    h.append('</div>')
+    return "".join(h)
+
+
+def _tech_gauges_html(t_all, t_ma, t_osc):
+    """요약·오실레이터·무빙 애버리지 3개 게이지 HTML."""
+    def _one(title, score):
+        lb, _cls = tech_rating_label(score)
+        color = _tech_color(score)
+        g = ['<div class="tech-gauge-block">']
+        g.append('<div class="tech-gauge-title">%s</div>' % _esc(title))
+        g.append('<div class="fg-score" style="color:%s;font-size:34px">%s</div>'
+                 % (color, fmt_num(score) if score is not None else "-"))
+        g.append('<div class="fg-rating" style="color:%s;font-size:15px">%s</div>'
+                 % (color, _esc(lb)))
+        g.append(_tech_gauge(score))
+        g.append(_tech_legend())
+        g.append('</div>')
+        return "".join(g)
+
+    return ('<div class="tech-gauges">%s%s%s</div>'
+            % (_one("요약", t_all), _one("오실레이터", t_osc),
+               _one("무빙 애버리지", t_ma)))
+
+
+def _render_tech_body():
+    """현재 선택된 타임프레임의 게이지 HTML을 반환."""
+    data = _TECH_STATE.get("data")
+    tf = _TECH_STATE.get("tf") or "1D"
+    if not data:
+        return ""
+    t_all, t_ma, t_osc = _tech_scores(data, tf)
+    if not any(v is not None for v in (t_all, t_ma, t_osc)):
+        return ('<div class="hint">이 타임프레임의 테크니컬 레이팅 '
+                '데이터가 없습니다.</div>')
+    return _tech_gauges_html(t_all, t_ma, t_osc)
+
+
+def _on_tech_tf(evt):
+    """타임프레임 탭 클릭 → 게이지 본문만 다시 그린다."""
+    tf = evt.target.getAttribute("data-tf")
+    if not tf or tf == _TECH_STATE.get("tf"):
+        return
+    _TECH_STATE["tf"] = tf
+    body = document.querySelector("#tech-body")
+    if body is not None:
+        body.innerHTML = _render_tech_body()
+    tabs = document.querySelectorAll(".tech-tab")
+    for i in range(tabs.length):
+        el = tabs.item(i)
+        if el.getAttribute("data-tf") == tf:
+            el.classList.add("active")
+        else:
+            el.classList.remove("active")
+
+
+def _bind_tech_controls():
+    """테크니컬 레이팅 타임프레임 탭 이벤트를 바인딩."""
+    tabs = document.querySelectorAll(".tech-tab")
+    for i in range(tabs.length):
+        _bind(tabs.item(i), "click", _on_tech_tf)
+
 
 
 def fmt_num(value, digits=2):
@@ -1366,6 +1603,9 @@ def render_report(full_symbol, payload):
                                           sell if sell is not None else "-")))
     html.append('</div>')
 
+    # 테크니컬 레이팅 - TradingView 기술적 분석 게이지(타임프레임 선택)
+    html.append(_tech_rating_section(data))
+
     # 목표 주가
     html.append('<div class="sec"><h3>목표 주가</h3><div class="grid">')
     html.append(_kv("현재가", "%s %s" % (fmt_num(close), cur)))
@@ -1426,6 +1666,7 @@ def render_report(full_symbol, payload):
     html.append('<div id="fin-section"></div>')
 
     document.querySelector("#result").innerHTML = "".join(html)
+    _bind_tech_controls()
     init_financials(full_symbol, financials, cur)
     render_compare()
 
@@ -2059,7 +2300,7 @@ def render_compare():
         cwrap.scrollLeft = cwrap.scrollWidth
 
 
-def render_holdings(full_symbol, meta, holdings, report_ts):
+def render_holdings(full_symbol, meta, holdings, report_ts, tech=None):
     cur = meta.get("currency") or ""
     desc = meta.get("description") or full_symbol
     close = meta.get("close")
@@ -2080,6 +2321,10 @@ def render_holdings(full_symbol, meta, holdings, report_ts):
         html.append('<div class="price">현재가 %s %s</div>'
                     % (_esc(fmt_num(close)), _esc(cur)))
     html.append('</div>')
+
+    # 테크니컬 레이팅 - TradingView 기술적 분석 게이지(타임프레임 선택)
+    if tech:
+        html.append(_tech_rating_section(tech))
 
     # 보유종목
     html.append('<div class="sec"><h3>보유종목 (Holdings)</h3>')
@@ -2129,6 +2374,7 @@ def render_holdings(full_symbol, meta, holdings, report_ts):
     html.append('</div>')
 
     document.querySelector("#result").innerHTML = "".join(html)
+    _bind_tech_controls()
 
 
 # ===================== 연도별 지표 (표 + 막대/꺾은선 차트) =====================
@@ -5879,7 +6125,8 @@ async def on_lookup(event):
             return
         if kind == "etf":
             render_holdings(full_symbol, payload["meta"],
-                            payload["holdings"], payload["report_ts"])
+                            payload["holdings"], payload["report_ts"],
+                            payload.get("tech"))
             _set_status("완료 · %s (ETF)" % full_symbol)
         else:
             render_report(full_symbol, payload)
