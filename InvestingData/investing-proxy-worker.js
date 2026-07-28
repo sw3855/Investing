@@ -231,6 +231,9 @@ const ALLOWED_HOSTS = [
   "www.multpl.com",
   // 네이버 증권 자동완성: 한글 회사명 -> KRX 종목코드(예: 삼성전자 -> 005930)
   "ac.stock.naver.com",
+  // Yahoo Finance: 지수 일봉 OHLC 시계열(캔들 차트용, v8 chart API)
+  "query1.finance.yahoo.com",
+  "query2.finance.yahoo.com",
 ];
 
 function isAllowed(hostname) {

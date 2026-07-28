@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="ko">
 <head>
 <meta charset="utf-8">
@@ -25,6 +25,8 @@
   .idx-bar { display:flex; flex-wrap:wrap; gap:3px 14px; justify-content:flex-end;
     font-size:13px; font-weight:600; color:#e6e8eb; }
   .idx-bar .idx b { font-weight:600; color:#aeb4bd; margin-right:4px; }
+  .idx-bar .idx-link { cursor:pointer; }
+  .idx-bar .idx-link:hover { text-decoration:underline; }
   .idx-bar .up { color:#3fd1a2; }
   .idx-bar .down { color:#ff6b6b; }
   .index-box { background:#131722; border:1px solid #131722; border-radius:8px;
@@ -120,6 +122,11 @@
   .chart-svg .guide-line { stroke:#131722; stroke-width:1; stroke-dasharray:4 3;
     pointer-events:none; }
   .chart-svg .guide-dot { fill:#131722; pointer-events:none; }
+  .idx-chart-head { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 12px;
+    padding:2px 4px 10px; }
+  .idx-chart-head .nm { font-size:15px; font-weight:700; color:#131722; }
+  .idx-chart-head .pv { font-size:15px; font-weight:600; }
+  .idx-chart-head .dt { font-size:12px; color:var(--mut); margin-left:auto; }
   .multpl-tip { position:absolute; pointer-events:none; display:none;
     transform:translate(-50%,-145%); background:#131722; color:#fff;
     font-size:12px; padding:4px 9px; border-radius:6px; white-space:nowrap;
@@ -377,14 +384,15 @@
             title="계정 접기/펴기">▲</button>
     <div id="acct-body">
     <div class="row">
-      <label>계정 ID:
+      <label id="favAccountLabel">ID:
         <input type="text" id="favAccount" style="width:150px"
                placeholder="예: my-list" autocomplete="username">
       </label>
-      <label>공유 키:
+      <label id="favKeyLabel">PW:
         <input type="password" id="favKey" style="width:150px"
                placeholder="비밀 키(4자 이상)" autocomplete="current-password">
       </label>
+      <span id="favAccountInfo" style="display:none"></span>
       <button id="favLoginBtn">로그인</button>
       <button id="favRegisterBtn">계정 등록</button>
       <button id="favResetBtn">비밀번호 리셋</button>
@@ -393,16 +401,13 @@
       <button id="favDeleteBtn" style="display:none">계정 삭제</button>
       <span id="fav-login-status"></span>
     </div>
-    <div class="hint">같은 계정 ID·공유 키를 입력하면 어느 기기에서든 같은 즐겨찾기를
-      공유합니다. 처음 쓰는 계정은 "계정 등록"으로 먼저 만든 뒤 로그인하세요.
-      공유 키를 잊었다면 "비밀번호 리셋"으로 0000 으로 초기화한 뒤 로그인하고,
-      로그인 후 "비밀번호 변경"으로 새 키를 지정하세요.</div>
     </div>
   </fieldset>
 
   <div class="tabs">
     <button class="tab-btn active" data-tab="stock">종목</button>
     <button class="tab-btn" data-tab="ai">AI 평가</button>
+    <button class="tab-btn" data-tab="idxchart">지수 차트</button>
     <button class="tab-btn" data-tab="macro">경제지표</button>
     <button class="tab-btn" data-tab="guru">13F</button>
     <button class="tab-btn" data-tab="feargreed">공포·탐욕</button>
@@ -445,6 +450,29 @@
 
     <div id="compare-section"></div>
     <div id="result"></div>
+  </div>
+
+  <div class="tab-panel" id="tab-idxchart">
+    <fieldset>
+      <legend>지수 일봉 차트</legend>
+      <div class="row">
+        <label>지수:
+          <select id="idxChartSel" style="width:160px"></select>
+        </label>
+        <span class="fin-period" id="idxChartRange">
+          <button type="button" data-range="1mo">1개월</button>
+          <button type="button" data-range="3mo">3개월</button>
+          <button type="button" data-range="6mo" class="on">6개월</button>
+          <button type="button" data-range="1y">1년</button>
+          <button type="button" data-range="5y">5년</button>
+        </span>
+        <button class="primary" id="idxChartBtn">조회</button>
+        <span id="idxchart-status"></span>
+      </div>
+      <div class="hint">상단에 표시되는 주요 지수의 일봉(하루 단위) 캔들 차트를 보여줍니다.</div>
+    </fieldset>
+
+    <div id="idxchart-result"></div>
   </div>
 
   <div class="tab-panel" id="tab-macro">
@@ -1384,9 +1412,6 @@ def _tech_rating_section(data):
                  % (active, t, _esc(lbl)))
     h.append('</div>')
     h.append('<div id="tech-body">%s</div>' % _render_tech_body())
-    h.append('<div class="hint">TradingView 기술적 분석 지표(무빙 애버리지 15종 '
-             '+ 오실레이터 11종)를 종합한 등급입니다. 투자 판단이 아닌 참고용 '
-             '시장 정보입니다.</div>')
     h.append('</div>')
     return "".join(h)
 
@@ -1663,12 +1688,14 @@ def render_report(full_symbol, payload):
     html.append('<div class="sec"><div class="hint">%s</div></div>' % src)
     html.append('</div>')
 
+    html.append('<div id="stock-chart"></div>')
     html.append('<div id="fin-section"></div>')
 
     document.querySelector("#result").innerHTML = "".join(html)
     _bind_tech_controls()
     init_financials(full_symbol, financials, cur)
     render_compare()
+    asyncio.ensure_future(load_stock_chart(full_symbol, desc))
 
 
 def _on_add_compare(event):
@@ -2373,8 +2400,11 @@ def render_holdings(full_symbol, meta, holdings, report_ts, tech=None):
                 '표시되는 보유종목은 상위 종목 기준입니다.</div></div>')
     html.append('</div>')
 
+    html.append('<div id="stock-chart"></div>')
+
     document.querySelector("#result").innerHTML = "".join(html)
     _bind_tech_controls()
+    asyncio.ensure_future(load_stock_chart(full_symbol, desc))
 
 
 # ===================== 연도별 지표 (표 + 막대/꺾은선 차트) =====================
@@ -3933,11 +3963,14 @@ async def update_indices():
         return
     results = await asyncio.gather(*[_fetch_index(s) for _, s in INDEX_LIST])
     parts = []
-    for (name, _), d in zip(INDEX_LIST, results):
+    for (name, sym), d in zip(INDEX_LIST, results):
+        charted = sym in INDEX_YF
+        attr = ('<span class="idx idx-link" data-idxsym="%s"' % _esc(sym)
+                if charted else '<span class="idx"')
         if not d:
-            parts.append('<span class="idx"><b>%s</b>—</span>' % _esc(name))
+            parts.append('%s><b>%s</b>—</span>' % (attr, _esc(name)))
             continue
-        seg = '<span class="idx"><b>%s</b>%s' % (_esc(name), fmt_num(d["close"], 2))
+        seg = '%s><b>%s</b>%s' % (attr, _esc(name), fmt_num(d["close"], 2))
         chg = d.get("change")
         if isinstance(chg, (int, float)):
             cls = "up" if chg >= 0 else "down"
@@ -3946,6 +3979,503 @@ async def update_indices():
         seg += '</span>'
         parts.append(seg)
     el.innerHTML = "".join(parts)
+
+
+# ===================== 지수 일봉 캔들 차트 (Yahoo Finance) =====================
+
+# 상단 지수바(INDEX_LIST)의 TradingView 심볼 -> Yahoo Finance 심볼 매핑.
+# Yahoo v8 chart API 는 일봉 OHLC 시계열을 JSON 으로 제공한다.
+INDEX_YF = {
+    "NASDAQ:NDX": "^NDX",
+    "SP:SPX": "^GSPC",
+    "DJ:DJI": "^DJI",
+    "TVC:RUT": "^RUT",
+    "TVC:US10Y": "^TNX",
+    "TVC:GOLD": "GC=F",
+    "BITSTAMP:BTCUSD": "BTC-USD",
+    "NYMEX:CL1!": "CL=F",
+    "TVC:DXY": "DX-Y.NYB",
+}
+
+# query1 이 데이터센터 IP 를 막으면 query2 로 재시도한다.
+YF_CHART_HOSTS = [
+    "https://query1.finance.yahoo.com/v8/finance/chart/",
+    "https://query2.finance.yahoo.com/v8/finance/chart/",
+]
+
+_IDXCHART_STATE = {"sym": None, "range": "6mo"}
+_IDXCHART_LOADED = {"done": False}
+# 호버 툴팁용 좌표/치수 캐시(값이 있는 점만). _candle_svg 에서 갱신한다.
+_IDXCHART_HOVER = {"pts": [], "W": 0.0, "H": 0.0, "y1": 0.0, "y2": 0.0}
+
+
+def _set_idxchart_status(msg):
+    el = document.querySelector("#idxchart-status")
+    if el is not None:
+        el.textContent = msg
+
+
+def _populate_idxchart_select():
+    """지수 선택 드롭다운을 INDEX_LIST 기준으로 1회 채운다."""
+    sel = document.querySelector("#idxChartSel")
+    if sel is None or sel.options.length:
+        return
+    parts = []
+    for name, sym in INDEX_LIST:
+        if sym in INDEX_YF:
+            parts.append('<option value="%s">%s</option>'
+                         % (_esc(sym), _esc(name)))
+    sel.innerHTML = "".join(parts)
+
+
+async def _fetch_index_history(yf_sym, rng):
+    """Yahoo Finance 에서 일봉 OHLC 시계열을 조회. rows=[(ts,o,h,l,c)]."""
+    params = {"range": rng, "interval": "1d"}
+    last_err = None
+    for base in YF_CHART_HOSTS:
+        try:
+            data = await _get_json(base + yf_sym, params)
+        except InvestingApiError as exc:
+            last_err = exc
+            continue
+        chart = data.get("chart") if isinstance(data, dict) else None
+        res = chart.get("result") if isinstance(chart, dict) else None
+        if not res:
+            continue
+        r0 = res[0] or {}
+        ts = r0.get("timestamp") or []
+        quote_list = ((r0.get("indicators") or {}).get("quote")) or [{}]
+        quote = quote_list[0] or {}
+        opens = quote.get("open") or []
+        highs = quote.get("high") or []
+        lows = quote.get("low") or []
+        closes = quote.get("close") or []
+        rows = []
+        for i in range(len(ts)):
+            o = opens[i] if i < len(opens) else None
+            h = highs[i] if i < len(highs) else None
+            lo = lows[i] if i < len(lows) else None
+            c = closes[i] if i < len(closes) else None
+            if o is None or h is None or lo is None or c is None:
+                continue
+            rows.append((ts[i], o, h, lo, c))
+        if rows:
+            return rows
+    if last_err is not None:
+        raise last_err
+    raise InvestingApiError("차트 데이터가 없습니다.")
+
+
+# 이동평균선(기간, 색상). 데이터가 있는 기간만 표시한다.
+_MA_DEFS = [(5, "#2962ff"), (20, "#ff9800"), (60, "#9c27b0"),
+            (120, "#00897b"), (200, "#e91e63")]
+
+
+def _sma(closes, period):
+    """단순이동평균(SMA) 리스트를 반환. 데이터가 부족한 앞부분은 None."""
+    out = [None] * len(closes)
+    if len(closes) < period:
+        return out
+    s = sum(closes[:period])
+    out[period - 1] = s / period
+    for i in range(period, len(closes)):
+        s += closes[i] - closes[i - period]
+        out[i] = s / period
+    return out
+
+
+def _candle_svg(rows, dec=2, prefix="idxchart", hover=None):
+    """일봉 OHLC 를 캔들스틱 SVG 로 렌더링. rows=[(ts,o,h,l,c)].
+
+    prefix 로 가이드 요소 id 를, hover 로 호버 좌표 캐시 dict 를 지정한다."""
+    if hover is None:
+        hover = _IDXCHART_HOVER
+    if not rows:
+        return '<div class="hint">차트를 표시할 데이터가 없습니다.</div>'
+    highs = [r[2] for r in rows]
+    lows = [r[3] for r in rows]
+    vmax = max(highs)
+    vmin = min(lows)
+    if vmax == vmin:
+        vmax = vmin + 1.0
+    pad = (vmax - vmin) * 0.06
+    vmax += pad
+    vmin -= pad
+
+    W, H = 820.0, 360.0
+    padL, padR, padT, padB = 66.0, 14.0, 30.0, 38.0
+    plot_w = W - padL - padR
+    plot_h = H - padT - padB
+    n = len(rows)
+
+    def X(i):
+        return padL + plot_w * ((i + 0.5) / n)
+
+    def Y(v):
+        return padT + (vmax - v) / (vmax - vmin) * plot_h
+
+    def axfmt(v):
+        return "{:,.{d}f}".format(v, d=dec)
+
+    # 이동평균선(5/20/60/120/200) 계산 — 데이터가 있는 기간만 사용
+    closes = [r[4] for r in rows]
+    ma_series = []
+    for period, color in _MA_DEFS:
+        vals = _sma(closes, period)
+        if any(v is not None for v in vals):
+            ma_series.append((period, color, vals))
+
+    parts = ['<svg viewBox="0 0 %g %g" class="chart-svg candle-svg" '
+             'preserveAspectRatio="xMidYMid meet">' % (W, H)]
+
+    # 이동평균선 범례(상단)
+    lx = padL
+    for period, color, vals in ma_series:
+        parts.append('<line x1="%g" y1="16" x2="%g" y2="16" stroke="%s" '
+                     'stroke-width="2"/>' % (lx, lx + 15, color))
+        parts.append('<text x="%g" y="19" style="fill:%s;font-size:11px;'
+                     'font-weight:600">MA%d</text>' % (lx + 19, color, period))
+        lx += 62
+
+    # y축 그리드 + 눈금
+    for k in range(5):
+        gv = vmax - (vmax - vmin) * k / 4.0
+        gy = Y(gv)
+        parts.append('<line x1="%g" y1="%g" x2="%g" y2="%g" stroke="#eaecef"/>'
+                     % (padL, gy, W - padR, gy))
+        parts.append('<text x="%g" y="%g" class="ax-y">%s</text>'
+                     % (padL - 8, gy + 4, _esc(axfmt(gv))))
+
+    cw = plot_w / n
+    body_w = max(min(cw * 0.62, 14.0), 1.0)
+    for i, (ts, o, h, lo, c) in enumerate(rows):
+        cx = X(i)
+        col = "#089981" if c >= o else "#f23645"
+        parts.append('<line x1="%g" y1="%g" x2="%g" y2="%g" stroke="%s" '
+                     'stroke-width="1"/>' % (cx, Y(h), cx, Y(lo), col))
+        yo, yc = Y(o), Y(c)
+        top = min(yo, yc)
+        bh = max(abs(yo - yc), 1.0)
+        parts.append('<rect x="%g" y="%g" width="%g" height="%g" fill="%s"/>'
+                     % (cx - body_w / 2, top, body_w, bh, col))
+
+    # 이동평균선(캔들 위에 격침)
+    for period, color, vals in ma_series:
+        ma_pts = ["%g,%g" % (X(i), Y(v))
+                  for i, v in enumerate(vals) if v is not None]
+        if len(ma_pts) >= 2:
+            parts.append('<polyline points="%s" fill="none" stroke="%s" '
+                         'stroke-width="1.3" stroke-linejoin="round" '
+                         'stroke-linecap="round"/>' % (" ".join(ma_pts), color))
+
+    # x축 날짜 라벨
+    long_range = n > 180
+    step = max(1, n // 8)
+    i = 0
+    while i < n:
+        dt = datetime.fromtimestamp(rows[i][0], tz=timezone.utc)
+        lb = dt.strftime("%y/%m") if long_range else dt.strftime("%m/%d")
+        parts.append('<text x="%g" y="%g" class="ax-x">%s</text>'
+                     % (X(i), H - padB + 22, _esc(lb)))
+        i += step
+
+    # 마우스 호버 가이드(세로선 + 점) — JS 에서 위치를 갱신한다.
+    parts.append('<line id="%s-guide" class="guide-line" x1="0" y1="%g" '
+                 'x2="0" y2="%g" style="display:none"/>' % (prefix, padT, H - padB))
+    parts.append('<circle id="%s-guide-dot" class="guide-dot" r="4" '
+                 'cx="0" cy="0" style="display:none"/>' % prefix)
+    parts.append('</svg>')
+
+    def _ma_tip(idx):
+        out = []
+        for period, color, vals in ma_series:
+            v = vals[idx]
+            if v is not None:
+                out.append('<div class="row"><span class="nm" style="color:%s">'
+                           'MA%d</span><span class="v">%s</span></div>'
+                           % (color, period, axfmt(v)))
+        return "".join(out)
+
+    # 호버 툴팁용 좌표/치수 캐시 갱신(가이드 점은 종가 위치에 표시)
+    hover["pts"] = [
+        {"x": X(idx), "y": Y(c),
+         "date": datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d"),
+         "o": axfmt(o), "h": axfmt(h), "l": axfmt(lo), "c": axfmt(c),
+         "up": c >= o, "ma_html": _ma_tip(idx)}
+        for idx, (ts, o, h, lo, c) in enumerate(rows)]
+    hover["W"] = W
+    hover["H"] = H
+    hover["y1"] = padT
+    hover["y2"] = H - padB
+    return "".join(parts)
+
+
+def _render_idxchart(name, rows):
+    el = document.querySelector("#idxchart-result")
+    if el is None:
+        return
+    if not rows:
+        el.innerHTML = '<div class="hint">표시할 데이터가 없습니다.</div>'
+        return
+    last = rows[-1]
+    prev = rows[-2] if len(rows) >= 2 else last
+    last_c, prev_c = last[4], prev[4]
+    chg = last_c - prev_c
+    pct = (chg / prev_c * 100.0) if prev_c else 0.0
+    dec = 2 if last_c < 1000 else 0
+    cls = "up" if chg >= 0 else "down"
+    arrow = "▲" if chg >= 0 else "▼"
+    d = datetime.fromtimestamp(last[0], tz=timezone.utc).strftime("%Y-%m-%d")
+    head = ('<div class="idx-chart-head"><span class="nm">%s</span>'
+            '<span class="pv">%s</span>'
+            '<span class="%s">%s%+.2f (%+.2f%%)</span>'
+            '<span class="dt">%s 기준 · 최근 %d일</span></div>') % (
+        _esc(name), fmt_num(last_c, dec), cls, arrow, chg, pct, d, len(rows))
+    el.innerHTML = ('<div class="fin-chart">%s'
+                    '<div style="position:relative">%s'
+                    '<div id="idxchart-tip" class="multpl-tip"></div></div></div>'
+                    % (head, _candle_svg(rows, dec, "idxchart", _IDXCHART_HOVER)))
+
+
+async def _run_idxchart():
+    sel = document.querySelector("#idxChartSel")
+    btn = document.querySelector("#idxChartBtn")
+    if sel is None or sel.selectedIndex < 0:
+        return
+    sym = sel.value
+    name = sel.options.item(sel.selectedIndex).text
+    yf_sym = INDEX_YF.get(sym)
+    if not yf_sym:
+        return
+    _set_idxchart_status("불러오는 중...")
+    if btn is not None:
+        btn.disabled = True
+    try:
+        rows = await _fetch_index_history(yf_sym, _IDXCHART_STATE["range"])
+        _render_idxchart(name, rows)
+        _IDXCHART_STATE["sym"] = sym
+        _IDXCHART_LOADED["done"] = True
+        _set_idxchart_status("완료")
+    except Exception as exc:
+        _set_idxchart_status("오류")
+        el = document.querySelector("#idxchart-result")
+        if el is not None:
+            el.innerHTML = (
+                '<div class="warn">지수 차트를 불러오지 못했습니다.<br>%s</div>'
+                % _esc(str(exc)))
+    finally:
+        if btn is not None:
+            btn.disabled = False
+
+
+# ── 캔들 차트 공통 호버(툴팁) ────────────────────────────────
+def _candle_hover(event, root_sel, hover, tip_id, guide_id, dot_id):
+    """캔들 차트(root_sel 내부) 위에서 가장 가까운 봉의 날짜·OHLC 툴팁을 표시."""
+    pts = hover.get("pts")
+    if not pts:
+        return
+    svg = document.querySelector(root_sel + " svg.candle-svg")
+    tip = document.querySelector("#" + tip_id)
+    if svg is None or tip is None:
+        return
+    rect = svg.getBoundingClientRect()
+    if not rect.width or not rect.height:
+        return
+    if (event.clientX < rect.left or event.clientX > rect.right
+            or event.clientY < rect.top or event.clientY > rect.bottom):
+        _candle_hide(tip_id, guide_id, dot_id)
+        return
+    W = hover["W"]
+    H = hover["H"]
+    sx = (event.clientX - rect.left) / rect.width * W
+    best = min(pts, key=lambda p: abs(p["x"] - sx))
+
+    guide = document.querySelector("#" + guide_id)
+    dot = document.querySelector("#" + dot_id)
+    if guide is not None:
+        guide.setAttribute("x1", "%g" % best["x"])
+        guide.setAttribute("x2", "%g" % best["x"])
+        guide.setAttribute("y1", "%g" % hover["y1"])
+        guide.setAttribute("y2", "%g" % hover["y2"])
+        guide.style.display = "block"
+    if dot is not None:
+        dot.setAttribute("cx", "%g" % best["x"])
+        dot.setAttribute("cy", "%g" % best["y"])
+        dot.style.display = "block"
+
+    col = "#089981" if best["up"] else "#f23645"
+    tip.innerHTML = (
+        '<div class="tip-date">%s</div>'
+        '<div class="row"><span class="nm">시가</span><span class="v">%s</span></div>'
+        '<div class="row"><span class="nm">고가</span><span class="v">%s</span></div>'
+        '<div class="row"><span class="nm">저가</span><span class="v">%s</span></div>'
+        '<div class="row"><span class="nm">종가</span>'
+        '<span class="v" style="color:%s">%s</span></div>'
+        % (_esc(best["date"]), _esc(best["o"]), _esc(best["h"]),
+           _esc(best["l"]), col, _esc(best["c"]))) + best.get("ma_html", "")
+    _place_tip_clamped(tip, svg, best["x"], best["y"], W, H)
+
+
+def _candle_hide(tip_id, guide_id, dot_id):
+    for sel in ("#" + tip_id, "#" + guide_id, "#" + dot_id):
+        el = document.querySelector(sel)
+        if el is not None:
+            el.style.display = "none"
+
+
+# ===================== 종목 일봉 캔들 차트 (Yahoo Finance) =====================
+
+# 미국 거래소는 티커를 그대로 Yahoo 심볼로 쓴다.
+_YF_US_EXCH = {
+    "NASDAQ", "NYSE", "AMEX", "ARCA", "BATS", "OTC", "NYSEARCA",
+    "NYSEAMERICAN", "CBOE", "NYSEMKT",
+}
+
+# 그 외 거래소 → Yahoo Finance 심볼 접미사(여러 개면 순서대로 시도).
+_YF_SUFFIX = {
+    "LSE": [".L"],
+    "TSX": [".TO"], "TSXV": [".V"],
+    "XETR": [".DE"], "FWB": [".F"], "SWB": [".SG"],
+    "TSE": [".T"], "JPX": [".T"],
+    "SSE": [".SS"], "SZSE": [".SZ"],
+    "BSE": [".BO"], "NSE": [".NS"],
+    "KRX": [".KS", ".KQ"],
+    "ASX": [".AX"], "SWX": [".SW"],
+    "EURONEXT": [".PA", ".AS", ".BR", ".LS"],
+}
+
+_STOCKCHART_STATE = {"symbol": None, "name": None, "range": "6mo"}
+_STOCKCHART_HOVER = {"pts": [], "W": 0.0, "H": 0.0, "y1": 0.0, "y2": 0.0}
+_STOCKCHART_RANGES = [("1mo", "1개월"), ("3mo", "3개월"),
+                      ("6mo", "6개월"), ("1y", "1년"), ("5y", "5년")]
+
+
+def _yf_symbol_candidates(full_symbol):
+    """'EXCHANGE:TICKER' 를 시도할 Yahoo Finance 심볼 후보 리스트로 변환."""
+    if ":" in full_symbol:
+        exch, tkr = full_symbol.split(":", 1)
+    else:
+        exch, tkr = "", full_symbol
+    exch = exch.upper().strip()
+    tkr = tkr.upper().strip()
+    cands = []
+    if not tkr:
+        return cands
+    if exch in _YF_US_EXCH or exch == "":
+        cands.append(tkr)
+        if "." in tkr:  # 클래스주(BRK.B) → BRK-B
+            cands.append(tkr.replace(".", "-"))
+    elif exch == "HKEX":
+        cands.append(tkr.zfill(4) + ".HK")
+        cands.append(tkr + ".HK")
+    elif exch in _YF_SUFFIX:
+        for sfx in _YF_SUFFIX[exch]:
+            cands.append(tkr + sfx)
+    else:
+        cands.append(tkr)
+    out = []
+    for c in cands:
+        if c not in out:
+            out.append(c)
+    return out
+
+
+async def _fetch_history_any(cands, rng):
+    """후보 심볼들을 차례로 시도해 첫 성공한 일봉 시계열을 반환."""
+    last_err = None
+    for sym in cands:
+        try:
+            return await _fetch_index_history(sym, rng)
+        except InvestingApiError as exc:
+            last_err = exc
+            continue
+    if last_err is not None:
+        raise last_err
+    raise InvestingApiError("차트 데이터가 없습니다.")
+
+
+def _stockchart_range_html():
+    cur = _STOCKCHART_STATE["range"]
+    btns = "".join(
+        '<button type="button" data-srange="%s" class="%s">%s</button>'
+        % (rv, "on" if rv == cur else "", _esc(lbl))
+        for rv, lbl in _STOCKCHART_RANGES)
+    return '<span class="fin-period" id="stockChartRange">%s</span>' % btns
+
+
+def _render_stock_chart(name, rows):
+    box = document.querySelector("#stock-chart")
+    if box is None:
+        return
+    controls = '<div class="fin-controls">%s</div>' % _stockchart_range_html()
+    if not rows:
+        box.innerHTML = ('<div class="card"><div class="sec"><h3>일봉 차트</h3>%s'
+                         '<div class="hint">차트 데이터를 불러오지 못했습니다. '
+                         '(이 종목은 Yahoo Finance 일봉 데이터를 제공하지 않을 수 '
+                         '있습니다.)</div></div></div>' % controls)
+        _bind_stockchart_controls()
+        return
+    last = rows[-1]
+    prev = rows[-2] if len(rows) >= 2 else last
+    last_c, prev_c = last[4], prev[4]
+    chg = last_c - prev_c
+    pct = (chg / prev_c * 100.0) if prev_c else 0.0
+    dec = 2 if last_c < 1000 else 0
+    cls = "up" if chg >= 0 else "down"
+    arrow = "▲" if chg >= 0 else "▼"
+    d = datetime.fromtimestamp(last[0], tz=timezone.utc).strftime("%Y-%m-%d")
+    head = ('<div class="idx-chart-head"><span class="nm">%s</span>'
+            '<span class="pv">%s</span>'
+            '<span class="%s">%s%+.2f (%+.2f%%)</span>'
+            '<span class="dt">%s 기준 · 최근 %d일</span></div>') % (
+        _esc(name), fmt_num(last_c, dec), cls, arrow, chg, pct, d, len(rows))
+    box.innerHTML = ('<div class="card"><div class="sec"><h3>일봉 차트</h3>%s%s'
+                     '<div class="fin-chart" style="position:relative">%s'
+                     '<div id="stockchart-tip" class="multpl-tip"></div></div>'
+                     '</div></div>'
+                     % (controls, head,
+                        _candle_svg(rows, dec, "stockchart", _STOCKCHART_HOVER)))
+    _bind_stockchart_controls()
+
+
+def _make_stockchart_range_handler(rng):
+    def handler(evt):
+        if not rng:
+            return
+        _STOCKCHART_STATE["range"] = rng
+        sym = _STOCKCHART_STATE.get("symbol")
+        name = _STOCKCHART_STATE.get("name")
+        if sym:
+            asyncio.ensure_future(load_stock_chart(sym, name))
+    return handler
+
+
+def _bind_stockchart_controls():
+    btns = document.querySelectorAll("#stockChartRange button")
+    for i in range(btns.length):
+        b = btns.item(i)
+        _bind(b, "click",
+              _make_stockchart_range_handler(b.getAttribute("data-srange")))
+
+
+async def load_stock_chart(full_symbol, name):
+    """조회한 개별종목/ETF 의 일봉 캔들 차트를 #stock-chart 에 표시."""
+    box = document.querySelector("#stock-chart")
+    if box is None:
+        return
+    _STOCKCHART_STATE["symbol"] = full_symbol
+    _STOCKCHART_STATE["name"] = name or full_symbol
+    cands = _yf_symbol_candidates(full_symbol)
+    if not cands:
+        _render_stock_chart(name or full_symbol, None)
+        return
+    box.innerHTML = ('<div class="card"><div class="sec"><h3>일봉 차트</h3>'
+                     '<div class="hint">차트를 불러오는 중...</div></div></div>')
+    try:
+        rows = await _fetch_history_any(cands, _STOCKCHART_STATE["range"])
+    except Exception:
+        rows = None
+    _render_stock_chart(name or full_symbol, rows)
 
 
 # ===================== 대가 13F 포트폴리오 (SEC EDGAR) =====================
@@ -4981,9 +5511,20 @@ def _update_fav_login_ui():
     change_pw_btn = document.querySelector("#favChangePwBtn")
     logout_btn = document.querySelector("#favLogoutBtn")
     delete_btn = document.querySelector("#favDeleteBtn")
+    acct_label = document.querySelector("#favAccountLabel")
+    key_label = document.querySelector("#favKeyLabel")
+    acct_info = document.querySelector("#favAccountInfo")
     if _fav_logged_in():
         document.querySelector("#favAccount").value = acct
         document.querySelector("#favKey").value = key
+        # 로그인 상태에서는 ID/PW 입력칸을 숨기고 계정 정보를 표시한다.
+        if acct_label is not None:
+            acct_label.style.display = "none"
+        if key_label is not None:
+            key_label.style.display = "none"
+        if acct_info is not None:
+            acct_info.style.display = "inline-block"
+            acct_info.innerHTML = "로그인 계정: <b>%s</b>" % _esc(acct)
         if login_btn is not None:
             login_btn.style.display = "none"
         if register_btn is not None:
@@ -4997,8 +5538,15 @@ def _update_fav_login_ui():
         if delete_btn is not None:
             # 관리자 계정은 계정 삭제를 미표시한다(관리자 여부는 비동기 확인).
             delete_btn.style.display = "none" if _is_ai_admin() else "inline-block"
-        _set_fav_login_status("로그인됨 · %s" % acct)
+        _set_fav_login_status("")
     else:
+        if acct_label is not None:
+            acct_label.style.display = "inline-block"
+        if key_label is not None:
+            key_label.style.display = "inline-block"
+        if acct_info is not None:
+            acct_info.style.display = "none"
+            acct_info.innerHTML = ""
         if login_btn is not None:
             login_btn.style.display = "inline-block"
         if register_btn is not None:
@@ -5011,7 +5559,7 @@ def _update_fav_login_ui():
             logout_btn.style.display = "none"
         if delete_btn is not None:
             delete_btn.style.display = "none"
-        _set_fav_login_status("로그아웃 상태 · 계정 ID와 공유 키를 입력하세요")
+        _set_fav_login_status("")
     _update_fav_add_btn()
     _update_ai_admin_ui()
 
@@ -6247,6 +6795,85 @@ def on_tab(event):
     # 유동성 탭을 처음 열면 자동으로 1회 조회한다.
     if name == "liquidity" and not _LIQ_LOADED["done"]:
         document.querySelector("#liqBtn").click()
+    # 지수 차트 탭: 선택 목록을 채우고 처음 열면 기본 지수를 1회 조회한다.
+    if name == "idxchart":
+        _populate_idxchart_select()
+        if not _IDXCHART_LOADED["done"]:
+            document.querySelector("#idxChartBtn").click()
+
+
+@when("mousemove", "#idxchart-result")
+def on_idxchart_hover(event):
+    _candle_hover(event, "#idxchart-result", _IDXCHART_HOVER,
+                  "idxchart-tip", "idxchart-guide", "idxchart-guide-dot")
+
+
+@when("mouseleave", "#idxchart-result")
+def on_idxchart_leave(event):
+    _candle_hide("idxchart-tip", "idxchart-guide", "idxchart-guide-dot")
+
+
+@when("click", "#idxChartBtn")
+async def on_idxchart_click(event):
+    await _run_idxchart()
+
+
+@when("change", "#idxChartSel")
+async def on_idxchart_change(event):
+    await _run_idxchart()
+
+
+def _open_index_chart(sym):
+    """헤더 지수 클릭 시: 지수 차트 탭으로 전환하고 해당 지수를 표시한다."""
+    btns = document.querySelectorAll(".tab-btn")
+    for i in range(btns.length):
+        b = btns.item(i)
+        if b.getAttribute("data-tab") == "idxchart":
+            b.classList.add("active")
+        else:
+            b.classList.remove("active")
+    panels = document.querySelectorAll(".tab-panel")
+    for i in range(panels.length):
+        p = panels.item(i)
+        if p.id == "tab-idxchart":
+            p.classList.add("active")
+        else:
+            p.classList.remove("active")
+    _populate_idxchart_select()
+    sel = document.querySelector("#idxChartSel")
+    if sel is not None and sym:
+        sel.value = sym
+    _IDXCHART_LOADED["done"] = True
+    asyncio.ensure_future(_run_idxchart())
+
+
+@when("click", "#indices")
+def on_index_header_click(event):
+    target = event.target
+    el = target.closest(".idx-link") if target is not None else None
+    if el is None:
+        return
+    sym = el.getAttribute("data-idxsym")
+    if sym:
+        _open_index_chart(sym)
+
+
+@when("click", "#idxChartRange button")
+async def on_idxchart_range(event):
+    btn = event.target
+    rng = btn.getAttribute("data-range") if btn is not None else None
+    if not rng:
+        return
+    _IDXCHART_STATE["range"] = rng
+    cont = document.querySelector("#idxChartRange")
+    bs = cont.querySelectorAll("button")
+    for i in range(bs.length):
+        b = bs.item(i)
+        if b.getAttribute("data-range") == rng:
+            b.classList.add("on")
+        else:
+            b.classList.remove("on")
+    await _run_idxchart()
 
 
 @when("click", "#fgBtn")
@@ -6612,6 +7239,17 @@ def on_fin_leave(event):
             el.style.display = "none"
 
 
+@when("mousemove", "#result")
+def on_stockchart_hover(event):
+    _candle_hover(event, "#stock-chart", _STOCKCHART_HOVER,
+                  "stockchart-tip", "stockchart-guide", "stockchart-guide-dot")
+
+
+@when("mouseleave", "#result")
+def on_stockchart_leave(event):
+    _candle_hide("stockchart-tip", "stockchart-guide", "stockchart-guide-dot")
+
+
 @when("input", "#guru-search")
 def on_guru_search(event):
     render_guru_list(_filter_gurus(event.target.value))
@@ -6716,15 +7354,15 @@ async def on_fav_login(event):
     _set_fav_login_status("로그인 확인 중...")
     data, err, status = await _fav_api("GET", acct, key)
     if status == 403:
-        _set_fav_login_status("로그아웃 상태 · 계정 ID와 공유 키를 입력하세요")
+        _set_fav_login_status("")
         window.alert("계정 ID 또는 공유 키가 일치하지 않습니다.")
         return
     if err:
-        _set_fav_login_status("로그아웃 상태 · 계정 ID와 공유 키를 입력하세요")
+        _set_fav_login_status("")
         window.alert("로그인 실패: %s" % err)
         return
     if not data.get("exists"):
-        _set_fav_login_status("로그아웃 상태 · 계정 ID와 공유 키를 입력하세요")
+        _set_fav_login_status("")
         window.alert("등록되지 않은 계정입니다. '계정 등록'으로 먼저 계정을 만드세요.")
         return
     global _FAV_FOLDERS
@@ -6751,11 +7389,11 @@ async def on_fav_register(event):
     data, err, status = await _fav_api(
         "POST", acct, key, extra_query="&register=1", body=json.dumps({}))
     if status == 409:
-        _set_fav_login_status("로그아웃 상태 · 계정 ID와 공유 키를 입력하세요")
+        _set_fav_login_status("")
         window.alert("이미 존재하는 계정 ID입니다. 다른 ID를 사용하세요.")
         return
     if err:
-        _set_fav_login_status("로그아웃 상태 · 계정 ID와 공유 키를 입력하세요")
+        _set_fav_login_status("")
         window.alert("계정 등록 실패: %s" % err)
         return
     # 등록 성공 → 바로 로그인 상태로 전환
@@ -6782,7 +7420,7 @@ async def on_fav_reset_password(event):
     _set_fav_login_status("비밀번호 리셋 중...")
     ok, err = await fav_reset_password(acct)
     if not ok:
-        _set_fav_login_status("로그아웃 상태 · 계정 ID와 공유 키를 입력하세요")
+        _set_fav_login_status("")
         window.alert("비밀번호 리셋 실패: %s" % err)
         return
     document.querySelector("#favKey").value = "0000"
