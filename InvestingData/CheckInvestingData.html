@@ -33,6 +33,10 @@
     margin:0 0 14px; padding:12px 16px; display:flex; align-items:center;
     justify-content:space-between; gap:8px 20px; flex-wrap:wrap; }
   .index-box .idx-bar { justify-content:flex-start; }
+  .hover-toggle { display:inline-flex; align-items:center; gap:5px;
+    font-size:12px; font-weight:600; color:#aeb4bd; white-space:nowrap;
+    cursor:pointer; }
+  .hover-toggle input { cursor:pointer; margin:0; }
   main { max-width:900px; margin:0 auto; padding:18px 20px 60px; }
   fieldset { border:1px solid var(--bd); border-radius:8px; margin:0 0 14px;
              padding:12px 14px; }
@@ -376,6 +380,9 @@
   <fieldset class="index-box">
     <span id="indices" class="idx-bar">지수 …</span>
     <span id="fxrate" class="fx-rate">USD/KRW …</span>
+    <label class="hover-toggle" title="모든 차트의 마우스 호버 툴팁 표시를 켜고 끕니다">
+      <input type="checkbox" id="hoverToggle" checked> 차트 툴팁
+    </label>
   </fieldset>
 
   <fieldset class="fav-fieldset">
@@ -730,6 +737,35 @@ VALUATION_FIELDS = [
     "dividends_yield_current",
 ]
 
+# 실적 컨센서스(애널리스트 추정) 지표 - TradingView 스캐너 제공.
+#   *_forecast_fq/next_fq=이번/다음 분기, *_forecast_fy/next_fy=올해/내년 회계연도
+#   earnings_per_share_fq/revenue_fq=직전 분기 '실제', eps_surprise_*_fq=어닝 서프라이즈
+CONSENSUS_FIELDS = [
+    "earnings_per_share_forecast_fq",
+    "earnings_per_share_forecast_next_fq",
+    "earnings_per_share_forecast_fy",
+    "earnings_per_share_forecast_next_fy",
+    "revenue_forecast_fq",
+    "revenue_forecast_next_fq",
+    "revenue_forecast_fy",
+    "revenue_forecast_next_fy",
+    "earnings_per_share_fq",
+    "revenue_fq",
+    "eps_surprise_fq",
+    "eps_surprise_percent_fq",
+    "earnings_release_date",
+    "earnings_release_next_date",
+]
+
+# 위 중 금액(보고 통화) 필드 - 거래소 통화로 환산 대상(퍼센트·날짜 제외)
+CONSENSUS_MONEY_FIELDS = [
+    "earnings_per_share_forecast_fq", "earnings_per_share_forecast_next_fq",
+    "earnings_per_share_forecast_fy", "earnings_per_share_forecast_next_fy",
+    "revenue_forecast_fq", "revenue_forecast_next_fq",
+    "revenue_forecast_fy", "revenue_forecast_next_fy",
+    "earnings_per_share_fq", "revenue_fq", "eps_surprise_fq",
+]
+
 # 연도별 재무 히스토리(_fy_h 접미사) - 최신 연도부터 과거 순서의 배열을 반환한다.
 FIN_HISTORY_FIELDS = [
     "fiscal_period_fy_h",
@@ -1077,6 +1113,31 @@ async def fetch_valuation(full_symbol):
     return data
 
 
+async def fetch_consensus(full_symbol):
+    """실적 컨센서스(애널리스트 추정) 지표를 조회. dict 반환, 실패 시 None."""
+    params = {
+        "symbol": full_symbol, "fields": ",".join(CONSENSUS_FIELDS),
+        "no_404": "true",
+    }
+    try:
+        data = await _get_json(SCANNER_SYMBOL_URL, params)
+    except InvestingApiError:
+        return None
+    if not isinstance(data, dict) or data.get("s") == "error":
+        return None
+    return data
+
+
+def _convert_consensus(consensus, rate):
+    """컨센서스의 금액(보고 통화) 필드를 거래소 통화로 환산(제자리 수정)."""
+    if not rate or rate == 1.0 or not consensus:
+        return
+    for k in CONSENSUS_MONEY_FIELDS:
+        v = consensus.get(k)
+        if isinstance(v, (int, float)):
+            consensus[k] = v * rate
+
+
 async def fetch_financials(full_symbol):
     """연도별 재무 히스토리 배열을 조회. dict(각 값이 리스트) 반환, 실패 시 None."""
     params = {
@@ -1249,6 +1310,7 @@ async def lookup(ticker, exchange=None, lang="en"):
         return "nodata", full_symbol, None
     valuation = await fetch_valuation(full_symbol)
     financials = await fetch_financials(full_symbol)
+    consensus = await fetch_consensus(full_symbol)
 
     # 펀더멘털 지표(매출·EPS·목표주가 등)는 보고 통화로 제공되므로
     # 거래소 통화(주가 통화)와 다르면 환율로 환산해 통일한다.
@@ -1259,6 +1321,7 @@ async def lookup(ticker, exchange=None, lang="en"):
         rate = await fetch_fx_rate(fund_ccy, trade_ccy)
         if rate:
             _convert_fundamentals(data, financials, rate)
+            _convert_consensus(consensus, rate)
             fx = {"from": fund_ccy, "to": trade_ccy, "rate": rate}
 
     # 지표 비교 차트에서 USD 로 통일 비교하기 위한 (거래통화 → USD) 환율을
@@ -1272,7 +1335,7 @@ async def lookup(ticker, exchange=None, lang="en"):
 
     payload = {
         "forecast": data, "valuation": valuation, "financials": financials,
-        "fx": fx, "usd_rate": usd_rate,
+        "consensus": consensus, "fx": fx, "usd_rate": usd_rate,
     }
     return "stock", full_symbol, payload
 
@@ -1549,12 +1612,14 @@ def render_report(full_symbol, payload):
         data = payload.get("forecast") or {}
         valuation = payload.get("valuation")
         financials = payload.get("financials")
+        consensus = payload.get("consensus")
         fx = payload.get("fx")
         usd_rate = payload.get("usd_rate")
     else:
         data = payload
         valuation = None
         financials = None
+        consensus = None
         fx = None
         usd_rate = None
 
@@ -1642,24 +1707,101 @@ def render_report(full_symbol, payload):
         html.append(_kv(name, val, up_cls))
     html.append('</div></div>')
 
-    # 실적 추정치
+    # 실적 추정치 · 컨센서스 (실제 실적 + 애널리스트 추정 통합)
     eps_ttm = data.get("earnings_per_share_basic_ttm")
-    eps_fq = data.get("earnings_per_share_forecast_next_fq")
-    eps_fy = data.get("earnings_per_share_forecast_next_fy")
     rev_ttm = data.get("total_revenue")
-    rev_fq = data.get("revenue_forecast_next_fq")
-    rev_fy = data.get("revenue_forecast_next_fy")
     next_earn = data.get("earnings_release_next_date")
+    con = consensus or {}
 
-    html.append('<div class="sec"><h3>실적 추정치</h3><div class="grid">')
-    html.append(_kv("EPS (최근 TTM)", "%s %s" % (fmt_num(eps_ttm), cur)))
-    html.append(_kv("EPS 전망 (다음 분기)", "%s %s" % (fmt_num(eps_fq), cur)))
-    html.append(_kv("EPS 전망 (다음 회계연도)", "%s %s" % (fmt_num(eps_fy), cur)))
+    def _con(key):
+        # 컨센서스 우선, 없으면 forecast(data) 로 폴백(다음 분기/회계연도만 존재).
+        v = con.get(key)
+        return v if v is not None else data.get(key)
+
+    def _eps_v(key):
+        v = _con(key)
+        return fmt_num(v) if v is not None else "-"
+
+    def _rev_v(key):
+        v = _con(key)
+        return fmt_large(v, cur) if v is not None else "-"
+
+    # 분기/회계연도 라벨 계산(직전 실적 분기 기준). 실패 시 일반 라벨 사용.
+    q_prev_lbl, q_cur_lbl, q_next_lbl = "직전 분기", "이번 분기", "다음 분기"
+    fy_cur_lbl, fy_next_lbl = "올해 FY", "내년 FY"
+    try:
+        _base = _quarter_labels(financials, 1) if financials else []
+        _by, _bq = _base[-1].split(" Q")
+        _by, _bq = int(_by), int(_bq)
+
+        def _qadd(y, q, k):
+            t = y * 4 + (q - 1) + k
+            return t // 4, t % 4 + 1
+
+        _cy, _cq = _qadd(_by, _bq, 1)
+        _ny, _nq = _qadd(_by, _bq, 2)
+        q_prev_lbl = "%d Q%d" % (_by, _bq)
+        q_cur_lbl = "%d Q%d" % (_cy, _cq)
+        q_next_lbl = "%d Q%d" % (_ny, _nq)
+        fy_cur_lbl = "FY%d" % _cy
+        fy_next_lbl = "FY%d" % (_cy + 1)
+    except (ValueError, IndexError, AttributeError, TypeError):
+        pass
+
+    html.append('<div class="sec"><h3>실적 추정치 · 컨센서스</h3>')
+
+    # 최근 실적(TTM) + 직전 분기 실제·어닝 서프라이즈
+    eps_act = con.get("earnings_per_share_fq")
+    surp = con.get("eps_surprise_fq")
+    surp_pct = con.get("eps_surprise_percent_fq")
+    last_date = con.get("earnings_release_date")
+    est_prev = (eps_act - surp) if (eps_act is not None
+                                    and surp is not None) else None
+    html.append('<div class="grid">')
     html.append(_kv("매출 (최근 TTM)", fmt_large(rev_ttm, cur)))
-    html.append(_kv("매출 전망 (다음 분기)", fmt_large(rev_fq, cur)))
-    html.append(_kv("매출 전망 (다음 회계연도)", fmt_large(rev_fy, cur)))
+    html.append(_kv("EPS (최근 TTM)", "%s %s" % (fmt_num(eps_ttm), cur)))
+    if eps_act is not None:
+        html.append(_kv("%s 실제 EPS" % q_prev_lbl,
+                        "%s %s" % (fmt_num(eps_act), cur)))
+        if est_prev is not None:
+            html.append(_kv("%s 컨센서스 EPS" % q_prev_lbl,
+                            "%s %s" % (fmt_num(est_prev), cur)))
+        if surp_pct is not None:
+            scls = "up" if surp_pct >= 0 else "down"
+            arrow = "▲" if surp_pct >= 0 else "▼"
+            html.append('<div class="kv"><span class="k">어닝 서프라이즈</span>'
+                        '<span class="v"><span class="%s">%s%+.2f%%</span>'
+                        '</span></div>' % (scls, arrow, surp_pct))
+    html.append('</div>')
+
+    # 향후 기간별 EPS·매출 컨센서스(표)
+    html.append('<h3 style="margin-top:14px">향후 컨센서스 (애널리스트 추정)</h3>')
+    html.append('<div class="fin-table-wrap"><table class="fin-table">'
+                '<thead><tr><th>구분</th><th>%s</th><th>%s</th>'
+                '<th>%s</th><th>%s</th></tr></thead><tbody>'
+                % (_esc(q_cur_lbl), _esc(q_next_lbl),
+                   _esc(fy_cur_lbl), _esc(fy_next_lbl)))
+    html.append('<tr><td>EPS (%s)</td><td>%s</td><td>%s</td><td>%s</td>'
+                '<td>%s</td></tr>'
+                % (_esc(cur),
+                   _esc(_eps_v("earnings_per_share_forecast_fq")),
+                   _esc(_eps_v("earnings_per_share_forecast_next_fq")),
+                   _esc(_eps_v("earnings_per_share_forecast_fy")),
+                   _esc(_eps_v("earnings_per_share_forecast_next_fy"))))
+    html.append('<tr><td>매출</td><td>%s</td><td>%s</td><td>%s</td>'
+                '<td>%s</td></tr>'
+                % (_esc(_rev_v("revenue_forecast_fq")),
+                   _esc(_rev_v("revenue_forecast_next_fq")),
+                   _esc(_rev_v("revenue_forecast_fy")),
+                   _esc(_rev_v("revenue_forecast_next_fy"))))
+    html.append('</tbody></table></div>')
+
+    html.append('<div class="grid" style="margin-top:12px">')
     html.append(_kv("다음 실적 발표 예정일", fmt_date(next_earn)))
-    html.append('</div></div>')
+    if last_date:
+        html.append(_kv("직전 실적 발표일", fmt_date(last_date)))
+    html.append('</div>')
+    html.append('</div>')
 
     # 현재 평가비율 (과거 연도별은 Investing 가 제공하지 않아 현재값만 표시)
     if valuation:
@@ -1675,9 +1817,7 @@ def render_report(full_symbol, payload):
         html.append(_kv("P / OCF", rv("price_to_cash_f_operating_activities_ttm")))
         html.append(_kv("PEG", rv("price_earnings_growth_ttm", "")))
         html.append(_kv("배당수익률", rv("dividends_yield_current", " %")))
-        html.append('</div><div class="hint">Investing 가 과거 연도별 평가비율은 '
-                    '제공하지 않아 현재 값만 표시합니다. 연도별 지표는 아래 표·차트를 '
-                    '참고하세요.</div></div>')
+        html.append('</div></div>')
 
     src = "출처: Investing (전망 / Forecast)"
     if fx:
@@ -2055,6 +2195,30 @@ def _cmp_hide_hover():
             el.style.display = "none"
 
 
+# 차트 마우스 호버 툴팁 전역 on/off 상태. 사용자가 헤더 체크박스로 토글한다.
+_HOVER_ENABLED = {"on": True}
+
+# 모든 차트의 툴팁/가이드선/가이드점 요소 id 목록(끄기 시 일괄 숨김).
+_ALL_HOVER_IDS = [
+    "idxchart-tip", "idxchart-guide", "idxchart-guide-dot",
+    "stockchart-tip", "stockchart-guide", "stockchart-guide-dot",
+    "cmp-tip", "cmp-guide",
+    "cmp-guide-dot-0", "cmp-guide-dot-1", "cmp-guide-dot-2", "cmp-guide-dot-3",
+    "fin-tip", "fin-guide", "fin-guide-dot",
+    "macro-tip", "macro-guide", "macro-guide-dot",
+    "multpl-tip", "multpl-guide", "multpl-guide-dot",
+    "liq-tip", "liq-guide", "liq-guide-dot",
+]
+
+
+def _hide_all_hover_tips():
+    """표시 중인 모든 차트 툴팁·가이드 요소를 숨긴다."""
+    for hid in _ALL_HOVER_IDS:
+        el = document.querySelector("#" + hid)
+        if el is not None:
+            el.style.display = "none"
+
+
 def _place_tip_clamped(tip, svg, cx_svg, cy_svg, W, H):
     """툴팁을 (cx_svg, cy_svg) SVG 좌표 근처에 배치하되 차트(SVG) 표시 영역을
     벗어나지 않도록 좌표를 클램핑한다. 툴팁 내용(innerHTML)은 호출 전에
@@ -2096,6 +2260,8 @@ def _place_tip_clamped(tip, svg, cx_svg, cy_svg, W, H):
 @when("mousemove", "#compare-section")
 def on_cmp_hover(event):
     """지표 비교 꺾은선 위에서 가장 가까운 기간의 라벨과 종목별 값을 표시."""
+    if not _HOVER_ENABLED["on"]:
+        return
     cols = _CMP_HOVER["cols"]
     if not cols:
         return
@@ -4271,6 +4437,8 @@ async def _run_idxchart():
 # ── 캔들 차트 공통 호버(툴팁) ────────────────────────────────
 def _candle_hover(event, root_sel, hover, tip_id, guide_id, dot_id):
     """캔들 차트(root_sel 내부) 위에서 가장 가까운 봉의 날짜·OHLC 툴팁을 표시."""
+    if not _HOVER_ENABLED["on"]:
+        return
     pts = hover.get("pts")
     if not pts:
         return
@@ -6858,6 +7026,14 @@ def on_index_header_click(event):
         _open_index_chart(sym)
 
 
+@when("change", "#hoverToggle")
+def on_hover_toggle(event):
+    """차트 마우스 호버 툴팁 표시를 전역으로 켜고 끈다."""
+    _HOVER_ENABLED["on"] = bool(event.target.checked)
+    if not _HOVER_ENABLED["on"]:
+        _hide_all_hover_tips()
+
+
 @when("click", "#idxChartRange button")
 async def on_idxchart_range(event):
     btn = event.target
@@ -6942,6 +7118,8 @@ async def on_multpl_period(event):
 @when("mousemove", "#multpl-result")
 def on_multpl_hover(event):
     """꺾은선 그래프 위에서 가장 가까운 점의 날짜·값 툴팁을 표시한다."""
+    if not _HOVER_ENABLED["on"]:
+        return
     pts = _MULTPL_CHART["pts"]
     if not pts:
         return
@@ -7087,6 +7265,8 @@ def on_liq_hover(event):
 
     툴팁 박스는 차트(SVG) 영역을 벗어나지 않도록 좌표를 클램핑한다.
     """
+    if not _HOVER_ENABLED["on"]:
+        return
     pts = _LIQ_CHART["pts"]
     if not pts:
         return
@@ -7140,6 +7320,8 @@ def on_liq_leave(event):
 @when("mousemove", "#macro-chart")
 def on_macro_hover(event):
     """매크로 지표 차트 위에서 가장 가까운 점의 기간·값 툴팁을 표시한다."""
+    if not _HOVER_ENABLED["on"]:
+        return
     pts = _MACRO_CHART_HOVER["pts"]
     if not pts:
         return
@@ -7191,6 +7373,8 @@ def on_macro_leave(event):
 @when("mousemove", "#result")
 def on_fin_hover(event):
     """재무 지표(막대+꺾은선) 차트 위에서 가장 가까운 점의 기간·값을 표시한다."""
+    if not _HOVER_ENABLED["on"]:
+        return
     pts = _FIN_CHART_HOVER["pts"]
     if not pts:
         return
