@@ -743,6 +743,11 @@ VALUATION_FIELDS = [
     "price_to_cash_f_operating_activities_ttm",
     "price_earnings_growth_ttm",
     "dividends_yield_current",
+    # WACC(CAPM 추정)용 - 베타·부채. 시가총액은 market_cap_basic 사용.
+    "beta_1_year",
+    "beta_5_year",
+    "effective_interest_rate_on_debt_fy",
+    "total_debt_fq",
 ]
 
 # 실적 컨센서스(애널리스트 추정) 지표 - TradingView 스캐너 제공.
@@ -1319,6 +1324,8 @@ async def lookup(ticker, exchange=None, lang="en"):
     valuation = await fetch_valuation(full_symbol)
     financials = await fetch_financials(full_symbol)
     consensus = await fetch_consensus(full_symbol)
+    await _ensure_rf_rate()   # WACC 계산용 실시간 무위험수익률 확보
+    await _ensure_erp()       # WACC 계산용 시장 내재 위험프리미엄 확보
 
     # 펀더멘털 지표(매출·EPS·목표주가 등)는 보고 통화로 제공되므로
     # 거래소 통화(주가 통화)와 다르면 환율로 환산해 통일한다.
@@ -1344,6 +1351,7 @@ async def lookup(ticker, exchange=None, lang="en"):
     payload = {
         "forecast": data, "valuation": valuation, "financials": financials,
         "consensus": consensus, "fx": fx, "usd_rate": usd_rate,
+        "sec_roic": await fetch_quarterly_roic(full_symbol),
     }
     return "stock", full_symbol, payload
 
@@ -1600,6 +1608,91 @@ def _upside(target, close):
     return "%+.2f%%" % pct, cls
 
 
+# WACC 추정용 상수 가정(미국 기준 근사치). CAPM: Re = Rf + β·ERP,
+# WACC = E/V·Re + D/V·Rd·(1-t). TradingView 는 WACC 를 제공하지 않아 추정한다.
+_WACC_RF = 0.042           # 무위험수익률 폴백(미 10년물 근사, 실시간값 없을 때)
+_WACC_ERP = 0.05           # 시장 위험 프리미엄 폴백(실시간값 없을 때)
+_WACC_TAX = 0.21           # 법인세율 폴백(종목 실효세율 산출 불가 시)
+_WACC_DEBT_SPREAD = 0.02   # 타인자본비용 미제공 시 무위험수익률 대비 가산 스프레드
+
+# 헤더 지수바(TVC:US10Y)에서 받아온 미 10년물 금리(소수). 실시간 무위험수익률로 사용.
+_RF_RATE = {"rate": None}
+# S&P500 이익수익률 기반 시장 내재 위험프리미엄(소수). 3~8% 범위로 클램프.
+_ERP_RATE = {"rate": None}
+
+
+def _current_rf():
+    """무위험수익률(소수) - 실시간 미 10년물, 없으면 상수 폴백."""
+    r = _RF_RATE.get("rate")
+    return r if r is not None else _WACC_RF
+
+
+def _current_erp():
+    """위험프리미엄(소수) - 실시간 S&P500 내재값, 없으면 상수 폴백."""
+    r = _ERP_RATE.get("rate")
+    return r if r is not None else _WACC_ERP
+
+
+async def _ensure_rf_rate():
+    """미 10년물 금리가 아직 없으면 조회해 캐시한다(헤더 지수바 미로딩 대비)."""
+    if _RF_RATE.get("rate") is not None:
+        return
+    params = {"symbol": "TVC:US10Y", "fields": "close", "no_404": "true"}
+    try:
+        d = await _get_json(SCANNER_SYMBOL_URL, params)
+    except InvestingApiError:
+        return
+    if isinstance(d, dict) and isinstance(d.get("close"), (int, float)):
+        _RF_RATE["rate"] = d["close"] / 100.0
+
+
+async def _ensure_erp():
+    """S&P500 이익수익률로 시장 내재 ERP 를 도출해 캐시한다(최초 1회, 실패 무시).
+
+    일단계 배당할인 모형에서 장기성장률 g ≈ 무위험수익률로 두면
+    자기자본 요구수익률 Ke = E/P + g, ERP = Ke - Rf ≈ E/P(이익수익률).
+    비정상값 방지를 위해 3~8% 로 클램프한다."""
+    if _ERP_RATE.get("rate") is not None:
+        return
+    try:
+        html = await _fetch_multpl_text("s-p-500-earnings-yield", "by-month")
+        rows = _parse_multpl(html)
+    except Exception:
+        return
+    if not rows:
+        return
+    ey = _multpl_num(rows[0][1])
+    if ey is None:
+        return
+    erp = ey / 100.0
+    _ERP_RATE["rate"] = max(0.03, min(0.08, erp))
+
+
+def _estimate_wacc(val, tax_rate=None):
+    """CAPM 기반 WACC(%) 추정. 필요한 값이 없으면 None.
+    tax_rate(소수)=종목 실효세율. 없으면 _WACC_TAX 폴백."""
+    if not val:
+        return None
+    beta = val.get("beta_1_year")
+    if beta is None:
+        beta = val.get("beta_5_year")
+    e = val.get("market_cap_basic")
+    if beta is None or e is None or e <= 0:
+        return None
+    d = val.get("total_debt_fq")
+    if d is None or d < 0:
+        d = 0.0
+    total = e + d
+    rf = _current_rf()
+    t = tax_rate if tax_rate is not None else _WACC_TAX
+    re_cost = rf + beta * _current_erp()            # 자기자본비용
+    rd = val.get("effective_interest_rate_on_debt_fy")
+    rd = rd / 100.0 if rd is not None else rf + _WACC_DEBT_SPREAD
+    rd_after = rd * (1 - t)                          # 세후 타인자본비용
+    wacc = (e / total) * re_cost + (d / total) * rd_after
+    return wacc * 100.0
+
+
 # 비교 기능 상태: 최대 4 종목까지 추천 등급·목표주가·실적추정치·평가비율 비교
 _COMPARE_MAX = 4
 _COMPARE = []   # [{"symbol", "data", "valuation", "cur", "financials"}]
@@ -1623,6 +1716,7 @@ def render_report(full_symbol, payload):
         consensus = payload.get("consensus")
         fx = payload.get("fx")
         usd_rate = payload.get("usd_rate")
+        sec_roic = payload.get("sec_roic")
     else:
         data = payload
         valuation = None
@@ -1630,6 +1724,7 @@ def render_report(full_symbol, payload):
         consensus = None
         fx = None
         usd_rate = None
+        sec_roic = None
 
     cur = data.get("currency") or ""
     desc = data.get("description") or full_symbol
@@ -1642,6 +1737,7 @@ def render_report(full_symbol, payload):
     _LAST_STOCK["cur"] = cur
     _LAST_STOCK["financials"] = financials
     _LAST_STOCK["usd_rate"] = usd_rate
+    _LAST_STOCK["sec_roic"] = sec_roic
 
     # 즐겨찾기 등록 버튼 활성화
     _mark_favoritable(full_symbol, desc)
@@ -1825,6 +1921,28 @@ def render_report(full_symbol, payload):
         html.append(_kv("P / OCF", rv("price_to_cash_f_operating_activities_ttm")))
         html.append(_kv("PEG", rv("price_earnings_growth_ttm", "")))
         html.append(_kv("배당수익률", rv("dividends_yield_current", " %")))
+        if sec_roic:
+            html.append(_kv("ROIC (최근 분기·연율화 · %s)" % sec_roic["date"],
+                            "%s %%" % fmt_num(sec_roic["roic"])))
+        tax_rate = sec_roic.get("tax_rate") if sec_roic else None
+        wacc = _estimate_wacc(valuation, tax_rate)
+        if wacc is not None:
+            html.append(_kv("WACC (가중평균자본비용·연간·추정)",
+                            "%s %%" % fmt_num(wacc)))
+        if sec_roic and wacc is not None:
+            spread = sec_roic["roic"] - wacc
+            scls = "up" if spread >= 0 else "down"
+            html.append(_kv("ROIC − WACC (초과수익 스프레드)",
+                            "%+.2f %%p" % spread, scls))
+        if sec_roic or wacc is not None:
+            tax_txt = ("%.0f%% = 실효세율" % (tax_rate * 100)
+                       if tax_rate is not None else "%.0f%% 가정" % (_WACC_TAX * 100))
+            html.append('<div class="hint" style="grid-column:1/-1">'
+                        'ROIC = 세후영업이익(NOPAT) ÷ 투하자본, SEC 분기 재무제표 '
+                        '기준 연율화(미국 종목만). WACC 는 CAPM 추정치'
+                        '(무위험 %.2f%% = 미 10년물 · 위험프리미엄 %.2f%% = '
+                        'S&P500 이익수익률 · 법인세 %s, 베타·시총·부채 기반).</div>'
+                        % (_current_rf() * 100, _current_erp() * 100, tax_txt))
         html.append('</div></div>')
 
     src = "출처: Investing (전망 / Forecast)"
@@ -1867,6 +1985,7 @@ def _on_add_compare(event):
         "cur": cur,
         "financials": _LAST_STOCK.get("financials"),
         "usd_rate": usd_rate,
+        "sec_roic": _LAST_STOCK.get("sec_roic"),
     })
     # 조회 시점에 확보한 환율을 캐시에도 넣어둔다.
     if cur and usd_rate is not None and cur not in _USD_RATES:
@@ -2468,6 +2587,26 @@ def render_compare():
     row("P / OCF", f_val("price_to_cash_f_operating_activities_ttm"))
     row("PEG", f_val("price_earnings_growth_ttm", ""))
     row("배당수익률", f_val("dividends_yield_current", " %"))
+
+    def f_roic(c):
+        sr = c.get("sec_roic")
+        return ("%s %%" % fmt_num(sr["roic"])) if sr else "-", ""
+
+    def f_wacc(c):
+        sr = c.get("sec_roic")
+        w = _estimate_wacc(c.get("valuation"), sr.get("tax_rate") if sr else None)
+        return ("%s %%" % fmt_num(w)) if w is not None else "-", ""
+
+    def f_roic_spread(c):
+        sr = c.get("sec_roic")
+        w = _estimate_wacc(c.get("valuation"), sr.get("tax_rate") if sr else None)
+        if not sr or w is None:
+            return "-", ""
+        s = sr["roic"] - w
+        return "%+.2f %%p" % s, ("up" if s >= 0 else "down")
+    row("ROIC (최근 분기·연율화)", f_roic)
+    row("WACC (연간·추정)", f_wacc)
+    row("ROIC − WACC", f_roic_spread)
 
     h.append('</tbody></table></div>')
     h.append('<div class="hint">통화가 다른 종목은 각 종목의 표시 통화 기준입니다. '
@@ -4138,6 +4277,9 @@ async def update_indices():
     results = await asyncio.gather(*[_fetch_index(s) for _, s in INDEX_LIST])
     parts = []
     for (name, sym), d in zip(INDEX_LIST, results):
+        # 미 10년물 금리를 실시간 무위험수익률(WACC용)로 저장한다.
+        if sym == "TVC:US10Y" and d and isinstance(d.get("close"), (int, float)):
+            _RF_RATE["rate"] = d["close"] / 100.0
         charted = sym in INDEX_YF
         attr = ('<span class="idx idx-link" data-idxsym="%s"' % _esc(sym)
                 if charted else '<span class="idx"')
@@ -4949,6 +5091,184 @@ async def _sec_get_text(url):
 def _local_tag(tag):
     """네임스페이스 접두어를 제거한 로컬 태그명."""
     return tag.split("}", 1)[-1] if "}" in tag else tag
+
+
+# ===== SEC EDGAR 재무제표 기반 분기 ROIC (NOPAT / 투하자본) =====
+# TradingView 는 영업이익·세금·투하자본을 제공하지 않으므로 SEC us-gaap
+# companyconcept 로 계산한다. NOPAT = 영업이익×(1-실효세율),
+# 투하자본 = 총부채(장기+유동성장기) + 자기자본 - 현금성자산 - 단기투자.
+_SEC_TAX_FALLBACK = 0.21   # 실효세율 산출 불가 시 가정 법인세율
+_SEC_ROIC_TAGS = {
+    "op_income": ["OperatingIncomeLoss"],
+    "tax": ["IncomeTaxExpenseBenefit"],
+    "pretax": [
+        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
+        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+    ],
+    "equity": [
+        "StockholdersEquity",
+        "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
+    ],
+    "debt_nc": ["LongTermDebtNoncurrent"],
+    "debt_cur": ["LongTermDebtCurrent"],
+    "debt_lt": ["LongTermDebt"],
+    "cash": ["CashAndCashEquivalentsAtCarryingValue"],
+    "sti": ["ShortTermInvestments"],
+}
+
+_SEC_CIK_MAP = {}   # ticker(대문자) -> CIK(int)
+
+
+async def _sec_cik_for_symbol(full_symbol):
+    """TV 심볼(예: NASDAQ:GOOGL)의 미국 티커를 SEC CIK 로 변환. 실패 시 None."""
+    global _SEC_CIK_MAP
+    if not _SEC_CIK_MAP:
+        data = await _sec_get_json("https://www.sec.gov/files/company_tickers.json")
+        if isinstance(data, dict):
+            for v in data.values():
+                t = str(v.get("ticker", "")).upper()
+                if t and v.get("cik_str") is not None:
+                    _SEC_CIK_MAP[t] = int(v.get("cik_str"))
+    tk = full_symbol.split(":")[-1].upper()
+    cik = _SEC_CIK_MAP.get(tk)
+    if cik is None and "." in tk:
+        cik = _SEC_CIK_MAP.get(tk.replace(".", "-"))
+    return cik
+
+
+def _days_between(a, b):
+    """ISO 날짜 문자열 a~b 사이 일수(음수 가능). 파싱 실패 시 None."""
+    try:
+        return (datetime.strptime(b[:10], "%Y-%m-%d")
+                - datetime.strptime(a[:10], "%Y-%m-%d")).days
+    except (ValueError, TypeError):
+        return None
+
+
+async def _sec_concept_quarterly_flow(cik, tags):
+    """손익 항목의 '분기(3개월)' 값 {기말일: 값}. 연간-9개월 차이로 4분기도 보완."""
+    three, nine, ann = {}, {}, {}
+    for tag in tags:
+        url = ("https://data.sec.gov/api/xbrl/companyconcept/CIK%010d/us-gaap/%s.json"
+               % (cik, tag))
+        data = await _sec_get_json(url)
+        if not isinstance(data, dict):
+            continue
+        for it in (data.get("units") or {}).get("USD") or []:
+            form = it.get("form") or ""
+            if "10-K" not in form and "10-Q" not in form:
+                continue
+            end = it.get("end") or ""
+            start = it.get("start") or ""
+            val = it.get("val")
+            if val is None or len(end) < 10 or len(start) < 10:
+                continue
+            days = _days_between(start, end)
+            if days is None:
+                continue
+            if 80 <= days <= 100:
+                three.setdefault(end, val)
+            elif 260 <= days <= 285:
+                nine.setdefault(end, val)
+            elif 350 <= days <= 380:
+                ann.setdefault(end, val)
+    out = dict(three)
+    for aend, aval in ann.items():          # 4분기 = 연간 - 3분기 누적
+        for nend, nval in nine.items():
+            g = _days_between(nend, aend)
+            if g is not None and 80 <= g <= 100:
+                out.setdefault(aend, aval - nval)
+                break
+    return out
+
+
+async def _sec_concept_quarter_end(cik, tags):
+    """재무상태표 항목의 '분기말 잔액' {기말일: 값}. 10-Q/10-K 모두 사용."""
+    out = {}
+    for tag in tags:
+        url = ("https://data.sec.gov/api/xbrl/companyconcept/CIK%010d/us-gaap/%s.json"
+               % (cik, tag))
+        data = await _sec_get_json(url)
+        if not isinstance(data, dict):
+            continue
+        for it in (data.get("units") or {}).get("USD") or []:
+            form = it.get("form") or ""
+            if "10-K" not in form and "10-Q" not in form:
+                continue
+            end = it.get("end") or ""
+            val = it.get("val")
+            if val is None or len(end) < 10:
+                continue
+            out.setdefault(end, val)
+    return out
+
+
+async def fetch_quarterly_roic(full_symbol):
+    """SEC 분기 재무제표로 최근 분기 ROIC(연율화)와 직전 분기 대비 증분을 계산.
+    미국 종목만, 실패 시 None. 반환 {roic, prev, incr, date, prev_date}."""
+    try:
+        cik = await _sec_cik_for_symbol(full_symbol)
+        if cik is None:
+            return None
+        (op, tax, pretax, equity, dnc, dcu, dlt,
+         cash, sti) = await asyncio.gather(
+            _sec_concept_quarterly_flow(cik, _SEC_ROIC_TAGS["op_income"]),
+            _sec_concept_quarterly_flow(cik, _SEC_ROIC_TAGS["tax"]),
+            _sec_concept_quarterly_flow(cik, _SEC_ROIC_TAGS["pretax"]),
+            _sec_concept_quarter_end(cik, _SEC_ROIC_TAGS["equity"]),
+            _sec_concept_quarter_end(cik, _SEC_ROIC_TAGS["debt_nc"]),
+            _sec_concept_quarter_end(cik, _SEC_ROIC_TAGS["debt_cur"]),
+            _sec_concept_quarter_end(cik, _SEC_ROIC_TAGS["debt_lt"]),
+            _sec_concept_quarter_end(cik, _SEC_ROIC_TAGS["cash"]),
+            _sec_concept_quarter_end(cik, _SEC_ROIC_TAGS["sti"]),
+        )
+    except Exception:
+        return None
+    if not op:
+        return None
+
+    def _roic(end):
+        oi = op.get(end)
+        if oi is None:
+            return None
+        t = tax.get(end)
+        pt = pretax.get(end)
+        if t is not None and pt not in (None, 0):
+            rate = t / pt
+            rate = 0.0 if rate < 0 else (0.5 if rate > 0.5 else rate)
+        else:
+            rate = _SEC_TAX_FALLBACK
+        nopat = oi * (1 - rate)
+        eq = equity.get(end)
+        if eq is None:
+            return None
+        if end in dnc or end in dcu:
+            db = dnc.get(end, 0.0) + dcu.get(end, 0.0)
+        elif end in dlt:
+            db = dlt[end]
+        else:
+            return None
+        ic = db + eq - cash.get(end, 0.0) - sti.get(end, 0.0)
+        if ic <= 0:
+            return None
+        return nopat / ic * 100.0 * 4.0          # 분기값 연율화
+
+    def _eff_tax(end):
+        """해당 분기 실효세율(소수). 산출 불가 시 None."""
+        t = tax.get(end)
+        pt = pretax.get(end)
+        if t is not None and pt not in (None, 0):
+            r = t / pt
+            return 0.0 if r < 0 else (0.5 if r > 0.5 else r)
+        return None
+
+    ends = sorted([e for e in op if _roic(e) is not None], reverse=True)
+    if len(ends) < 2:
+        return None
+    e0, e1 = ends[0], ends[1]
+    r0, r1 = _roic(e0), _roic(e1)
+    return {"roic": r0, "prev": r1, "incr": r0 - r1,
+            "date": e0, "prev_date": e1, "tax_rate": _eff_tax(e0)}
 
 
 def _parse_info_table(xml_text):
