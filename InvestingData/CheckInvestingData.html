@@ -131,6 +131,13 @@
   .idx-chart-head .nm { font-size:15px; font-weight:700; color:#131722; }
   .idx-chart-head .pv { font-size:15px; font-weight:600; }
   .idx-chart-head .dt { font-size:12px; color:var(--mut); margin-left:auto; }
+  .stock-chart-top { display:flex; justify-content:space-between;
+    align-items:center; gap:10px 14px; flex-wrap:wrap; margin-bottom:8px; }
+  .stock-qtr-ctrl { display:inline-flex; align-items:center; gap:8px; }
+  .stock-qtr-toggle { font-size:13px; color:var(--mut); display:inline-flex;
+    align-items:center; gap:5px; cursor:pointer; white-space:nowrap; }
+  .stock-qtr-toggle input { cursor:pointer; margin:0; }
+  .stock-qtr-metric { height:28px; }
   .multpl-tip { position:absolute; pointer-events:none; display:none;
     transform:translate(-50%,-145%); background:#131722; color:#fff;
     font-size:12px; padding:4px 9px; border-radius:6px; white-space:nowrap;
@@ -472,6 +479,7 @@
           <button type="button" data-range="6mo" class="on">6개월</button>
           <button type="button" data-range="1y">1년</button>
           <button type="button" data-range="5y">5년</button>
+          <button type="button" data-range="10y">10년</button>
         </span>
         <button class="primary" id="idxChartBtn">조회</button>
         <span id="idxchart-status"></span>
@@ -4250,10 +4258,11 @@ def _sma(closes, period):
     return out
 
 
-def _candle_svg(rows, dec=2, prefix="idxchart", hover=None):
+def _candle_svg(rows, dec=2, prefix="idxchart", hover=None, overlay=None):
     """일봉 OHLC 를 캔들스틱 SVG 로 렌더링. rows=[(ts,o,h,l,c)].
 
-    prefix 로 가이드 요소 id 를, hover 로 호버 좌표 캐시 dict 를 지정한다."""
+    prefix 로 가이드 요소 id 를, hover 로 호버 좌표 캐시 dict 를 지정한다.
+    overlay={"label","kind","color","points":[(idx,value,라벨)]} 이면 오른쪽 보조축에 표시."""
     if hover is None:
         hover = _IDXCHART_HOVER
     if not rows:
@@ -4268,11 +4277,17 @@ def _candle_svg(rows, dec=2, prefix="idxchart", hover=None):
     vmax += pad
     vmin -= pad
 
-    W, H = 820.0, 360.0
+    ov = overlay if (overlay and overlay.get("points")) else None
+    OV_COLOR = "#8e44ad"
+    W = 820.0
     padL, padR, padT, padB = 66.0, 14.0, 30.0, 38.0
+    plot_h = 292.0                       # 캔들 영역 높이(고정)
+    sub_gap = 16.0 if ov else 0.0
+    sub_h = 96.0 if ov else 0.0          # 분기 지표 하위 패널 높이
+    H = padT + plot_h + sub_gap + sub_h + padB
     plot_w = W - padL - padR
-    plot_h = H - padT - padB
     n = len(rows)
+    sub_top = padT + plot_h + sub_gap
 
     def X(i):
         return padL + plot_w * ((i + 0.5) / n)
@@ -4282,6 +4297,24 @@ def _candle_svg(rows, dec=2, prefix="idxchart", hover=None):
 
     def axfmt(v):
         return "{:,.{d}f}".format(v, d=dec)
+
+    # 분기 지표 하위 패널 스케일(0 기준선 포함)
+    smax = smin = 0.0
+    if ov:
+        ovals = [v for _, v, _ in ov["points"]]
+        smax, smin = max(ovals), min(ovals)
+        if smin > 0:
+            smin = 0.0
+        if smax < 0:
+            smax = 0.0
+        if smax == smin:
+            smax = smin + 1.0
+        _spad = (smax - smin) * 0.15
+        smax += _spad
+        smin -= _spad
+
+    def SY(v):
+        return sub_top + (smax - v) / (smax - smin) * sub_h
 
     # 이동평균선(5/20/60/120/200) 계산 — 데이터가 있는 기간만 사용
     closes = [r[4] for r in rows]
@@ -4333,6 +4366,34 @@ def _candle_svg(rows, dec=2, prefix="idxchart", hover=None):
             parts.append('<polyline points="%s" fill="none" stroke="%s" '
                          'stroke-width="1.3" stroke-linejoin="round" '
                          'stroke-linecap="round"/>' % (" ".join(ma_pts), color))
+
+    # 분기 지표 하위 패널(캔들과 동일 x축, 막대+값)
+    if ov:
+        okind = ov.get("kind", "money")
+        opoints = ov["points"]
+        parts.append('<rect x="%g" y="%g" width="%g" height="%g" '
+                     'fill="#fafbfc" stroke="#eaecef"/>'
+                     % (padL, sub_top, plot_w, sub_h))
+        parts.append('<text x="%g" y="%g" style="fill:%s;font-size:11px;'
+                     'font-weight:700">%s</text>'
+                     % (padL + 4, sub_top + 13, OV_COLOR, _esc(ov["label"])))
+        grid_vals = [smax, 0.0, smin] if smin < 0 < smax else [smax, smin]
+        for gv in grid_vals:
+            gy = SY(gv)
+            parts.append('<line x1="%g" y1="%g" x2="%g" y2="%g" '
+                         'stroke="#eaecef"/>' % (padL, gy, W - padR, gy))
+            parts.append('<text x="%g" y="%g" class="ax-y">%s</text>'
+                         % (padL - 8, gy + 4, _esc(_metric_axis_fmt(okind, gv))))
+        zero_y = SY(0.0)
+        bw = 12.0
+        for idx, v, _lbl in opoints:
+            px = X(idx)
+            vy = SY(v)
+            by = min(vy, zero_y)
+            bh = max(abs(vy - zero_y), 1.0)
+            parts.append('<rect x="%g" y="%g" width="%g" height="%g" '
+                         'fill="%s" fill-opacity="0.75" rx="2"/>'
+                         % (px - bw / 2, by, bw, bh, OV_COLOR))
 
     # x축 날짜 라벨
     long_range = n > 180
@@ -4512,10 +4573,102 @@ _YF_SUFFIX = {
     "EURONEXT": [".PA", ".AS", ".BR", ".LS"],
 }
 
-_STOCKCHART_STATE = {"symbol": None, "name": None, "range": "6mo"}
+_STOCKCHART_STATE = {"symbol": None, "name": None, "range": "6mo",
+                     "rows": None, "overlay": False, "overlay_metric": "revenue"}
 _STOCKCHART_HOVER = {"pts": [], "W": 0.0, "H": 0.0, "y1": 0.0, "y2": 0.0}
 _STOCKCHART_RANGES = [("1mo", "1개월"), ("3mo", "3개월"),
-                      ("6mo", "6개월"), ("1y", "1년"), ("5y", "5년")]
+                      ("6mo", "6개월"), ("1y", "1년"), ("5y", "5년"),
+                      ("10y", "10년")]
+
+# 일봉 차트에 겹쳐 볼 분기 지표(키, 짧은 라벨)
+_STOCK_OVL_METRICS = [
+    ("revenue", "매출"), ("net_income", "순이익"),
+    ("gross_profit", "매출총이익"), ("ebitda", "EBITDA"), ("fcf", "FCF"),
+    ("eps", "EPS"), ("net_margin", "순이익률"), ("gross_margin", "매출총이익률"),
+]
+
+# 분기 라벨 → 분기말(달력 기준) 날짜
+_QEND = {1: (3, 31), 2: (6, 30), 3: (9, 30), 4: (12, 31)}
+
+
+def _period_end_ts(label, annual=False):
+    """분기('2026 Q2')·연간('2024') 라벨을 기간말 UTC 타임스탬프로 변환. 실패 시 None."""
+    try:
+        if not annual:
+            y, q = str(label).split(" Q")
+            mm, dd = _QEND[int(q)]
+            return datetime(int(y), mm, dd, tzinfo=timezone.utc).timestamp()
+        return datetime(int(label), 12, 31, tzinfo=timezone.utc).timestamp()
+    except (ValueError, AttributeError, KeyError, TypeError):
+        return None
+
+
+def _stockchart_financials():
+    """현재 일봉 차트 종목의 재무 dict(분기/연간 있을 때만). ETF 등은 None."""
+    if _STOCKCHART_STATE.get("symbol") != _LAST_STOCK.get("symbol"):
+        return None
+    fin = _LAST_STOCK.get("financials")
+    if fin and (fin.get("total_revenue_fq_h") or fin.get("fiscal_period_fy_h")):
+        return fin
+    return None
+
+
+def _build_stock_overlay(rows, fin, metric_key, annual=False):
+    """분기/연간 지표를 일봉 타임라인에 매핑한 오버레이 dict 를 만든다. 없으면 None."""
+    if not rows or not fin:
+        return None
+    try:
+        years, metrics = _build_financial_metrics(
+            fin, "annual" if annual else "quarterly")
+    except Exception:
+        return None
+    metric = None
+    for m in metrics:
+        if m["key"] == metric_key:
+            metric = m
+            break
+    if metric is None:
+        return None
+    first_ts, last_ts = rows[0][0], rows[-1][0]
+    pts = []
+    for lbl, v in zip(years, metric["values"]):
+        if v is None:
+            continue
+        ts = _period_end_ts(lbl, annual)
+        if ts is None or ts < first_ts or ts > last_ts:
+            continue
+        idx = min(range(len(rows)), key=lambda i: abs(rows[i][0] - ts))
+        pts.append((idx, v, lbl))
+    # 연간 모드: 진행 중인 최신값(TTM)을 마지막 캔들 위치에 추가 표시.
+    cur_val = metric.get("current") if annual else None
+    if cur_val is not None:
+        pts.append((len(rows) - 1, cur_val, "현재"))
+    if not pts:
+        return None
+    suffix = " · 연간" if annual else " · 분기"
+    label = metric["label"] + suffix
+    if cur_val is not None:
+        label += " · 현재 " + _metric_axis_fmt(metric["kind"], cur_val)
+    return {"label": label, "kind": metric["kind"],
+            "color": "#8e44ad", "points": pts}
+
+
+def _stockchart_qtr_controls_html(has_fin):
+    """일봉 차트 우측 상단 기간 지표 on/off 체크박스 + 지표 선택 HTML."""
+    if not has_fin:
+        return ""
+    checked = " checked" if _STOCKCHART_STATE.get("overlay") else ""
+    cur = _STOCKCHART_STATE.get("overlay_metric", "revenue")
+    label_txt = "연간 지표" if _STOCKCHART_STATE.get("range") == "10y" else "분기 지표"
+    opts = "".join(
+        '<option value="%s"%s>%s</option>'
+        % (k, " selected" if k == cur else "", _esc(lbl))
+        for k, lbl in _STOCK_OVL_METRICS)
+    return ('<span class="stock-qtr-ctrl">'
+            '<label class="stock-qtr-toggle"><input type="checkbox" '
+            'id="stockQtrToggle"%s> %s</label>'
+            '<select id="stockQtrMetric" class="stock-qtr-metric">%s</select>'
+            '</span>' % (checked, _esc(label_txt), opts))
 
 
 def _yf_symbol_candidates(full_symbol):
@@ -4575,12 +4728,18 @@ def _render_stock_chart(name, rows):
     box = document.querySelector("#stock-chart")
     if box is None:
         return
+    _STOCKCHART_STATE["rows"] = rows
+    _STOCKCHART_STATE["name"] = name
+    fin = _stockchart_financials()
+    qtr_ctrl = _stockchart_qtr_controls_html(bool(fin))
+    top = ('<div class="stock-chart-top"><h3 style="margin:0">일봉 차트</h3>'
+           '%s</div>' % qtr_ctrl)
     controls = '<div class="fin-controls">%s</div>' % _stockchart_range_html()
     if not rows:
-        box.innerHTML = ('<div class="card"><div class="sec"><h3>일봉 차트</h3>%s'
+        box.innerHTML = ('<div class="card"><div class="sec">%s%s'
                          '<div class="hint">차트 데이터를 불러오지 못했습니다. '
                          '(이 종목은 Yahoo Finance 일봉 데이터를 제공하지 않을 수 '
-                         '있습니다.)</div></div></div>' % controls)
+                         '있습니다.)</div></div></div>' % (top, controls))
         _bind_stockchart_controls()
         return
     last = rows[-1]
@@ -4597,13 +4756,37 @@ def _render_stock_chart(name, rows):
             '<span class="%s">%s%+.2f (%+.2f%%)</span>'
             '<span class="dt">%s 기준 · 최근 %d일</span></div>') % (
         _esc(name), fmt_num(last_c, dec), cls, arrow, chg, pct, d, len(rows))
-    box.innerHTML = ('<div class="card"><div class="sec"><h3>일봉 차트</h3>%s%s'
+    overlay = None
+    if fin and _STOCKCHART_STATE.get("overlay"):
+        annual = _STOCKCHART_STATE.get("range") == "10y"
+        overlay = _build_stock_overlay(
+            rows, fin, _STOCKCHART_STATE.get("overlay_metric", "revenue"),
+            annual)
+    box.innerHTML = ('<div class="card"><div class="sec">%s%s%s'
                      '<div class="fin-chart" style="position:relative">%s'
                      '<div id="stockchart-tip" class="multpl-tip"></div></div>'
                      '</div></div>'
-                     % (controls, head,
-                        _candle_svg(rows, dec, "stockchart", _STOCKCHART_HOVER)))
+                     % (top, controls, head,
+                        _candle_svg(rows, dec, "stockchart", _STOCKCHART_HOVER,
+                                    overlay)))
     _bind_stockchart_controls()
+
+
+def _rerender_stock_chart():
+    """캐시된 rows 로 일봉 차트만 다시 그린다(재조회 없음)."""
+    _render_stock_chart(_STOCKCHART_STATE.get("name"),
+                        _STOCKCHART_STATE.get("rows"))
+
+
+def _on_stock_qtr_toggle(evt):
+    _STOCKCHART_STATE["overlay"] = bool(evt.target.checked)
+    _rerender_stock_chart()
+
+
+def _on_stock_qtr_metric(evt):
+    _STOCKCHART_STATE["overlay_metric"] = evt.target.value
+    if _STOCKCHART_STATE.get("overlay"):
+        _rerender_stock_chart()
 
 
 def _make_stockchart_range_handler(rng):
@@ -4624,6 +4807,12 @@ def _bind_stockchart_controls():
         b = btns.item(i)
         _bind(b, "click",
               _make_stockchart_range_handler(b.getAttribute("data-srange")))
+    tgl = document.querySelector("#stockQtrToggle")
+    if tgl is not None:
+        _bind(tgl, "change", _on_stock_qtr_toggle)
+    msel = document.querySelector("#stockQtrMetric")
+    if msel is not None:
+        _bind(msel, "change", _on_stock_qtr_metric)
 
 
 async def load_stock_chart(full_symbol, name):
@@ -5112,6 +5301,8 @@ def _sort_changes(rows, key, direction):
             return r["prev_shares"]
         if key == "cur":
             return r["cur_shares"]
+        if key == "value":
+            return r["value_usd"]
         if key == "pct":
             return r["pct"]
         return r["delta"]
@@ -5143,6 +5334,7 @@ def _render_changes():
     html.append('<th class="sortable num" data-sort="prev">이전 수량%s</th>' % ind("prev"))
     html.append('<th class="sortable num" data-sort="cur">현재 수량%s</th>' % ind("cur"))
     html.append('<th class="sortable num" data-sort="delta">변화%s</th>' % ind("delta"))
+    html.append('<th class="sortable num" data-sort="value">평가액%s</th>' % ind("value"))
     html.append('<th class="sortable num" data-sort="pct">변화율%s</th>' % ind("pct"))
     html.append('</tr></thead><tbody>')
     for i, c in enumerate(sorted_rows, 1):
@@ -5156,11 +5348,13 @@ def _render_changes():
                     '<td class="%s">%s</td>'
                     '<td class="num">%s</td><td class="num">%s</td>'
                     '<td class="num %s">%s%s</td>'
+                    '<td class="num">%s</td>'
                     '<td class="num %s">%s</td></tr>'
                     % (i, _esc(c["issuer"]), cls, _esc(c["action"]),
                        _esc(fmt_num(c["prev_shares"], 0)),
                        _esc(fmt_num(c["cur_shares"], 0)),
                        cls, sign, _esc(fmt_num(c["delta"], 0)),
+                       _esc(fmt_large(c["value_usd"], "USD")),
                        cls, _esc(pct_txt)))
     html.append('</tbody></table></div>')
     box.innerHTML = "".join(html)
