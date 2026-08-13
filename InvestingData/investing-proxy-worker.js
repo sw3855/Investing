@@ -79,6 +79,14 @@
  *        GET    /ai-access?account=<admin>            → { admin, allowed:[...] }
  *        POST   /ai-access?account=<admin>  본문 {target} → 계정 접근 허가
  *        DELETE /ai-access?account=<admin>&target=..   → 계정 접근 취소
+ *
+ * ── 거시경제 자료실 (/macro-doc) ────────────────────────────
+ *  관리자(ai_admin) 계정만 HTML 리포트를 등록/삭제할 수 있고, 열람은 누구나 가능하다.
+ *  자료는 FAVORITES KV 에 저장한다(macrodoc_index, macrodoc:<id>).
+ *    GET    /macro-doc                         → { docs:[{id,title,updatedAt}, ...] }
+ *    GET    /macro-doc?id=<id>                 → { id, title, html, updatedAt }
+ *    POST   /macro-doc?account=<admin>  본문 {title,html} → 등록/갱신(같은 제목=갱신)
+ *    DELETE /macro-doc?account=<admin>&id=<id> → 자료 삭제
  */
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -212,6 +220,13 @@ const FAV_SALT = "investing-fav-v1";
 const AI_ADMIN_KEY = "ai_admin";
 const AI_ADMIN_DEFAULT = "이성원";
 const AI_ACCESS_KEY = "ai_access";
+// 거시경제 자료실: 관리자가 등록한 HTML 리포트를 FAVORITES KV 에 저장한다.
+//  - macrodoc_index : 자료 목록(JSON 배열 [{id,title,updatedAt}])
+//  - macrodoc:<id>  : 개별 자료({id,title,html,updatedAt})
+const MACRO_DOC_INDEX_KEY = "macrodoc_index";
+const MACRO_DOC_PREFIX = "macrodoc:";
+const MACRO_DOC_MAX_LEN = 3 * 1024 * 1024; // 자료 1건 최대 3MB
+const MACRO_DOC_MAX_ITEMS = 100;
 // 같은 아이솔레이트 내 반복 KV 읽기를 줄이기 위한 관리자 계정 캐시
 let _adminCache = null;
 
@@ -257,6 +272,11 @@ export default {
     // ── AI 평가 접근 권한 관리 (관리자 전용) ──
     if (reqUrl.pathname === "/ai-access") {
       return handleAiAccess(request, env, reqUrl);
+    }
+
+    // ── 거시경제 자료실 (읽기는 누구나, 등록/삭제는 관리자 전용) ──
+    if (reqUrl.pathname === "/macro-doc") {
+      return handleMacroDoc(request, env, reqUrl);
     }
 
     // ── Gemini AI 기업 평가 ──
@@ -515,6 +535,143 @@ async function handleAiAccess(request, env, reqUrl) {
     list = list.filter((a) => a !== target);
     await saveAiAccess(env, list);
     return jsonResponse({ allowed: list });
+  }
+
+  return jsonResponse({ error: "method not allowed" }, 405);
+}
+
+// ===================== 거시경제 자료실 =====================
+
+// 등록된 자료 목록(인덱스)을 KV 에서 읽어온다.
+async function loadMacroIndex(env) {
+  if (!env || !env.FAVORITES) return [];
+  try {
+    const raw = await env.FAVORITES.get(MACRO_DOC_INDEX_KEY);
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) return arr;
+    }
+  } catch {
+    // 무시하고 빈 목록 반환
+  }
+  return [];
+}
+
+async function saveMacroIndex(env, list) {
+  await env.FAVORITES.put(MACRO_DOC_INDEX_KEY, JSON.stringify(list));
+}
+
+/**
+ * GET/POST/DELETE /macro-doc
+ *   GET                       → { docs:[{id,title,updatedAt}, ...] }  (인증 불필요)
+ *   GET  ?id=<id>             → { id, title, html, updatedAt }        (인증 불필요)
+ *   POST 본문 {title, html}   → 자료 등록/갱신(같은 제목이면 갱신)      (관리자 전용)
+ *   DELETE ?id=<id>           → 자료 삭제                              (관리자 전용)
+ *   등록/삭제 인증: 계정 ID(?account=) + 공유 키(X-Fav-Key), 관리자(ai_admin)만 허용.
+ */
+async function handleMacroDoc(request, env, reqUrl) {
+  if (!env || !env.FAVORITES) {
+    return jsonResponse({ error: "KV 바인딩(FAVORITES)이 설정되지 않았습니다." }, 500);
+  }
+
+  // ── 읽기(GET): 인증 불필요 ──
+  if (request.method === "GET") {
+    const id = cleanStr(reqUrl.searchParams.get("id"));
+    if (id) {
+      let doc = null;
+      try {
+        const raw = await env.FAVORITES.get(MACRO_DOC_PREFIX + id);
+        if (raw) doc = JSON.parse(raw);
+      } catch {
+        doc = null;
+      }
+      if (!doc) return jsonResponse({ error: "자료를 찾을 수 없습니다." }, 404);
+      return jsonResponse(doc);
+    }
+    return jsonResponse({ docs: await loadMacroIndex(env) });
+  }
+
+  // ── 쓰기/삭제: 관리자 전용 ──
+  const account = reqUrl.searchParams.get("account") || "";
+  const authKey = request.headers.get("X-Fav-Key") || "";
+  const record = await verifyCredentials(env, account, authKey);
+  const admin = await getAdminAccount(env);
+  if (!record || account !== admin) {
+    return jsonResponse({ error: "관리자만 자료를 등록/삭제할 수 있습니다." }, 403);
+  }
+
+  if (request.method === "POST") {
+    let payload;
+    try {
+      payload = await request.json();
+    } catch {
+      return jsonResponse({ error: "invalid json body" }, 400);
+    }
+    const title = cleanStr(payload && payload.title);
+    const html =
+      payload && typeof payload.html === "string" ? payload.html : "";
+    if (!title) {
+      return jsonResponse(
+        { error: "자료 제목이 필요합니다.", docs: await loadMacroIndex(env) },
+        400
+      );
+    }
+    if (!html) {
+      return jsonResponse(
+        { error: "자료 내용이 비어 있습니다.", docs: await loadMacroIndex(env) },
+        400
+      );
+    }
+    if (html.length > MACRO_DOC_MAX_LEN) {
+      return jsonResponse(
+        { error: "자료 용량이 너무 큽니다(최대 3MB).", docs: await loadMacroIndex(env) },
+        400
+      );
+    }
+    const index = await loadMacroIndex(env);
+    const now = new Date().toISOString();
+    // 같은 제목이면 기존 자료를 갱신하고, 없으면 새로 추가한다.
+    let entry = index.find((d) => d.title === title);
+    let id;
+    if (entry) {
+      id = entry.id;
+      entry.updatedAt = now;
+    } else {
+      if (index.length >= MACRO_DOC_MAX_ITEMS) {
+        return jsonResponse({ error: "등록 자료가 너무 많습니다.", docs: index }, 400);
+      }
+      id =
+        (typeof crypto !== "undefined" && crypto.randomUUID
+          ? crypto.randomUUID()
+          : "doc-" + Date.now());
+      entry = { id, title, updatedAt: now };
+      index.push(entry);
+    }
+    await env.FAVORITES.put(
+      MACRO_DOC_PREFIX + id,
+      JSON.stringify({ id, title, html, updatedAt: now })
+    );
+    await saveMacroIndex(env, index);
+    return jsonResponse({ docs: index, id });
+  }
+
+  if (request.method === "DELETE") {
+    const id = cleanStr(reqUrl.searchParams.get("id"));
+    if (!id) {
+      return jsonResponse(
+        { error: "삭제할 자료 id가 필요합니다.", docs: await loadMacroIndex(env) },
+        400
+      );
+    }
+    try {
+      await env.FAVORITES.delete(MACRO_DOC_PREFIX + id);
+    } catch {
+      // 삭제 실패해도 인덱스에서는 제거
+    }
+    let index = await loadMacroIndex(env);
+    index = index.filter((d) => d.id !== id);
+    await saveMacroIndex(env, index);
+    return jsonResponse({ docs: index });
   }
 
   return jsonResponse({ error: "method not allowed" }, 405);

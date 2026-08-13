@@ -1,0 +1,534 @@
+﻿<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>2026 제72회 빌더버그 회의 인터랙티브 분석 리포트</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Chosen Palette: Warm Neutral Executive Palette (Off-white #F8F7F4, Slate #1E293B, Muted Gold #D97706, Soft Border #E2E8F0) -->
+    <!-- Application Structure Plan: Designed as a multi-tab executive intelligence dashboard with 5 specialized views: 1) Overview & Governance, 2) 14 Agendas Interactive Explorer (with category filters and real-time search), 3) 2nd/3rd-Order Strategic Deep Dive, 4) Power Network Directory (filterable by domain), and 5) Executive Synthesis & Key Takeaways. This non-linear, task-oriented layout allows users to quickly cross-reference agenda items with attending key figures and strategic impacts. -->
+    <!-- Visualization & Content Choices: Attendee demographics and strategic priorities visualized using Chart.js Canvas Doughnut and Radar charts. Interactive filtering built with Vanilla JS. No SVG icons or Mermaid JS used. Visual indicators constructed using Unicode symbols and styled HTML/CSS pills. -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+    <style>
+        body {
+            background-color: #F8F7F4;
+            color: #1E293B;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        }
+        .chart-container {
+            position: relative;
+            width: 100%;
+            max-width: 550px;
+            margin-left: auto;
+            margin-right: auto;
+            height: 300px;
+            ma⁷x-height: 380px;
+        }
+        @media (min-width: 768px) {
+            .chart-container {
+                height: 340px;
+            }
+        }
+        .tab-btn.active {
+            background-color: #1E293B;
+            color: #FFFFFF;
+            border-color: #1E293B;
+        }
+        .filter-btn.active {
+            background-color: #D97706;
+            color: #FFFFFF;
+            border-color: #D97706;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+    <header class="bg-slate-900 text-white border-b border-slate-800 sticky top-0 z-50 shadow-md">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+            <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                <div>
+                    <div class="flex items-center gap-2">
+                        <span class="bg-amber-600 text-xs text-white font-semibold px-2.5 py-0.5 rounded-full uppercase tracking-wider">비공식 정례 회의</span>
+                        <span class="text-slate-400 text-xs">2026.04.09 ~ 04.12</span>
+                    </div>
+                    <h1 class="text-2xl font-bold mt-1 tracking-tight">제72회 빌더버그 회의 의제 및 전략 분석</h1>
+                    <p class="text-slate-400 text-sm mt-0.5">서방 권력 엘리트 네트워크의 지정학·기술·안보 전략방향 리포트</p>
+                </div>
+                <div class="flex items-center gap-3 text-xs text-slate-300 bg-slate-800/80 p-3 rounded-lg border border-slate-700">
+                    <div>
+                        <div class="text-slate-400">장소</div>
+                        <div class="font-medium text-white">미국 워싱턴 D.C.</div>
+                    </div>
+                    <div class="border-l border-slate-700 h-8"></div>
+                    <div>
+                        <div class="text-slate-400">참석자</div>
+                        <div class="font-medium text-white">23개국 128명</div>
+                    </div>
+                    <div class="border-l border-slate-700 h-8"></div>
+                    <div>
+                        <div class="text-slate-400">적용 규칙</div>
+                        <div class="font-medium text-amber-400">채텀하우스 룰</div>
+                    </div>
+                </div>
+            </div>
+
+            <nav class="flex overflow-x-auto gap-2 mt-4 pt-2 border-t border-slate-800 no-scrollbar">
+                <button onclick="switchTab('overview')" id="tab-overview" class="tab-btn active px-4 py-2 text-sm font-medium rounded-md whitespace-nowrap transition-all border border-slate-700">
+                    &#9638; 개요 및 운용 구조
+                </button>
+                <button onclick="switchTab('agendas')" id="tab-agendas" class="tab-btn px-4 py-2 text-sm font-medium rounded-md whitespace-nowrap transition-all border border-slate-700 bg-slate-800 text-slate-300">
+                    &#9635; 14대 핵심 의제 탐색기
+                </button>
+                <button onclick="switchTab('deepdive')" id="tab-deepdive" class="tab-btn px-4 py-2 text-sm font-medium rounded-md whitespace-nowrap transition-all border border-slate-700 bg-slate-800 text-slate-300">
+                    &#9636; 심층 파급효과 (2nd/3rd-Order)
+                </button>
+                <button onclick="switchTab('network')" id="tab-network" class="tab-btn px-4 py-2 text-sm font-medium rounded-md whitespace-nowrap transition-all border border-slate-700 bg-slate-800 text-slate-300">
+                    &#9637; 권력 네트워크 & 참석자 Map
+                </button>
+                <button onclick="switchTab('summary')" id="tab-summary" class="tab-btn px-4 py-2 text-sm font-medium rounded-md whitespace-nowrap transition-all border border-slate-700 bg-slate-800 text-slate-300">
+                    &#9639; 전략적 시사점 & 결론
+                </button>
+            </nav>
+        </div>
+    </header>
+
+    <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
+
+        <section id="view-overview" class="space-y-6">
+            <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                <h2 class="text-xl font-bold text-slate-900 border-b border-slate-100 pb-3 mb-4 flex items-center gap-2">
+                    <span class="text-amber-600">&#9632;</span> 빌더버그 회의(Bilderberg Meeting) 성격 및 2026 개요
+                </h2>
+                <p class="text-slate-700 leading-relaxed mb-4">
+                    빌더버그 회의는 1954년 네덜란드 베르트하르트 왕자에 의해 창설되어 북미와 유럽의 정치, 금융, 산업, 학계, 미디어 분야 최고위급 인사들이 모여 서방 진영의 공동 과제를 논의하는 비공식 연례 협의체입니다. 공식 의결권 행사나 성명서 발표가 없으며, 참여자들은 개인 자격으로 비공개 대화를 진행합니다.
+                </p>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+                    <div class="bg-amber-50/60 p-4 rounded-lg border border-amber-200/80">
+                        <div class="text-amber-800 font-bold text-base mb-1">&#128274; 채텀하우스 룰 (Chatham House Rule)</div>
+                        <p class="text-slate-600 text-sm">토론에서 얻은 정보는 자유롭게 활용 가능하나, 발언자의 정체나 소속 기관을 외부에 공개하는 것은 엄격히 금지됩니다.</p>
+                    </div>
+                    <div class="bg-slate-50 p-4 rounded-lg border border-slate-200">
+                        <div class="text-slate-900 font-bold text-base mb-1">&#128483; 구속력 없는 자율적 토론</div>
+                        <p class="text-slate-600 text-sm">공식 투표나 성명 채택이 없어 정책적 부담 없이 민감한 지정학적 이슈와 신기술 안보 패러다임을 솔직하게 논의합니다.</p>
+                    </div>
+                    <div class="bg-slate-50 p-4 rounded-lg border border-slate-200">
+                        <div class="text-slate-900 font-bold text-base mb-1">&#129309; 비공식 백채널 이중 트랙</div>
+                        <p class="text-slate-600 text-sm">NATO, G7 등 공적 제도가 흔들릴 때 서방 권력 엘리트 간 실용적 타협점을 모색하는 정치경제학적 완충지대 역할을 수행합니다.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
+                    <div>
+                        <h3 class="text-lg font-bold text-slate-900 mb-2 flex items-center gap-2">
+                            <span>&#128202;</span> 제72회 회의 구성원 비중
+                        </h3>
+                        <p class="text-slate-600 text-sm mb-4">
+                            2026년 회의에는 총 23개국 약 128명이 참석하였으며, 출신 지역(유럽 2/3, 북미 1/3)과 직무 분야(민간·학계·언론 3/4, 정·관계 1/4)에서 고유의 권력 균형 비율을 유지했습니다.
+                        </p>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="attendeeChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
+                    <div>
+                        <h3 class="text-lg font-bold text-slate-900 mb-2 flex items-center gap-2">
+                            <span>&#127758;</span> 2026 회의 4대 핵심 전략 축
+                        </h3>
+                        <p class="text-slate-600 text-sm mb-4">
+                            이번 14대 의제는 단편적 이슈 나열이 아닌, 국방·빅테크·지경학·디지털 금융이 상호 복합 작용하는 서방 안보 재편 구조를 반영합니다.
+                        </p>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="strategyRadarChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="view-agendas" class="space-y-6 hidden">
+            <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+                    <div>
+                        <h2 class="text-xl font-bold text-slate-900">2026년 빌더버그 회의 14대 공식 의제 탐색기</h2>
+                        <p class="text-slate-600 text-sm mt-1">사무국이 공식 발표한 14개 영역의 세부 내용과 전략적 맥락을 카테고리별로 필터링하여 확인하세요.</p>
+                    </div>
+                    <div class="w-full md:w-72">
+                        <input type="text" id="agendaSearch" oninput="filterAgendas()" placeholder="의제 명칭 또는 키워드 검색..." class="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 bg-slate-50">
+                    </div>
+                </div>
+
+                <div class="flex flex-wrap gap-2 mb-6 border-b border-slate-100 pb-4">
+                    <button onclick="setAgendaCategory('all')" id="cat-all" class="filter-btn active px-3 py-1.5 text-xs font-semibold rounded-full border border-slate-300">전체 (14)</button>
+                    <button onclick="setAgendaCategory('defense')" id="cat-defense" class="filter-btn px-3 py-1.5 text-xs font-semibold rounded-full border border-slate-300 text-slate-700 bg-slate-100">국방 & 첨단 기술 (3)</button>
+                    <button onclick="setAgendaCategory('geo')" id="cat-geo" class="filter-btn px-3 py-1.5 text-xs font-semibold rounded-full border border-slate-300 text-slate-700 bg-slate-100">지정학 & 극지방 안보 (5)</button>
+                    <button onclick="setAgendaCategory('econ')" id="cat-econ" class="filter-btn px-3 py-1.5 text-xs font-semibold rounded-full border border-slate-300 text-slate-700 bg-slate-100">거시경제 & 통화/에너지 (3)</button>
+                    <button onclick="setAgendaCategory('west')" id="cat-west" class="filter-btn px-3 py-1.5 text-xs font-semibold rounded-full border border-slate-300 text-slate-700 bg-slate-100">서방 체제 & 정치 (3)</button>
+                </div>
+
+                <div id="agendasGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                </div>
+            </div>
+        </section>
+
+        <section id="view-deepdive" class="space-y-6 hidden">
+            <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                <h2 class="text-xl font-bold text-slate-900 mb-2">2026 회의 심층 파급효과 (2nd/3rd-Order Strategic Analysis)</h2>
+                <p class="text-slate-600 text-sm mb-6">의제 간 상호 연결성을 분석하여 도출한 서방 주도 질서의 구조적 재편 방향 3대 핵심 포인트입니다.</p>
+
+                <div class="space-y-6">
+                    <div class="border border-slate-200 rounded-xl p-5 bg-gradient-to-r from-slate-50 to-white hover:border-amber-400 transition-all">
+                        <div class="flex items-center gap-3 mb-3">
+                            <span class="w-8 h-8 rounded-full bg-slate-900 text-amber-400 flex items-center justify-center font-bold text-sm">1</span>
+                            <h3 class="text-lg font-bold text-slate-900">방위산업 체계와 빅테크 자본의 구조적 결합</h3>
+                        </div>
+                        <p class="text-slate-700 text-sm leading-relaxed mb-3">
+                            인공지능(AI), 전쟁의 미래(Future of Warfare), 대서양 방위산업 관계 의제가 동시에 논의된 것은 방위산업의 주도권이 기존 중공업 군수 체제에서 실리콘밸리 중심의 빅테크 자본으로 이동하고 있음을 보여줍니다.
+                        </p>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs text-slate-600 bg-slate-100/70 p-3 rounded-lg">
+                            <div><strong class="text-slate-900">기술 패러다임 변화:</strong> 철강/제조업 중심에서 자율 드론 군집, AI 전장 인식 및 타깃팅 알고리즘, 민간 SW 자산의 군사화로 전환.</div>
+                            <div><strong class="text-slate-900">자본 집적 효과:</strong> 민간 IT 기업과 군 지도부의 결합으로 국방 예산이 AI 플랫폼 기업 및 defense-tech 스타트업으로 대거 유입.</div>
+                        </div>
+                    </div>
+
+                    <div class="border border-slate-200 rounded-xl p-5 bg-gradient-to-r from-slate-50 to-white hover:border-amber-400 transition-all">
+                        <div class="flex items-center gap-3 mb-3">
+                            <span class="w-8 h-8 rounded-full bg-slate-900 text-amber-400 flex items-center justify-center font-bold text-sm">2</span>
+                            <h3 class="text-lg font-bold text-slate-900">북극권 안보(Arctic Security)와 극지방 지경학의 부상</h3>
+                        </div>
+                        <p class="text-slate-700 text-sm leading-relaxed mb-3">
+                            북극 안보가 독립 의제로 상정되고 그린란드 외교장관이 최초 수준으로 참석한 것은 동유럽 및 중동 분쟁 뒤편에 있던 북반구 안보 지형이 서방 최우선 국방 과제로 격상되었음을 의미합니다.
+                        </p>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs text-slate-600 bg-slate-100/70 p-3 rounded-lg">
+                            <div><strong class="text-slate-900">전략 가치 증대:</strong> 북극해 빙하 감소로 인한 신규 북동 항로 통제권 확보 및 희토류 등 극지방 핵심 광물 자원 주도권 확보.</div>
+                            <div><strong class="text-slate-900">대항 전선 형성:</strong> 러시아의 북극 군사력 증강 및 중국 Polar Silk Road 구상에 맞서 대서양 동맹의 북동 연안 안보망 전면 재정비.</div>
+                        </div>
+                    </div>
+
+                    <div class="border border-slate-200 rounded-xl p-5 bg-gradient-to-r from-slate-50 to-white hover:border-amber-400 transition-all">
+                        <div class="flex items-center gap-3 mb-3">
+                            <span class="w-8 h-8 rounded-full bg-slate-900 text-amber-400 flex items-center justify-center font-bold text-sm">3</span>
+                            <h3 class="text-lg font-bold text-slate-900">정치적 불확실성 속 비공식 백채널(Backchannel) 기능 강화</h3>
+                        </div>
+                        <p class="text-slate-700 text-sm leading-relaxed mb-3">
+                            미국 내 정치 기조 변화와 보호무역주의 강화로 NATO, G7 등 다자간 공적 기구가 흔들릴 때, 빌더버그의 비공식 밀실 조율 기능이 한층 더 강력하게 작동하고 있습니다.
+                        </p>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs text-slate-600 bg-slate-100/70 p-3 rounded-lg">
+                            <div><strong class="text-slate-900">실용적 타협 모색:</strong> 미 내무장관, 라이트하이저, 육군장관 등 정권 실세들과 NATO 사무총장, 유럽 재무장관 간 직대면 협상.</div>
+                            <div><strong class="text-slate-900">정치경제적 완충:</strong> 공적 수식어의 대립을 넘어 민간 경제 엘리트 자본과 정부 핵심 인사가 결합하여 정책적 불확실성을 상쇄.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="view-network" class="space-y-6 hidden">
+            <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+                    <div>
+                        <h2 class="text-xl font-bold text-slate-900">주요 참석자 권력 네트워크 및 핵심 영역 Map</h2>
+                        <p class="text-slate-600 text-sm mt-1">정·재계, 군사, 테크, 금융 부문의 대표 인사와 이들의 네트워크상 전략적 역할을 확인하세요.</p>
+                    </div>
+                    <div class="flex flex-wrap gap-2">
+                        <button onclick="filterNetwork('all')" id="net-all" class="filter-btn active px-3 py-1.5 text-xs font-semibold rounded-md border border-slate-300">전체 보기</button>
+                        <button onclick="filterNetwork('gov')" id="net-gov" class="filter-btn px-3 py-1.5 text-xs font-semibold rounded-md border border-slate-300 text-slate-700 bg-slate-100">미 행정부/정치권</button>
+                        <button onclick="filterNetwork('mil')" id="net-mil" class="filter-btn px-3 py-1.5 text-xs font-semibold rounded-md border border-slate-300 text-slate-700 bg-slate-100">군사/정보 지휘부</button>
+                        <button onclick="filterNetwork('tech')" id="net-tech" class="filter-btn px-3 py-1.5 text-xs font-semibold rounded-md border border-slate-300 text-slate-700 bg-slate-100">빅테크/Defense Tech</button>
+                        <button onclick="filterNetwork('fin')" id="net-fin" class="filter-btn px-3 py-1.5 text-xs font-semibold rounded-md border border-slate-300 text-slate-700 bg-slate-100">글로벌 금융/산업</button>
+                        <button onclick="filterNetwork('eu')" id="net-eu" class="filter-btn px-3 py-1.5 text-xs font-semibold rounded-md border border-slate-300 text-slate-700 bg-slate-100">유럽 정부/기관</button>
+                    </div>
+                </div>
+
+                <div id="networkGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                </div>
+            </div>
+        </section>
+
+        <section id="view-summary" class="space-y-6 hidden">
+            <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                <h2 class="text-xl font-bold text-slate-900 mb-2">결론 및 전략적 전망 요약</h2>
+                <p class="text-slate-600 text-sm mb-6">제72회 빌더버그 회의 분석을 통해 본 미래 글로벌 질서의 3대 패러다임 전환입니다.</p>
+
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div class="bg-slate-900 text-white p-5 rounded-xl flex flex-col justify-between">
+                        <div>
+                            <span class="text-amber-400 text-xs font-bold uppercase tracking-wider block mb-2">Pillar 01</span>
+                            <h3 class="text-lg font-bold mb-3">대서양 방위 체계의 기술 중심 재편</h3>
+                            <p class="text-slate-300 text-sm leading-relaxed">
+                                서방 안보 축이 중화기와 인력 중심에서 AI 알고리즘, 군집 드론, 자율 무기 체계로 급격히 전환되었습니다. 빅테크 기업들이 서방 국방 정책 수립의 핵심 연합체로 안착했습니다.
+                            </p>
+                        </div>
+                        <div class="mt-6 pt-4 border-t border-slate-800 text-xs text-amber-300">
+                            핵심 키워드: AI Targeting, Defense Tech, 자율 드론
+                        </div>
+                    </div>
+
+                    <div class="bg-slate-900 text-white p-5 rounded-xl flex flex-col justify-between">
+                        <div>
+                            <span class="text-amber-400 text-xs font-bold uppercase tracking-wider block mb-2">Pillar 02</span>
+                            <h3 class="text-lg font-bold mb-3">지경학적 안보 전선의 극지방 확장</h3>
+                            <p class="text-slate-300 text-sm leading-relaxed">
+                                우크라이나와 중동에 집중되던 지정학적 시선이 북극권 및 그린란드 등 극지방 자원·항로 영역으로 확장되었으며, 대러시아/대중국 억제 전선이 북극해로 확대되고 있습니다.
+                            </p>
+                        </div>
+                        <div class="mt-6 pt-4 border-t border-slate-800 text-xs text-amber-300">
+                            핵심 키워드: Arctic Security, Greenland, 북동 항로
+                        </div>
+                    </div>
+
+                    <div class="bg-slate-900 text-white p-5 rounded-xl flex flex-col justify-between">
+                        <div>
+                            <span class="text-amber-400 text-xs font-bold uppercase tracking-wider block mb-2">Pillar 03</span>
+                            <h3 class="text-lg font-bold mb-3">통제 가능한 디지털 금융 & 에너지 블록화</h3>
+                            <p class="text-slate-300 text-sm leading-relaxed">
+                                보호무역주의 고착화에 맞춰 서방 자본은 CBDC와 결합된 디지털 금융 네트워크를 강화하고, 에너지 다변화를 통해 블록화된 경제 질서 속 통제권을 공고히 하고 있습니다.
+                            </p>
+                        </div>
+                        <div class="mt-6 pt-4 border-t border-slate-800 text-xs text-amber-300">
+                            핵심 키워드: Digital Finance, CBDC, Energy Diversification
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mt-8 bg-amber-50 border border-amber-200 p-5 rounded-xl">
+                    <h4 class="font-bold text-amber-900 text-base mb-2">&#128269; 종합 총평</h4>
+                    <p class="text-amber-800 text-sm leading-relaxed">
+                        공식 다자주의 협의체(G7, NATO 등)가 정세 불확실성으로 흔들리는 시기에, 제72회 빌더버그 회의는 서방의 정치, 군사, 테크, 금융 권력이 비공식 협의체를 통해 신기술 안보 패권과 세계 질서의 패러다임을 지속적으로 통제하고 설계하려는 구조적 시도임을 입증했습니다.
+                    </p>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <footer class="bg-slate-900 text-slate-400 text-xs py-6 border-t border-slate-800 mt-auto">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+            <p>2026 제72회 빌더버그 회의 공식 의제 및 출처 데이터 기반 인터랙티브 인텔리전스 리포트</p>
+            <p class="mt-1 text-slate-500">본 리포트는 비공식 연례 협의체 회의 자료를 바탕으로 작성된 분석 애플리케이션입니다.</p>
+        </div>
+    </footer>
+
+    <script>
+        const agendaData = [
+            { id: 1, title: "AI (인공지능)", cat: "defense", catName: "국방 & 첨단 기술", desc: "인공지능 기술 발전, 국가 안보 적용, 안보 및 산업 거버넌스 논의.", detail: "AI 알고리즘의 고도화가 초래할 국가 안보 및 경제 생산성의 지각변동 분석." },
+            { id: 2, title: "Arctic Security (북극 안보)", cat: "geo", catName: "지정학 & 극지방 안보", desc: "북극권 안보, 그린란드 전략 가치, 극지방 자원 및 항로 주도권.", detail: "북극해 빙하 감소로 인한 신규 항로 개척과 희토류 자원 확보 경쟁 대응." },
+            { id: 3, title: "China (중국)", cat: "geo", catName: "지정학 & 극지방 안보", desc: "대중국 견제 전략, 미·중 기술 경쟁, 공급망 탈위험화(De-risking).", detail: "핵심 첨단 기술 통제 및 인도태평양 지역 내 대중국 안보 동맹 강화." },
+            { id: 4, title: "Digital Finance (디지털 금융)", cat: "econ", catName: "거시경제 & 통화/에너지", desc: "디지털 금융 생태계, CBDC, 글로벌 자금 이동 및 통화 통제권.", detail: "중앙은행 디지털통화(CBDC) 및 디지털 자산 결합을 통한 자금 이동 통제." },
+            { id: 5, title: "Energy Diversification (에너지 다변화)", cat: "econ", catName: "거시경제 & 통화/에너지", desc: "에너지 다변화, 에너지 안보, 재생에너지 및 원자력 공급망 안정성.", detail: "지정학적 리스크에 대비한 서방 자본 중심의 에너지 공급망 안정화." },
+            { id: 6, title: "Europe (유럽)", cat: "west", catName: "서방 체제 & 정치", desc: "유럽의 경제적·안보적 자립성, 정치적 분열 및 유럽연합 경쟁력.", detail: "유럽연합 내부 분열 방지 및 자체 방위 역량 확보 전략." },
+            { id: 7, title: "Global Trade (세계 무역)", cat: "econ", catName: "거시경제 & 통화/에너지", desc: "세계 무역 질서의 재편, 보호무역주의, 규제 및 블록화 현상.", detail: "글로벌 무역 파편화에 대응한 서방 자본 간 공급망 블록 구축." },
+            { id: 8, title: "The Middle East (중동)", cat: "geo", catName: "지정학 & 극지방 안보", desc: "중동 정세, 지역 분쟁 확산 방지, 중동 내 에너지 안보 공급망.", detail: "중동 내 지역 군사 충돌 방지 및 석유·가스 유통망 안전 확보." },
+            { id: 9, title: "Russia (러시아)", cat: "geo", catName: "지정학 & 극지방 안보", desc: "대러시아 제재, 군사적 위협 대응 및 장기적 억제 전략.", detail: "동유럽 안보 전선 유지 및 장기적 군사·경제 억제책 수립." },
+            { id: 10, title: "Trans-Atlantic Defence-Industrial Relationship", cat: "defense", catName: "국방 & 첨단 기술", desc: "대서양 방위산업 협력 관계, 무기 생산 능력 확충 및 방산 공급망 통합.", detail: "미국과 유럽 간 방산 생산 역량 통합 및 첨단 무기 공급 체계 구축." },
+            { id: 11, title: "Ukraine (우크라이나)", cat: "geo", catName: "지정학 & 극지방 안보", desc: "우크라이나 지원 지속성, 복구 전략 및 방위 역량 강화.", detail: "장기화된 전쟁에 따른 재정적·군사적 지원 한계 극복 방안." },
+            { id: 12, title: "USA (미국)", cat: "west", catName: "서방 체제 & 정치", desc: "미국 내 정치·경제 정세, 리더십 변화 및 대외 정책 방향성.", detail: "미국 내 자국 우선주의 기조와 대서양 동맹 관계의 조율." },
+            { id: 13, title: "Future of Warfare (미래 전쟁)", cat: "defense", catName: "국방 & 첨단 기술", desc: "미래 전쟁의 양상, 드론·무인 체계, AI 기반 타깃팅 및 첨단 무기.", detail: "자율 드론 군집 및 AI 전장 인식 시스템의 실전 배치 및 거버넌스." },
+            { id: 14, title: "The West (서방)", cat: "west", catName: "서방 체제 & 정치", desc: "서방 가치 체계의 재정립, 민주주의 결속력 및 글로벌 가치관 경쟁.", detail: "권위주의 체제에 맞선 민주주의 동맹의 가치 정체성 강화." }
+        ];
+
+        const networkData = [
+            { category: "gov", name: "더그 버검 (Doug Burgum)", role: "미 내무장관", impact: "미국 자국 우선주의 정책 기조 전달 및 민간 자본과의 연계성 모색" },
+            { category: "gov", name: "로버트 라이트하이저 (Robert Lighthizer)", role: "전 USTR 대표", impact: "대외 통상 기조 조율 및 무역 보호주의 정책 방향 제시" },
+            { category: "gov", name: "제이슨 스미스 / 댄 드리스콜", role: "하원 세입위원장 / 육군장관", impact: "미 국방 예산 집행 및 대서양 방위 협력 실무 논의" },
+            { category: "mil", name: "마르크 뤼터 (Mark Rutte)", role: "NATO 사무총장", impact: "유럽 안보 자립 및 NATO 방위 산업 통합 주도" },
+            { category: "mil", name: "사무엘 파파로 (Samuel Paparo)", role: "미 인도태평양사령관", impact: "아시아·태평양 안보 및 미·중 기술 패권 브리핑" },
+            { category: "mil", name: "블레이즈 메트레벨리 (Blaise Metreweli)", role: "영국 MI6 수장", impact: "전장 정보 공유 및 무인 기술의 정보전 적용 논의" },
+            { category: "tech", name: "에릭 슈미트 (Eric Schmidt)", role: "전 구글 CEO", impact: "드론 전쟁 및 AI 타깃팅 기술의 군사적 전파 이끌어냄" },
+            { category: "tech", name: "피터 틸 (Peter Thiel)", role: "Founders Fund 파트너", impact: "Defense Tech 및 빅테크 자본의 국방 분야 투입 주도" },
+            { category: "tech", name: "자크 클라크 (Zack Clark)", role: "Anthropic 공동창업자", impact: "안보 분야 AI 모델 적용 및 AI 거버넌스 제시" },
+            { category: "fin", name: "KKR / Lazard / Amundi CEO", role: "글로벌 투자자산운용사", impact: "방위산업, 에너지 다변화, Digital Finance 자본 배분" },
+            { category: "fin", name: "Citigroup / Pfizer / Shell 최고경영진", role: "글로벌 금융 및 산업 리더", impact: "에너지 공급망 안정화 및 금융 네트워크 통제" },
+            { category: "eu", name: "알렉산더 스투브 (Alexander Stubb)", role: "핀란드 대통령", impact: "동유럽 안보 강화 및 유럽 외자 유치 홍보" },
+            { category: "eu", name: "나디아 칼비뇨 (Nadia Calviño)", role: "유럽투자은행(EIB) 총재", impact: "유럽 안보 자립을 위한 재정 지원 및 방산 투자 촉진" },
+            { category: "eu", name: "비비안 모츠펠트 (Vivian Motzfeldt)", role: "그린란드 외교장관", impact: "북극권 안보 확보 및 희토류 등 자원 주도권 협의" }
+        ];
+
+        let currentAgendaCategory = 'all';
+
+        function switchTab(tabId) {
+            const tabs = ['overview', 'agendas', 'deepdive', 'network', 'summary'];
+            tabs.forEach(id => {
+                document.getElementById(`view-${id}`).classList.add('hidden');
+                document.getElementById(`tab-${id}`).classList.remove('active');
+                document.getElementById(`tab-${id}`).classList.add('bg-slate-800', 'text-slate-300');
+            });
+
+            document.getElementById(`view-${tabId}`).classList.remove('hidden');
+            const activeTabBtn = document.getElementById(`tab-${tabId}`);
+            activeTabBtn.classList.add('active');
+            activeTabBtn.classList.remove('bg-slate-800', 'text-slate-300');
+        }
+
+        function setAgendaCategory(cat) {
+            currentAgendaCategory = cat;
+            const buttons = document.querySelectorAll('#view-agendas .filter-btn');
+            buttons.forEach(btn => {
+                btn.classList.remove('active');
+                btn.classList.add('bg-slate-100', 'text-slate-700');
+            });
+            const activeBtn = document.getElementById(`cat-${cat}`);
+            activeBtn.classList.add('active');
+            activeBtn.classList.remove('bg-slate-100', 'text-slate-700');
+
+            filterAgendas();
+        }
+
+        function filterAgendas() {
+            const searchText = document.getElementById('agendaSearch').value.toLowerCase();
+            const grid = document.getElementById('agendasGrid');
+            grid.innerHTML = '';
+
+            const filtered = agendaData.filter(item => {
+                const matchesCat = (currentAgendaCategory === 'all') || (item.cat === currentAgendaCategory);
+                const matchesSearch = item.title.toLowerCase().includes(searchText) ||
+                                      item.desc.toLowerCase().includes(searchText) ||
+                                      item.detail.toLowerCase().includes(searchText);
+                return matchesCat && matchesSearch;
+            });
+
+            filtered.forEach(item => {
+                const card = document.createElement('div');
+                card.className = "bg-slate-50 border border-slate-200 rounded-lg p-4 hover:shadow-md transition-all flex flex-col justify-between";
+                card.innerHTML = `
+                    <div>
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-xs font-bold px-2 py-0.5 rounded bg-slate-200 text-slate-800">${item.catName}</span>
+                            <span class="text-xs text-slate-400">#${item.id}</span>
+                        </div>
+                        <h3 class="font-bold text-slate-900 text-base mb-1">${item.title}</h3>
+                        <p class="text-slate-700 text-xs mb-3 font-medium">${item.desc}</p>
+                    </div>
+                    <div class="mt-2 pt-2 border-t border-slate-200/80 text-slate-600 text-xs">
+                        ${item.detail}
+                    </div>
+                `;
+                grid.appendChild(card);
+            });
+        }
+
+        function filterNetwork(category) {
+            const buttons = document.querySelectorAll('#view-network .filter-btn');
+            buttons.forEach(btn => {
+                btn.classList.remove('active');
+                btn.classList.add('bg-slate-100', 'text-slate-700');
+            });
+            const activeBtn = document.getElementById(`net-${category}`);
+            activeBtn.classList.add('active');
+            activeBtn.classList.remove('bg-slate-100', 'text-slate-700');
+
+            renderNetwork(category);
+        }
+
+        function renderNetwork(category = 'all') {
+            const grid = document.getElementById('networkGrid');
+            grid.innerHTML = '';
+
+            const filtered = networkData.filter(item => category === 'all' || item.category === category);
+
+            filtered.forEach(item => {
+                const card = document.createElement('div');
+                card.className = "bg-slate-50 border border-slate-200 rounded-lg p-4 flex flex-col justify-between";
+                card.innerHTML = `
+                    <div>
+                        <div class="text-xs font-semibold text-amber-700 mb-1">${getCategoryLabel(item.category)}</div>
+                        <h3 class="font-bold text-slate-900 text-base">${item.name}</h3>
+                        <div class="text-xs font-medium text-slate-600 mb-3">${item.role}</div>
+                    </div>
+                    <div class="bg-white p-2.5 rounded border border-slate-200 text-xs text-slate-700">
+                        <strong class="text-slate-900 block mb-0.5">전략적 역할:</strong>
+                        ${item.impact}
+                    </div>
+                `;
+                grid.appendChild(card);
+            });
+        }
+
+        function getCategoryLabel(cat) {
+            switch(cat) {
+                case 'gov': return '미 행정부 / 정치권';
+                case 'mil': return '군사 / 정보 지휘부';
+                case 'tech': return '빅테크 / Defense Tech';
+                case 'fin': return '글로벌 금융 / 산업';
+                case 'eu': return '유럽 정부 / 기관';
+                default: return '참석자';
+            }
+        }
+
+        function initCharts() {
+            const ctxAttendee = document.getElementById('attendeeChart').getContext('2d');
+            new Chart(ctxAttendee, {
+                type: 'doughnut',
+                data: {
+                    labels: ['유럽 민간/학계/언론', '유럽 정·관계', '북미 민간/학계/언론', '북미 정·관계'],
+                    datasets: [{
+                        data: [50, 17, 25, 8],
+                        backgroundColor: ['#1E293B', '#334155', '#D97706', '#F59E0B'],
+                        borderWidth: 2,
+                        borderColor: '#FFFFFF'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            labels: { boxWidth: 12, fontSize: 11 }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return ` ${context.label}: 약 ${context.raw}%`;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+
+            const ctxRadar = document.getElementById('strategyRadarChart').getContext('2d');
+            new Chart(ctxRadar, {
+                type: 'radar',
+                data: {
+                    labels: ['AI & 미래전쟁', '북극권 안보', '대서양 방산통합', '디지털 금융/CBDC', '에너지 다변화', '중국/러시아 억제'],
+                    datasets: [{
+                        label: '2026 회의 논의 집중도',
+                        data: [95, 88, 90, 82, 85, 92],
+                        backgroundColor: 'rgba(217, 119, 6, 0.2)',
+                        borderColor: '#D97706',
+                        pointBackgroundColor: '#1E293B',
+                        pointBorderColor: '#FFF',
+                        pointHoverBackgroundColor: '#FFF',
+                        pointHoverBorderColor: '#D97706'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        r: {
+                            angleLines: { color: '#E2E8F0' },
+                            grid: { color: '#E2E8F0' },
+                            pointLabels: { font: { size: 10 } },
+                            ticks: { display: false, min: 0, max: 100 }
+                        }
+                    },
+                    plugins: {
+                        legend: { display: false }
+                    }
+                }
+            });
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            filterAgendas();
+            renderNetwork();
+            initCharts();
+        });
+    </script>
+</body>
+</html>
