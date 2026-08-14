@@ -18,22 +18,28 @@
   header { background:#131722; color:#fff; padding:14px 20px;
     display:flex; align-items:center; justify-content:space-between; gap:12px; }
   header h1 { font-size:18px; margin:0; }
-  .fx-rate { font-size:14px; font-weight:600; color:#e6e8eb; white-space:nowrap; }
+  .fx-rate { position:absolute; left:16px; bottom:10px; font-size:13px;
+    font-weight:600; color:#e6e8eb; white-space:nowrap; }
   .fx-rate .up { color:#3fd1a2; }
   .fx-rate .down { color:#ff6b6b; }
   .hdr-right { display:flex; flex-direction:column; align-items:flex-end; gap:4px; }
-  .idx-bar { display:flex; flex-wrap:wrap; gap:3px 14px; justify-content:flex-end;
-    font-size:13px; font-weight:600; color:#e6e8eb; }
-  .idx-bar .idx b { font-weight:600; color:#aeb4bd; margin-right:4px; }
-  .idx-bar .idx-link { cursor:pointer; }
-  .idx-bar .idx-link:hover { text-decoration:underline; }
-  .idx-bar .up { color:#3fd1a2; }
-  .idx-bar .down { color:#ff6b6b; }
+  .idx-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(108px, 1fr));
+    gap:8px; width:100%; }
+  .idx-cell { background:#1b2130; border:1px solid #232838; border-radius:8px;
+    padding:8px 10px; text-align:center; }
+  .idx-cell.idx-link { cursor:pointer; }
+  .idx-cell.idx-link:hover { border-color:#2962ff; background:#1e2740; }
+  .idx-cell .nm { display:block; font-size:11px; font-weight:600;
+    color:#aeb4bd; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .idx-cell .pv { display:block; font-size:15px; font-weight:700;
+    color:#e6e8eb; margin-top:3px; white-space:nowrap; }
+  .idx-cell .chg { display:block; font-size:12px; font-weight:600; margin-top:2px; }
+  .idx-cell .up { color:#3fd1a2; }
+  .idx-cell .down { color:#ff6b6b; }
   .index-box { background:#131722; border:1px solid #131722; border-radius:8px;
-    margin:0 0 14px; padding:12px 16px; display:flex; align-items:center;
-    justify-content:space-between; gap:8px 20px; flex-wrap:wrap; }
-  .index-box .idx-bar { justify-content:flex-start; }
-  .hover-toggle { display:inline-flex; align-items:center; gap:5px;
+    margin:0 0 14px; position:relative; padding:12px 16px 36px; }
+  .hover-toggle { position:absolute; right:16px; bottom:10px;
+    display:inline-flex; align-items:center; gap:5px;
     font-size:12px; font-weight:600; color:#aeb4bd; white-space:nowrap;
     cursor:pointer; }
   .hover-toggle input { cursor:pointer; margin:0; }
@@ -182,6 +188,8 @@
     border-radius:8px; background:#fff; }
   .macrodoc-pager { display:flex; align-items:center; gap:4px; margin-top:10px; }
   .macrodoc-view { height:26px; padding:0 12px; font-size:12px; }
+  .macrodoc-del { height:26px; padding:0 12px; font-size:12px; margin-left:6px;
+    color:var(--sell); border-color:var(--sell); }
 
   /* AI 기업 평가 결과(마크다운) */
   .ai-card { border:1px solid var(--bd); border-radius:10px; margin-top:16px;
@@ -390,7 +398,7 @@
   <input type="hidden" id="proxy"
          value="https://investing-proxy.sw3855.workers.dev/?url=">
   <fieldset class="index-box">
-    <span id="indices" class="idx-bar">지수 …</span>
+    <div id="indices" class="idx-grid">로딩중…</div>
     <span id="fxrate" class="fx-rate">USD/KRW …</span>
     <label class="hover-toggle" title="모든 차트의 마우스 호버 툴팁 표시를 켜고 끕니다">
       <input type="checkbox" id="hoverToggle" checked> 차트 툴팁
@@ -638,8 +646,6 @@
 
     <fieldset id="macrodoc-admin" class="fav-fieldset" style="display:none">
       <legend>거시경제 자료 등록 (관리자 전용)</legend>
-      <button id="macroDocAdminCollapseBtn" class="fav-collapse-btn" type="button"
-              title="등록 영역 접기">▲</button>
       <div id="macrodoc-admin-body">
       <div class="row">
         <input type="text" id="macroDocTitle" class="grow"
@@ -652,7 +658,6 @@
       </div>
       <div class="hint">HTML 파일을 선택하면 제목이 자동으로 채워집니다.
         같은 제목으로 다시 등록하면 기존 자료가 갱신됩니다.</div>
-      <div id="macrodoc-admin-list" class="fav-list"></div>
       </div>
     </fieldset>
 
@@ -4311,31 +4316,34 @@ async def _fetch_index(sym):
 
 
 async def update_indices():
-    """나스닥100·S&P500·다우·러셀2000 지수값과 변동률을 헤더에 표시."""
+    """나스닥100·S&P500·다우·러셀2000 지수값과 변동률을 헤더에 그리드 카드로 표시."""
     el = document.querySelector("#indices")
     if el is None:
         return
     results = await asyncio.gather(*[_fetch_index(s) for _, s in INDEX_LIST])
-    parts = []
+    cells = []
     for (name, sym), d in zip(INDEX_LIST, results):
         # 미 10년물 금리를 실시간 무위험수익률(WACC용)로 저장한다.
         if sym == "TVC:US10Y" and d and isinstance(d.get("close"), (int, float)):
             _RF_RATE["rate"] = d["close"] / 100.0
         charted = sym in INDEX_YF
-        attr = ('<span class="idx idx-link" data-idxsym="%s"' % _esc(sym)
-                if charted else '<span class="idx"')
+        cell_cls = "idx-cell idx-link" if charted else "idx-cell"
+        attr = ' data-idxsym="%s"' % _esc(sym) if charted else ""
         if not d:
-            parts.append('%s><b>%s</b>—</span>' % (attr, _esc(name)))
+            cells.append('<div class="%s"%s><span class="nm">%s</span>'
+                         '<span class="pv">-</span></div>'
+                         % (cell_cls, attr, _esc(name)))
             continue
-        seg = '%s><b>%s</b>%s' % (attr, _esc(name), fmt_num(d["close"], 2))
         chg = d.get("change")
+        chg_html = ""
         if isinstance(chg, (int, float)):
             cls = "up" if chg >= 0 else "down"
             arrow = "▲" if chg >= 0 else "▼"
-            seg += ' <span class="%s">%s%+.2f%%</span>' % (cls, arrow, chg)
-        seg += '</span>'
-        parts.append(seg)
-    el.innerHTML = "".join(parts)
+            chg_html = '<span class="chg %s">%s%+.2f%%</span>' % (cls, arrow, chg)
+        cells.append('<div class="%s"%s><span class="nm">%s</span>'
+                    '<span class="pv">%s</span>%s</div>'
+                    % (cell_cls, attr, _esc(name), fmt_num(d["close"], 2), chg_html))
+    el.innerHTML = "".join(cells)
 
 
 # ===================== 지수 일봉 캔들 차트 (Yahoo Finance) =====================
@@ -8359,14 +8367,12 @@ def _render_macrodoc_table(docs=None):
     pager = document.querySelector("#macrodoc-pager")
     all_docs = _sorted_macrodocs()
     if box is None:
-        _render_macrodoc_admin_list(_MACRODOC_LIST.get("docs") or [])
         return
     if not all_docs:
         box.innerHTML = ('<div class="hint" style="margin-top:8px">등록된 자료가 '
                          '없습니다.</div>')
         if pager is not None:
             pager.innerHTML = ""
-        _render_macrodoc_admin_list(_MACRODOC_LIST.get("docs") or [])
         return
     per = _MACRODOC_PER_PAGE
     total_pages = (len(all_docs) + per - 1) // per
@@ -8378,6 +8384,7 @@ def _render_macrodoc_table(docs=None):
     _MACRODOC_PAGE["page"] = page
     start = page * per
     rows = all_docs[start:start + per]
+    is_admin = _is_ai_admin()
     html = ['<div class="table-wrap"><table class="holdings"><thead><tr>'
             '<th class="num">No.</th><th>제목</th><th>갱신일</th>'
             '<th class="num"></th></tr></thead><tbody>']
@@ -8386,19 +8393,25 @@ def _render_macrodoc_table(docs=None):
         did = d.get("id") or ""
         title = d.get("title") or "(제목 없음)"
         updated = (d.get("updatedAt") or "")[:10]
+        del_btn = ('<button class="macrodoc-del" data-id="%s" '
+                   'title="삭제">삭제</button>' % _esc(did)) if is_admin else ""
         html.append(
             '<tr><td class="num">%d</td><td>%s</td><td>%s</td>'
             '<td class="num"><button class="macrodoc-view primary" '
-            'data-id="%s">보기</button></td></tr>'
-            % (start + i + 1, _esc(title), _esc(updated), _esc(did)))
+            'data-id="%s">보기</button>%s</td></tr>'
+            % (start + i + 1, _esc(title), _esc(updated), _esc(did), del_btn))
     html.append('</tbody></table></div>')
     box.innerHTML = "".join(html)
     views = document.querySelectorAll("#macrodoc-list .macrodoc-view")
     for i in range(views.length):
         el = views.item(i)
         _bind(el, "click", _make_macrodoc_view_handler(el.getAttribute("data-id")))
+    if is_admin:
+        dels = document.querySelectorAll("#macrodoc-list .macrodoc-del")
+        for i in range(dels.length):
+            el = dels.item(i)
+            _bind(el, "click", _make_macrodoc_del_handler(el.getAttribute("data-id")))
     _render_macrodoc_pager(page, total_pages, len(all_docs))
-    _render_macrodoc_admin_list(_MACRODOC_LIST.get("docs") or [])
 
 
 def _sorted_macrodocs():
@@ -8440,35 +8453,6 @@ def _make_macrodoc_view_handler(doc_id):
         evt.preventDefault()
         asyncio.ensure_future(_view_macrodoc(doc_id))
     return handler
-
-
-def _render_macrodoc_admin_list(docs):
-    """관리자용 등록 자료 목록(삭제 버튼 포함)."""
-    box = document.querySelector("#macrodoc-admin-list")
-    if box is None:
-        return
-    if not _is_ai_admin():
-        box.innerHTML = ""
-        return
-    if not docs:
-        box.innerHTML = ('<div class="hint" style="margin-top:8px">아직 등록된 '
-                         '자료가 없습니다.</div>')
-        return
-    chips = []
-    for d in docs:
-        did = d.get("id") or ""
-        title = d.get("title") or "(제목 없음)"
-        chips.append(
-            '<span class="fav-chip"><span class="fav-load">'
-            '<span class="fav-sym">%s</span></span>'
-            '<button class="fav-del macrodoc-del" data-id="%s" '
-            'title="삭제">×</button></span>' % (_esc(title), _esc(did)))
-    box.innerHTML = ('<div class="fav-chips" style="margin-top:8px">%s</div>'
-                     % "".join(chips))
-    dels = document.querySelectorAll("#macrodoc-admin-list .macrodoc-del")
-    for i in range(dels.length):
-        el = dels.item(i)
-        _bind(el, "click", _make_macrodoc_del_handler(el.getAttribute("data-id")))
 
 
 def _make_macrodoc_del_handler(doc_id):
@@ -8525,11 +8509,11 @@ async def _view_macrodoc(doc_id):
 
 
 def _update_macrodoc_admin_ui():
-    """관리자면 자료 등록 패널을 노출한다."""
+    """관리자면 자료 등록 패널을 노출하고 표의 삭제 버튼도 함께 갱신한다."""
     panel = document.querySelector("#macrodoc-admin")
     if panel is not None:
         panel.style.display = "" if _is_ai_admin() else "none"
-    _render_macrodoc_admin_list(_MACRODOC_LIST.get("docs") or [])
+    _render_macrodoc_table()
 
 
 @when("click", "#macroDocRefreshBtn")
@@ -8584,22 +8568,6 @@ async def on_macrodoc_register(event):
     inp.value = ""
     _render_macrodoc_table(docs)
     _set_macrodoc_admin_status("등록 완료 · %s" % title)
-
-
-@when("click", "#macroDocAdminCollapseBtn")
-def on_macrodoc_admin_collapse(event):
-    body = document.querySelector("#macrodoc-admin-body")
-    btn = document.querySelector("#macroDocAdminCollapseBtn")
-    if body is None or btn is None:
-        return
-    if body.style.display == "none":
-        body.style.display = ""
-        btn.textContent = "▲"
-        btn.title = "등록 영역 접기"
-    else:
-        body.style.display = "none"
-        btn.textContent = "▼"
-        btn.title = "등록 영역 펴기"
 
 
 # 초기화: 조회 버튼 활성화
