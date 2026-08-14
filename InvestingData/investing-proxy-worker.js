@@ -42,6 +42,7 @@
  *    POST   https://<worker>/favorites?account=<id>&pw_op=change → 본문 {newKey} 로그인 상태에서 공유 키 변경
  *    POST   https://<worker>/favorites?account=<id>&folder_op=create → 본문 {folder} 빈 폴더 생성
  *    POST   https://<worker>/favorites?account=<id>&folder_op=rename → 본문 {folder,newFolder} 폴더 이름 변경
+ *    POST   https://<worker>/favorites?account=<id>&reorder=1 → 본문 {folder,order:[symbol,...]} 폴더 내 순서 변경
  *    POST   https://<worker>/favorites?account=<id>            → 본문 {symbol,name,folder} 추가/이동
  *    DELETE https://<worker>/favorites?account=<id>&symbol=..  → 해당 심볼 삭제
  *    DELETE https://<worker>/favorites?account=<id>&folder=..  → 폴더와 그 안의 종목 삭제
@@ -1073,6 +1074,48 @@ async function handleFavorites(request, env, reqUrl) {
       const idx = folders.indexOf(oldName);
       if (idx >= 0) folders[idx] = newName;
       else folders.push(newName);
+      await env.FAVORITES.put(
+        kvKey,
+        JSON.stringify({ keyHash: authHash, favorites, folders })
+      );
+      return jsonResponse({ favorites, folders });
+    }
+
+    // 폴더 내 순서 변경 요청: ?reorder=1, 본문 {folder, order:[symbol,...]}
+    // 다른 폴더 항목의 상대 위치는 그대로 두고, 지정한 폴더 항목만 order 순서로 재배치한다.
+    if (reqUrl.searchParams.get("reorder") === "1") {
+      const folder = cleanStr(payload && payload.folder) || "Default";
+      const order = Array.isArray(payload && payload.order)
+        ? payload.order.filter((s) => typeof s === "string")
+        : null;
+      if (!order) {
+        return jsonResponse({ error: "order 배열이 필요합니다.", favorites, folders }, 400);
+      }
+      const idxList = [];
+      favorites.forEach((f, i) => {
+        if ((f.folder || "Default") === folder) idxList.push(i);
+      });
+      const bySymbol = new Map();
+      idxList.forEach((i) => bySymbol.set(favorites[i].symbol, favorites[i]));
+      const used = new Set();
+      const newItems = [];
+      for (const sym of order) {
+        const item = bySymbol.get(sym);
+        if (item && !used.has(sym)) {
+          newItems.push(item);
+          used.add(sym);
+        }
+      }
+      idxList.forEach((i) => {
+        const item = favorites[i];
+        if (!used.has(item.symbol)) {
+          newItems.push(item);
+          used.add(item.symbol);
+        }
+      });
+      idxList.forEach((originalIdx, k) => {
+        favorites[originalIdx] = newItems[k];
+      });
       await env.FAVORITES.put(
         kvKey,
         JSON.stringify({ keyHash: authHash, favorites, folders })

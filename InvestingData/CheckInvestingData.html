@@ -373,8 +373,27 @@
     cursor:pointer; font-size:13px; line-height:1; padding:0; }
   .fav-folder .fav-folder-ren:hover { background:#e7f0ff; color:var(--pri); }
   .fav-folder .fav-folder-del:hover { background:#ffe9e9; color:var(--sell); }
-  .fav-folder-items { display:flex; flex-wrap:wrap; gap:8px;
-    padding:2px 12px 12px; }
+  .fav-folder-items { display:grid; grid-template-columns:repeat(auto-fill, minmax(108px, 1fr));
+    gap:8px; padding:2px 12px 12px; border-radius:8px; transition:background .1s; }
+  .fav-folder-items.drag-over-empty { background:#eef3ff; }
+  .fav-cell { position:relative; cursor:grab; text-align:center;
+    background:#fff; border:2px solid var(--bd); border-radius:8px;
+    padding:8px 10px; transition:border-color .1s, opacity .1s; }
+  .fav-cell:hover { border-color:var(--pri); background:#eef3ff; }
+  .fav-cell.dragging { opacity:.4; cursor:grabbing; }
+  .fav-cell.drag-over { border-color:var(--pri); border-style:dashed;
+    background:#eef3ff; }
+  .fav-cell .nm { display:block; font-size:12px; font-weight:700;
+    color:#1f2328; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .fav-cell .pv { display:block; font-size:14px; font-weight:700;
+    color:#1f2328; margin-top:3px; white-space:nowrap; }
+  .fav-cell .chg { display:block; font-size:12px; font-weight:600; margin-top:2px; }
+  .fav-cell .chg.up { color:var(--buy); }
+  .fav-cell .chg.down { color:var(--sell); }
+  .fav-cell .fav-del { position:absolute; top:2px; right:2px; width:18px;
+    height:18px; border-radius:50%; border:none; background:transparent;
+    color:var(--mut); cursor:pointer; font-size:13px; line-height:1; padding:0; }
+  .fav-cell .fav-del:hover { background:#ffe9e9; color:var(--sell); }
   .fav-chip { display:inline-flex; align-items:center; gap:6px; font-size:13px;
     border:1px solid var(--bd); border-radius:16px; padding:4px 6px 4px 12px;
     background:#fff; }
@@ -5887,6 +5906,12 @@ _FAV_CREDS = {"account": None, "key": None}
 # 서버에서 받은 폴더 목록(빈 폴더 포함)을 세션 동안 보관한다.
 _FAV_FOLDERS = []
 
+# 마지막으로 렌더링한 즐겨찾기 원본 목록(드래그 앤 드롭 순서 계산용).
+_FAV_LAST = {"list": []}
+
+# 드래그 중인 항목(심볼·원래 폴더)을 임시 보관한다.
+_FAV_DRAG = {"symbol": None, "folder": None}
+
 
 def _fav_creds():
     """현재 세션의 (계정 ID, 공유 키)를 반환. 없으면 (None, None)."""
@@ -6070,6 +6095,7 @@ def render_favorites(favs):
     box = document.querySelector("#favorites-list")
     if box is None:
         return
+    _FAV_LAST["list"] = list(favs or [])
     _update_folder_datalist(favs)
     # 폴더별로 묶기 (폴더 미지정은 'Default')
     groups = {}
@@ -6096,15 +6122,18 @@ def render_favorites(favs):
         for f in items:
             sym = f.get("symbol") or ""
             name = f.get("name") or ""
+            tkr = sym.split(":", 1)[-1] if sym else sym  # 표시는 거래소 접두어 제외
             chips.append(
-                '<span class="fav-chip">'
-                '<span class="fav-load" data-symbol="%s">'
-                '<span class="fav-sym">%s</span>'
-                '<span class="fav-name">%s</span></span>'
+                '<div class="fav-cell fav-load" data-symbol="%s" '
+                'data-folder="%s" draggable="true" title="%s">'
                 '<button class="fav-del" data-symbol="%s" title="삭제">×</button>'
-                '</span>'
-                % (_esc(sym), _esc(sym), _esc(name), _esc(sym)))
-        empty_hint = '' if chips else '<span class="fav-name">(비어 있음)</span>'
+                '<span class="nm">%s</span>'
+                '<span class="pv">-</span>'
+                '<span class="chg"></span>'
+                '</div>'
+                % (_esc(sym), _esc(folder), _esc(name or sym), _esc(sym), _esc(tkr)))
+        empty_hint = ('' if chips else
+                     '<div class="hint" style="grid-column:1/-1">(비어 있음)</div>')
         # Default 는 기본 폴더라 이름 변경/삭제 버튼을 숨긴다
         actions = (
             '' if folder == "Default"
@@ -6118,11 +6147,53 @@ def render_favorites(favs):
             '<details class="fav-folder" open>'
             '<summary><span class="fav-folder-name">📁 %s</span>'
             '<span class="fav-folder-count">%d</span>%s</summary>'
-            '<div class="fav-folder-items">%s%s</div>'
+            '<div class="fav-folder-items" data-folder="%s">%s%s</div>'
             '</details>'
-            % (_esc(folder), len(items), actions, "".join(chips), empty_hint))
+            % (_esc(folder), len(items), actions, _esc(folder),
+               "".join(chips), empty_hint))
     box.innerHTML = "".join(html)
     _bind_favorites()
+    asyncio.ensure_future(_refresh_fav_prices())
+
+
+async def _refresh_fav_prices():
+    """즐겨찾기 그리드 카드의 가격·변동률을 조회해 채운다."""
+    box = document.querySelector("#favorites-list")
+    if box is None:
+        return
+    cells = document.querySelectorAll("#favorites-list .fav-cell")
+    n = cells.length
+    if not n:
+        return
+    syms = []
+    for i in range(n):
+        s = cells.item(i).getAttribute("data-symbol")
+        if s and s not in syms:
+            syms.append(s)
+    results = await asyncio.gather(*[_fetch_index(s) for s in syms])
+    price_map = dict(zip(syms, results))
+    for i in range(n):
+        cell = cells.item(i)
+        d = price_map.get(cell.getAttribute("data-symbol"))
+        pv = cell.querySelector(".pv")
+        chg_el = cell.querySelector(".chg")
+        if not d or not isinstance(d.get("close"), (int, float)):
+            if pv is not None:
+                pv.textContent = "-"
+            if chg_el is not None:
+                chg_el.textContent = ""
+            continue
+        if pv is not None:
+            pv.textContent = fmt_num(d["close"], 2)
+        chg = d.get("change")
+        if chg_el is not None:
+            if isinstance(chg, (int, float)):
+                cls = "up" if chg >= 0 else "down"
+                arrow = "▲" if chg >= 0 else "▼"
+                chg_el.className = "chg %s" % cls
+                chg_el.textContent = "%s%+.2f%%" % (arrow, chg)
+            else:
+                chg_el.textContent = ""
 
 
 def _update_folder_datalist(favs):
@@ -6225,6 +6296,156 @@ def _bind_favorites():
     for i in range(fdels.length):
         el = fdels.item(i)
         _bind(el, "click", _make_fav_folder_del_handler(el.getAttribute("data-folder")))
+    cells = document.querySelectorAll("#favorites-list .fav-cell")
+    for i in range(cells.length):
+        el = cells.item(i)
+        _bind(el, "dragstart", _on_fav_dragstart)
+        _bind(el, "dragend", _on_fav_dragend)
+        _bind(el, "dragover", _on_fav_cell_dragover)
+        _bind(el, "dragleave", _on_fav_cell_dragleave)
+        _bind(el, "drop", _on_fav_cell_drop)
+    boxes = document.querySelectorAll("#favorites-list .fav-folder-items")
+    for i in range(boxes.length):
+        el = boxes.item(i)
+        _bind(el, "dragover", _on_fav_container_dragover)
+        _bind(el, "drop", _on_fav_container_drop)
+
+
+def _clear_fav_drag_over():
+    """드래그 중 표시된 하이라이트를 모두 지운다."""
+    els = document.querySelectorAll("#favorites-list .drag-over")
+    for i in range(els.length):
+        els.item(i).classList.remove("drag-over")
+    boxes = document.querySelectorAll("#favorites-list .drag-over-empty")
+    for i in range(boxes.length):
+        boxes.item(i).classList.remove("drag-over-empty")
+
+
+def _on_fav_dragstart(evt):
+    cell = evt.target
+    sym = cell.getAttribute("data-symbol") if cell is not None else None
+    if not sym:
+        return
+    _FAV_DRAG["symbol"] = sym
+    _FAV_DRAG["folder"] = cell.getAttribute("data-folder")
+    try:
+        evt.dataTransfer.effectAllowed = "move"
+        evt.dataTransfer.setData("text/plain", sym)
+    except Exception:
+        pass
+    cell.classList.add("dragging")
+
+
+def _on_fav_dragend(evt):
+    if evt.target is not None:
+        evt.target.classList.remove("dragging")
+    _clear_fav_drag_over()
+    _FAV_DRAG["symbol"] = None
+    _FAV_DRAG["folder"] = None
+
+
+def _on_fav_cell_dragover(evt):
+    if not _FAV_DRAG.get("symbol"):
+        return
+    cell = evt.target.closest(".fav-cell") if evt.target is not None else None
+    if cell is None:
+        return
+    evt.preventDefault()
+    try:
+        evt.dataTransfer.dropEffect = "move"
+    except Exception:
+        pass
+    if cell.getAttribute("data-symbol") == _FAV_DRAG.get("symbol"):
+        return
+    _clear_fav_drag_over()
+    cell.classList.add("drag-over")
+
+
+def _on_fav_cell_dragleave(evt):
+    cell = evt.target.closest(".fav-cell") if evt.target is not None else None
+    if cell is not None:
+        cell.classList.remove("drag-over")
+
+
+def _on_fav_cell_drop(evt):
+    evt.preventDefault()
+    evt.stopPropagation()
+    cell = evt.target.closest(".fav-cell") if evt.target is not None else None
+    if cell is None:
+        return
+    target_sym = cell.getAttribute("data-symbol")
+    target_folder = cell.getAttribute("data-folder") or "Default"
+    drag_sym = _FAV_DRAG.get("symbol")
+    _clear_fav_drag_over()
+    if not drag_sym or drag_sym == target_sym:
+        return
+    asyncio.ensure_future(_apply_fav_drop(drag_sym, target_folder, target_sym))
+
+
+def _on_fav_container_dragover(evt):
+    if not _FAV_DRAG.get("symbol"):
+        return
+    box = evt.target.closest(".fav-folder-items") if evt.target is not None else None
+    if box is None or evt.target.closest(".fav-cell") is not None:
+        return
+    evt.preventDefault()
+    try:
+        evt.dataTransfer.dropEffect = "move"
+    except Exception:
+        pass
+    _clear_fav_drag_over()
+    box.classList.add("drag-over-empty")
+
+
+def _on_fav_container_drop(evt):
+    box = evt.target.closest(".fav-folder-items") if evt.target is not None else None
+    if box is None or evt.target.closest(".fav-cell") is not None:
+        return
+    evt.preventDefault()
+    target_folder = box.getAttribute("data-folder") or "Default"
+    drag_sym = _FAV_DRAG.get("symbol")
+    _clear_fav_drag_over()
+    if not drag_sym:
+        return
+    asyncio.ensure_future(_apply_fav_drop(drag_sym, target_folder, None))  # None = 맨 끝에 추가
+
+
+async def _apply_fav_drop(drag_sym, target_folder, before_sym):
+    """드래그한 종목을 target_folder 안의 before_sym 앞(없으면 맨 끝)으로 옮긴다.
+
+    다른 폴더로 이동한 경우 폴더를 먼저 변경한 뒤, 대상 폴더의 순서를 서버에 반영한다.
+    """
+    drag_item = None
+    for f in (_FAV_LAST.get("list") or []):
+        if f.get("symbol") == drag_sym:
+            drag_item = f
+            break
+    if drag_item is None:
+        return
+    src_folder = (drag_item.get("folder") or "Default").strip() or "Default"
+
+    if src_folder != target_folder:
+        favs = await fav_add(drag_sym, drag_item.get("name") or "", target_folder)
+        if favs is None:
+            return
+        _FAV_LAST["list"] = list(favs)
+
+    order = [f["symbol"] for f in (_FAV_LAST.get("list") or [])
+             if (f.get("folder") or "Default").strip() == target_folder
+             and f.get("symbol") != drag_sym]
+    if before_sym and before_sym in order:
+        order.insert(order.index(before_sym), drag_sym)
+    else:
+        order.append(drag_sym)
+
+    favs, err = await _fav_request(
+        "POST", extra_query="&reorder=1",
+        body=json.dumps({"folder": target_folder, "order": order}))
+    if err:
+        _set_fav_status("순서 변경 실패: %s" % err)
+        return
+    render_favorites(favs)
+    _set_fav_status("순서가 변경되었습니다.")
 
 
 def _update_fav_add_btn():
