@@ -36,7 +36,7 @@
  *  즐겨찾기 API (계정 ID + 공유 키 인증):
  *    계정 ID 는 쿼리(?account=), 공유 키는 요청 헤더 X-Fav-Key 로 전달한다.
  *    같은 계정 ID + 키를 입력하면 어느 기기에서든 같은 목록을 공유한다.
- *    GET    https://<worker>/favorites?account=<id>            → {favorites:[...], folders:[...], exists}
+ *    GET    https://<worker>/favorites?account=<id>            → {favorites:[...], folders:[...], gurus:[...], exists}
  *    POST   https://<worker>/favorites?account=<id>&register=1  → 계정 등록(중복 시 409)
  *    POST   https://<worker>/favorites?account=<id>&pw_op=reset  → 키 검증 없이 공유 키를 "0000"으로 초기화(미등록 시 404)
  *    POST   https://<worker>/favorites?account=<id>&pw_op=change → 본문 {newKey} 로그인 상태에서 공유 키 변경
@@ -44,6 +44,8 @@
  *    POST   https://<worker>/favorites?account=<id>&folder_op=rename → 본문 {folder,newFolder} 폴더 이름 변경
  *    POST   https://<worker>/favorites?account=<id>&reorder=1 → 본문 {folder,order:[symbol,...]} 폴더 내 순서 변경
  *    POST   https://<worker>/favorites?account=<id>            → 본문 {symbol,name,folder} 추가/이동
+ *    POST   https://<worker>/favorites?account=<id>&guru_op=add → 본문 {cik,ko,name,firm} 13F 대가 즐겨찾기 등록
+ *    DELETE https://<worker>/favorites?account=<id>&guru=<cik>  → 13F 대가 즐겨찾기 삭제
  *    DELETE https://<worker>/favorites?account=<id>&symbol=..  → 해당 심볼 삭제
  *    DELETE https://<worker>/favorites?account=<id>&folder=..  → 폴더와 그 안의 종목 삭제
  *    DELETE https://<worker>/favorites?account=<id>            → (symbol 없이) 계정 전체 삭제
@@ -976,9 +978,11 @@ async function handleFavorites(request, env, reqUrl) {
     record && Array.isArray(record.favorites) ? record.favorites : [];
   const folders =
     record && Array.isArray(record.folders) ? record.folders : [];
+  // 13F 대가 즐겨찾기: [{cik, ko, name, firm}, ...]
+  const gurus = record && Array.isArray(record.gurus) ? record.gurus : [];
 
   if (request.method === "GET") {
-    return jsonResponse({ favorites, folders, exists: !!record });
+    return jsonResponse({ favorites, folders, gurus, exists: !!record });
   }
 
   if (request.method === "POST") {
@@ -989,9 +993,9 @@ async function handleFavorites(request, env, reqUrl) {
       }
       await env.FAVORITES.put(
         kvKey,
-        JSON.stringify({ keyHash: authHash, favorites: [], folders: [] })
+        JSON.stringify({ keyHash: authHash, favorites: [], folders: [], gurus: [] })
       );
-      return jsonResponse({ favorites: [], folders: [], registered: true });
+      return jsonResponse({ favorites: [], folders: [], gurus: [], registered: true });
     }
 
     // 이하 작업은 등록된 계정에서만 가능하다.
@@ -1015,7 +1019,7 @@ async function handleFavorites(request, env, reqUrl) {
       const newHash = await sha256Hex(FAV_SALT + ":" + newKey);
       await env.FAVORITES.put(
         kvKey,
-        JSON.stringify({ keyHash: newHash, favorites, folders })
+        JSON.stringify({ keyHash: newHash, favorites, folders, gurus })
       );
       return jsonResponse({ favorites, folders, changed: true });
     }
@@ -1038,7 +1042,7 @@ async function handleFavorites(request, env, reqUrl) {
       folders.push(newFolder);
       await env.FAVORITES.put(
         kvKey,
-        JSON.stringify({ keyHash: authHash, favorites, folders })
+        JSON.stringify({ keyHash: authHash, favorites, folders, gurus })
       );
       return jsonResponse({ favorites, folders });
     }
@@ -1076,7 +1080,7 @@ async function handleFavorites(request, env, reqUrl) {
       else folders.push(newName);
       await env.FAVORITES.put(
         kvKey,
-        JSON.stringify({ keyHash: authHash, favorites, folders })
+        JSON.stringify({ keyHash: authHash, favorites, folders, gurus })
       );
       return jsonResponse({ favorites, folders });
     }
@@ -1118,9 +1122,36 @@ async function handleFavorites(request, env, reqUrl) {
       });
       await env.FAVORITES.put(
         kvKey,
-        JSON.stringify({ keyHash: authHash, favorites, folders })
+        JSON.stringify({ keyHash: authHash, favorites, folders, gurus })
       );
       return jsonResponse({ favorites, folders });
+    }
+
+    // 13F 대가 즐겨찾기 등록: ?guru_op=add, 본문 {cik, ko, name, firm}
+    if (reqUrl.searchParams.get("guru_op") === "add") {
+      const cik = cleanStr(payload && payload.cik);
+      if (!/^\d{1,10}$/.test(cik)) {
+        return jsonResponse({ error: "CIK 값이 올바르지 않습니다.", gurus }, 400);
+      }
+      if (!gurus.some((g) => g && g.cik === cik)) {
+        if (gurus.length >= FAV_MAX_ITEMS) {
+          return jsonResponse(
+            { error: `대가 즐겨찾기는 최대 ${FAV_MAX_ITEMS}개까지 저장할 수 있습니다.`, gurus },
+            400
+          );
+        }
+        gurus.push({
+          cik,
+          ko: cleanStr(payload && payload.ko),
+          name: cleanStr(payload && payload.name),
+          firm: cleanStr(payload && payload.firm),
+        });
+      }
+      await env.FAVORITES.put(
+        kvKey,
+        JSON.stringify({ keyHash: authHash, favorites, folders, gurus })
+      );
+      return jsonResponse({ gurus });
     }
 
     const symbol = cleanStr(payload && payload.symbol);
@@ -1149,7 +1180,7 @@ async function handleFavorites(request, env, reqUrl) {
     }
     await env.FAVORITES.put(
       kvKey,
-      JSON.stringify({ keyHash: authHash, favorites, folders })
+      JSON.stringify({ keyHash: authHash, favorites, folders, gurus })
     );
     return jsonResponse({ favorites, folders });
   }
@@ -1157,6 +1188,18 @@ async function handleFavorites(request, env, reqUrl) {
   if (request.method === "DELETE") {
     const symbol = cleanStr(reqUrl.searchParams.get("symbol"));
     const folderToDelete = cleanStr(reqUrl.searchParams.get("folder"));
+    const guruCik = cleanStr(reqUrl.searchParams.get("guru"));
+
+    // 13F 대가 즐겨찾기 삭제: ?guru=<cik>
+    if (guruCik) {
+      if (!record) return jsonResponse({ gurus: [] });
+      const keptGurus = gurus.filter((g) => g && g.cik !== guruCik);
+      await env.FAVORITES.put(
+        kvKey,
+        JSON.stringify({ keyHash: authHash, favorites, folders, gurus: keptGurus })
+      );
+      return jsonResponse({ gurus: keptGurus });
+    }
 
     // symbol 도 folder 도 없으면 계정 전체 삭제 (키 검증 통과 시)
     if (!symbol && !folderToDelete) {
@@ -1178,7 +1221,7 @@ async function handleFavorites(request, env, reqUrl) {
       const keptFolders = folders.filter((n) => n !== folderToDelete);
       await env.FAVORITES.put(
         kvKey,
-        JSON.stringify({ keyHash: authHash, favorites: keptFavs, folders: keptFolders })
+        JSON.stringify({ keyHash: authHash, favorites: keptFavs, folders: keptFolders, gurus })
       );
       return jsonResponse({ favorites: keptFavs, folders: keptFolders });
     }
@@ -1186,7 +1229,7 @@ async function handleFavorites(request, env, reqUrl) {
     const next = favorites.filter((f) => f && f.symbol !== symbol);
     await env.FAVORITES.put(
       kvKey,
-      JSON.stringify({ keyHash: authHash, favorites: next, folders })
+      JSON.stringify({ keyHash: authHash, favorites: next, folders, gurus })
     );
     return jsonResponse({ favorites: next, folders });
   }

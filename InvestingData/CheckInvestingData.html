@@ -394,6 +394,14 @@
     height:18px; border-radius:50%; border:none; background:transparent;
     color:var(--mut); cursor:pointer; font-size:13px; line-height:1; padding:0; }
   .fav-cell .fav-del:hover { background:#ffe9e9; color:var(--sell); }
+  .fav-cell .pv.sub { font-size:11px; font-weight:600; color:var(--mut);
+    overflow:hidden; text-overflow:ellipsis; }
+  .fav-cell.guru-fav-load { cursor:pointer; }
+  .fav-cell .guru-fav-del { position:absolute; top:2px; right:2px; width:18px;
+    height:18px; border-radius:50%; border:none; background:transparent;
+    color:var(--mut); cursor:pointer; font-size:13px; line-height:1; padding:0; }
+  .fav-cell .guru-fav-del:hover { background:#ffe9e9; color:var(--sell); }
+  #guru-fav-status { font-size:12px; color:var(--mut); margin-left:auto; }
   .fav-chip { display:inline-flex; align-items:center; gap:6px; font-size:13px;
     border:1px solid var(--bd); border-radius:16px; padding:4px 6px 4px 12px;
     background:#fff; }
@@ -422,7 +430,8 @@
     .idx-cell { background:transparent; border-color:#232838; }
     .idx-cell.idx-link:hover { background:#1b2130; }
     .fav-cell { background:transparent; border-color:#eaecef; padding-right:24px; }
-    .fav-cell .fav-del { top:50%; transform:translateY(-50%); right:0; }
+    .fav-cell .fav-del,
+    .fav-cell .guru-fav-del { top:50%; transform:translateY(-50%); right:0; }
   }
 </style>
 </head>
@@ -606,12 +615,25 @@
       <legend>13F 대가(Superinvestor) 검색 · SEC EDGAR</legend>
       <div class="row">
         <input type="text" id="guru-search" class="grow"
-               placeholder="대가 / 운용사 입력">
+               placeholder="대가 이름 / 운용사 검색 (예: 버핏, Bridgewater, Pershing)">
+        <button class="primary" id="guruSearchBtn">검색</button>
       </div>
       <div class="row">
         <span id="guru-status"></span>
       </div>
       <div id="guru-list" class="guru-list"></div>
+      <div class="hint">이름 일부를 입력해 검색하세요. 등록된 대가 목록에 없으면
+        SEC EDGAR 에서 13F 제출 기관을 직접 검색합니다.</div>
+    </fieldset>
+
+    <fieldset class="fav-fieldset">
+      <legend>즐겨찾기</legend>
+      <div class="fav-head">
+        <span class="fav-title">⭐ 내 대가 즐겨찾기</span>
+        <button id="guruFavAddBtn" disabled>현재 대가 즐겨찾기 등록</button>
+        <span id="guru-fav-status"></span>
+      </div>
+      <div id="guru-favorites" class="fav-folder-items"></div>
     </fieldset>
 
     <div id="guru-result"></div>
@@ -5091,15 +5113,30 @@ SEC_ARCHIVES_BASE = "https://www.sec.gov/Archives/edgar/data"
 # 마지막으로 선택된 대가(재렌더링용)
 _GURU_STATE = {"cik": None}
 
+# 검색·즐겨찾기로 알게 된 대가 정보(cik -> dict). GURUS 로 초기화한다.
+_GURU_INDEX = {}
+for _g in GURUS:
+    _GURU_INDEX[_g["cik"]] = _g
+
+# 서버(KV)에서 받은 대가 즐겨찾기 목록
+_GURU_FAVS = {"list": []}
+
 # SEC 조회 실패 원인(진단용)
 _SEC_LAST_ERR = {"msg": ""}
 
 
+def _remember_guru(g):
+    """검색/즐겨찾기로 얻은 대가 정보를 인덱스에 보관한다."""
+    if g and g.get("cik"):
+        _GURU_INDEX[g["cik"]] = g
+    return g
+
+
 def _filter_gurus(q):
-    """검색어(부분일치, 대소문자 무시)로 대가 목록을 필터링."""
+    """검색어(부분일치, 대소문자 무시)로 내장 대가 목록을 필터링."""
     q = (q or "").strip().lower()
     if not q:
-        return list(GURUS)
+        return []
     out = []
     for g in GURUS:
         hay = "%s %s %s" % (g["ko"], g["name"].lower(), g["firm"].lower())
@@ -5108,32 +5145,94 @@ def _filter_gurus(q):
     return out
 
 
+async def _edgar_search_filers(q):
+    """SEC EDGAR 에서 13F-HR 을 제출하는 기관을 이름으로 검색한다.
+
+    반환: [{"ko","name","firm","cik"}, ...] (실패 시 빈 리스트)
+    """
+    url = ("https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany"
+           "&company=%s&type=13F-HR&dateb=&owner=include&count=40&output=atom"
+           % js.encodeURIComponent(q))
+    try:
+        text = await _sec_get_text(url)
+    except Exception:
+        text = None
+    if not text:
+        return []
+    out = []
+    seen = set()
+    for m in re.finditer(r"<entry>(.*?)</entry>", text, re.S | re.I):
+        blk = m.group(1)
+        cm = re.search(r"CIK=0*(\d+)", blk, re.I)
+        tm = re.search(r"<title>(.*?)</title>", blk, re.S | re.I)
+        if not cm or not tm:
+            continue
+        cik = cm.group(1)
+        if cik in seen:
+            continue
+        seen.add(cik)
+        title = _html_unescape(strip_tags(tm.group(1))).strip()
+        # 제출목록 atom 은 "13F-HR - 회사명 (CIK) (Filer)" 형태라 접두어를 떼어낸다.
+        title = re.sub(r"^13F[^-]*-\s*", "", title)
+        title = re.sub(r"\s*\(\d{7,}\)\s*\(Filer\)\s*$", "", title).strip()
+        out.append({"ko": title or ("CIK %s" % cik), "name": "",
+                    "firm": "SEC EDGAR", "cik": cik})
+    if not out:
+        cm = re.search(r"<CIK>0*(\d+)</CIK>", text, re.I)
+        nm = re.search(r"<conformed-name>(.*?)</conformed-name>", text, re.S | re.I)
+        if cm:
+            nm_txt = _html_unescape(strip_tags(nm.group(1))).strip() if nm else ""
+            out.append({"ko": nm_txt or ("CIK %s" % cm.group(1)), "name": "",
+                        "firm": "SEC EDGAR", "cik": cm.group(1)})
+    return out
+
+
+async def run_guru_search(q):
+    """내장 목록 + SEC EDGAR 검색 결과를 합쳐 표시한다."""
+    q = (q or "").strip()
+    if not q:
+        render_guru_list([])
+        _set_guru_status("이름 일부를 입력해 검색하세요")
+        return
+    local = _filter_gurus(q)
+    render_guru_list(local)
+    _set_guru_status("SEC EDGAR 검색 중...")
+    remote = await _edgar_search_filers(q)
+    seen = set(g["cik"] for g in local)
+    merged = list(local)
+    for g in remote:
+        if g["cik"] not in seen:
+            seen.add(g["cik"])
+            merged.append(_remember_guru(g))
+    render_guru_list(merged)
+    _set_guru_status("검색 결과 %d건" % len(merged) if merged else "검색 결과가 없습니다")
+
+
 def render_guru_list(matches):
     """검색 결과 대가 목록을 클릭 가능한 항목으로 렌더링."""
     box = document.querySelector("#guru-list")
     if box is None:
         return
     if not matches:
-        box.innerHTML = ('<div class="hint">검색 결과가 없습니다. '
-                         '이름 일부(예: 버핏, buffett, pershing)로 다시 검색하세요.</div>')
+        box.innerHTML = ''
         return
     html = []
     for g in matches:
         sel = " sel" if g["cik"] == _GURU_STATE.get("cik") else ""
+        sub = g.get("firm") or ""
+        title = g.get("ko") or g.get("name") or ("CIK %s" % g["cik"])
+        if g.get("name"):
+            title = "%s (%s)" % (title, g["name"])
         html.append('<button type="button" class="guru-item%s" data-cik="%s">'
-                    '<span class="g-name">%s (%s)</span><br>'
+                    '<span class="g-name">%s</span><br>'
                     '<span class="g-firm">%s</span></button>'
-                    % (sel, _esc(g["cik"]), _esc(g["ko"]), _esc(g["name"]),
-                       _esc(g["firm"])))
+                    % (sel, _esc(g["cik"]), _esc(title), _esc(sub)))
     box.innerHTML = "".join(html)
     _bind_guru_items()
 
 
 def _guru_by_cik(cik):
-    for g in GURUS:
-        if g["cik"] == cik:
-            return g
-    return None
+    return _GURU_INDEX.get(cik)
 
 
 async def _sec_get_json(url):
@@ -5563,9 +5662,17 @@ def _compute_changes(cur_holdings, prev_holdings, dollars):
         else:
             pct = 100.0
         value = cur.get(c, {}).get("value", 0.0)
+        prev_value = prev.get(c, {}).get("value", 0.0)
+        # 변화액 ≈ 증감수량 × 분기말 주가(= 평가액 ÷ 수량). 청산은 전분기 평가액 전액.
+        if cs > 0:
+            delta_value = value * (delta / cs)
+        else:
+            delta_value = -prev_value
+        mult = 1.0 if dollars else 1000.0
         rows.append({"issuer": issuer, "cusip": c, "prev_shares": ps,
                      "cur_shares": cs, "delta": delta, "action": action,
-                     "pct": pct, "value_usd": value * (1.0 if dollars else 1000.0)})
+                     "pct": pct, "value_usd": value * mult,
+                     "delta_value_usd": delta_value * mult})
     rows.sort(key=lambda r: (_ACTION_ORDER.get(r["action"], 9), -abs(r["delta"])))
     return rows
 
@@ -5693,7 +5800,7 @@ def _bind_holdings_sort():
 
 
 # 매매 내역 표(정렬/재렌더링용) 상태
-_GURU_CHG = {"rows": None, "sort_key": "action", "sort_dir": "asc"}
+_GURU_CHG = {"rows": None, "sort_key": "dvalue", "sort_dir": "desc"}
 
 
 def _sort_changes(rows, key, direction):
@@ -5709,6 +5816,8 @@ def _sort_changes(rows, key, direction):
             return r["cur_shares"]
         if key == "value":
             return r["value_usd"]
+        if key == "dvalue":
+            return r["delta_value_usd"]
         if key == "pct":
             return r["pct"]
         return r["delta"]
@@ -5737,31 +5846,37 @@ def _render_changes():
     html.append('<th>#</th>')
     html.append('<th class="sortable" data-sort="issuer">종목명%s</th>' % ind("issuer"))
     html.append('<th class="sortable" data-sort="action">구분%s</th>' % ind("action"))
+    html.append('<th class="sortable num" data-sort="dvalue">변화액(추정)%s</th>'
+                % ind("dvalue"))
+    html.append('<th class="sortable num" data-sort="value">평가액%s</th>' % ind("value"))
+    html.append('<th class="sortable num" data-sort="pct">변화율%s</th>' % ind("pct"))
     html.append('<th class="sortable num" data-sort="prev">이전 수량%s</th>' % ind("prev"))
     html.append('<th class="sortable num" data-sort="cur">현재 수량%s</th>' % ind("cur"))
     html.append('<th class="sortable num" data-sort="delta">변화%s</th>' % ind("delta"))
-    html.append('<th class="sortable num" data-sort="value">평가액%s</th>' % ind("value"))
-    html.append('<th class="sortable num" data-sort="pct">변화율%s</th>' % ind("pct"))
     html.append('</tr></thead><tbody>')
     for i, c in enumerate(sorted_rows, 1):
         buy = c["action"] in ("신규", "추가")
         cls = "up" if buy else "down"
         sign = "+" if c["delta"] >= 0 else ""
+        dv = c["delta_value_usd"]
+        dv_txt = "%s%s" % ("+" if dv >= 0 else "-", fmt_large(abs(dv), "USD"))
         pct_txt = ("신규" if c["action"] == "신규"
                    else ("청산" if c["action"] == "청산"
                          else "%s%.1f%%" % (sign, c["pct"])))
         html.append('<tr><td>%d</td><td>%s</td>'
                     '<td class="%s">%s</td>'
-                    '<td class="num">%s</td><td class="num">%s</td>'
-                    '<td class="num %s">%s%s</td>'
+                    '<td class="num %s">%s</td>'
                     '<td class="num">%s</td>'
-                    '<td class="num %s">%s</td></tr>'
+                    '<td class="num %s">%s</td>'
+                    '<td class="num">%s</td><td class="num">%s</td>'
+                    '<td class="num %s">%s%s</td></tr>'
                     % (i, _esc(c["issuer"]), cls, _esc(c["action"]),
+                       cls, _esc(dv_txt),
+                       _esc(fmt_large(c["value_usd"], "USD")),
+                       cls, _esc(pct_txt),
                        _esc(fmt_num(c["prev_shares"], 0)),
                        _esc(fmt_num(c["cur_shares"], 0)),
-                       cls, sign, _esc(fmt_num(c["delta"], 0)),
-                       _esc(fmt_large(c["value_usd"], "USD")),
-                       cls, _esc(pct_txt)))
+                       cls, sign, _esc(fmt_num(c["delta"], 0))))
     html.append('</tbody></table></div>')
     box.innerHTML = "".join(html)
     _bind_changes_sort()
@@ -5829,12 +5944,15 @@ def render_13f(guru, data):
         buys = sum(1 for c in changes if c["action"] in ("신규", "추가"))
         sells = sum(1 for c in changes if c["action"] in ("축소", "청산"))
         _GURU_CHG["rows"] = changes
-        _GURU_CHG["sort_key"] = "action"
-        _GURU_CHG["sort_dir"] = "asc"
+        _GURU_CHG["sort_key"] = "dvalue"
+        _GURU_CHG["sort_dir"] = "desc"
         html.append('<div class="hint">기준: %s → %s · 매수(신규·추가) %d 건 · '
                     '매도(축소·청산) %d 건</div>'
                     % (_esc(prev_report or "-"), _esc(report_date or "-"), buys, sells))
-        html.append('<div class="hint">열 제목을 클릭하면 오름/내림차순으로 정렬됩니다.</div>')
+        html.append('<div class="hint">열 제목을 클릭하면 오름/내림차순으로 정렬됩니다. '
+                    '변화액(추정) = 증감수량 × 분기말 주가(평가액 ÷ 현재 수량)이며, '
+                    '청산은 직전 분기 평가액 전액으로 계산합니다. 실제 체결가와는 '
+                    '다를 수 있습니다.</div>')
         html.append('<div id="guru-changes"></div>')
     html.append('</div>')
 
@@ -5863,7 +5981,7 @@ async def show_guru(cik):
     if guru is None:
         return
     _GURU_STATE["cik"] = cik
-    render_guru_list(_filter_gurus(document.querySelector("#guru-search").value))
+    _update_guru_fav_btn()
     _set_guru_status("%s 13F 조회 중..." % guru["ko"])
     document.querySelector("#guru-result").innerHTML = (
         '<div class="card"><div class="sec"><div class="hint">'
@@ -5909,6 +6027,110 @@ def _set_guru_status(msg):
     el = document.querySelector("#guru-status")
     if el is not None:
         el.textContent = msg
+
+
+# ── 대가 즐겨찾기 (즐겨찾기 계정의 KV 레코드에 함께 저장) ──
+
+def _set_guru_fav_status(msg):
+    el = document.querySelector("#guru-fav-status")
+    if el is not None:
+        el.textContent = msg or ""
+
+
+async def _guru_fav_api(method, extra_query="", body=None):
+    """대가 즐겨찾기 API 호출. 반환: (gurus 리스트 또는 None, error)."""
+    acct, key = _fav_creds()
+    if not (acct and key):
+        return None, "먼저 로그인하세요."
+    data, err, _status = await _fav_api(method, acct, key, extra_query, body)
+    if err:
+        return None, err
+    return (data.get("gurus") or []), None
+
+
+async def refresh_guru_favorites():
+    """서버에서 대가 즐겨찾기 목록을 받아 렌더링한다."""
+    if not _fav_logged_in():
+        render_guru_favorites([])
+        return
+    gurus, err = await _guru_fav_api("GET")
+    if err:
+        render_guru_favorites([])
+        return
+    render_guru_favorites(gurus)
+
+
+def render_guru_favorites(gurus):
+    """대가 즐겨찾기를 종목 즐겨찾기와 같은 그리드 카드로 표시한다."""
+    _GURU_FAVS["list"] = list(gurus or [])
+    box = document.querySelector("#guru-favorites")
+    if box is None:
+        return
+    if not _fav_logged_in():
+        box.innerHTML = ('<div class="hint" style="grid-column:1/-1">'
+                         '로그인하면 대가를 즐겨찾기에 등록할 수 있습니다.</div>')
+        _update_guru_fav_btn()
+        return
+    if not gurus:
+        box.innerHTML = ('<div class="hint" style="grid-column:1/-1">'
+                         '즐겨찾는 대가가 없습니다.</div>')
+        _update_guru_fav_btn()
+        return
+    cells = []
+    for g in gurus:
+        _remember_guru(g)
+        cik = g.get("cik") or ""
+        title = g.get("ko") or g.get("name") or ("CIK %s" % cik)
+        firm = g.get("firm") or ""
+        cells.append(
+            '<div class="fav-cell guru-fav-load" data-cik="%s" title="%s">'
+            '<button class="guru-fav-del" data-cik="%s" title="삭제">×</button>'
+            '<span class="nm">%s</span>'
+            '<span class="pv sub">%s</span>'
+            '<span class="chg"></span>'
+            '</div>' % (_esc(cik), _esc(firm or title), _esc(cik),
+                        _esc(title), _esc(firm)))
+    box.innerHTML = "".join(cells)
+    _bind_guru_favorites()
+    _update_guru_fav_btn()
+
+
+def _update_guru_fav_btn():
+    """로그인 상태 + 조회한 대가가 있고 아직 등록 전일 때만 활성화."""
+    btn = document.querySelector("#guruFavAddBtn")
+    if btn is None:
+        return
+    cik = _GURU_STATE.get("cik")
+    saved = any(g.get("cik") == cik for g in (_GURU_FAVS.get("list") or []))
+    btn.disabled = not (_fav_logged_in() and cik and not saved)
+
+
+def _make_guru_fav_del_handler(cik):
+    async def _do():
+        gurus, err = await _guru_fav_api(
+            "DELETE", extra_query="&guru=%s" % js.encodeURIComponent(cik))
+        if err:
+            _set_guru_fav_status("삭제 실패: %s" % err)
+            return
+        render_guru_favorites(gurus)
+        _set_guru_fav_status("삭제됨")
+
+    def handler(evt):
+        evt.preventDefault()
+        evt.stopPropagation()
+        asyncio.ensure_future(_do())
+    return handler
+
+
+def _bind_guru_favorites():
+    loads = document.querySelectorAll("#guru-favorites .guru-fav-load")
+    for i in range(loads.length):
+        el = loads.item(i)
+        _bind(el, "click", _make_guru_handler(el.getAttribute("data-cik")))
+    dels = document.querySelectorAll("#guru-favorites .guru-fav-del")
+    for i in range(dels.length):
+        el = dels.item(i)
+        _bind(el, "click", _make_guru_fav_del_handler(el.getAttribute("data-cik")))
 
 
 
@@ -6532,6 +6754,7 @@ def _update_fav_login_ui():
         _set_fav_login_status("")
     _update_fav_add_btn()
     _update_ai_admin_ui()
+    asyncio.ensure_future(refresh_guru_favorites())
 
 
 def _mark_favoritable(symbol, name):
@@ -8246,7 +8469,40 @@ def on_stockchart_leave(event):
 
 @when("input", "#guru-search")
 def on_guru_search(event):
-    render_guru_list(_filter_gurus(event.target.value))
+    # 입력 중에는 내장 목록만 즉시 필터링하고, EDGAR 검색은 버튼/Enter 로 수행한다.
+    q = (event.target.value or "").strip()
+    render_guru_list(_filter_gurus(q))
+    _set_guru_status("" if q else "이름 일부를 입력해 검색하세요")
+
+
+@when("keydown", "#guru-search")
+def on_guru_search_enter(event):
+    if event.key == "Enter":
+        document.querySelector("#guruSearchBtn").click()
+
+
+@when("click", "#guruSearchBtn")
+async def on_guru_search_click(event):
+    await run_guru_search(document.querySelector("#guru-search").value)
+
+
+@when("click", "#guruFavAddBtn")
+async def on_guru_fav_add(event):
+    cik = _GURU_STATE.get("cik")
+    if not cik:
+        window.alert("먼저 대가를 조회하세요.")
+        return
+    g = _guru_by_cik(cik) or {"cik": cik}
+    _set_guru_fav_status("등록 중...")
+    gurus, err = await _guru_fav_api(
+        "POST", extra_query="&guru_op=add",
+        body=json.dumps({"cik": cik, "ko": g.get("ko") or "",
+                         "name": g.get("name") or "", "firm": g.get("firm") or ""}))
+    if err:
+        _set_guru_fav_status("등록 실패: %s" % err)
+        return
+    render_guru_favorites(gurus)
+    _set_guru_fav_status("등록됨 · %s" % (g.get("ko") or cik))
 
 
 @when("click", "#favAddBtn")
@@ -8820,9 +9076,9 @@ except Exception:
 _set_status("준비 완료")
 _set_macro_status("준비 완료 · FRED API 키 입력 후 조회")
 
-# 대가 13F 탭: 전체 목록을 초기 표시
-render_guru_list(_filter_gurus(""))
-_set_guru_status("이름 일부를 입력해 검색하거나 아래 목록에서 선택하세요")
+# 대가 13F 탭: 검색으로 찾도록 안내
+render_guru_list([])
+_set_guru_status("이름 일부를 입력해 검색하세요(예: 버핏, Bridgewater)")
 
 # 즐겨찾기: 로그아웃 상태에서 시작 (로그인 정보는 저장하지 않음)
 _update_fav_login_ui()
