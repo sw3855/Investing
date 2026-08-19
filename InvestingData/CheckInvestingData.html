@@ -444,7 +444,6 @@
          value="https://investing-proxy.sw3855.workers.dev/?url=">
   <fieldset class="index-box">
     <div id="indices" class="idx-grid">로딩중…</div>
-    <span id="fxrate" class="fx-rate">USD/KRW …</span>
     <label class="hover-toggle" title="모든 차트의 마우스 호버 툴팁 표시를 켜고 끕니다">
       <input type="checkbox" id="hoverToggle" checked> 차트 툴팁
     </label>
@@ -4354,10 +4353,12 @@ INDEX_LIST = [
     ("러셀2000", "TVC:RUT"),
     ("반도체(SOX)", "NASDAQ:SOX"),
     ("미국채10Y", "TVC:US10Y"),
+    ("미국채30Y", "TVC:US30Y"),
+    ("WTI", "NYMEX:CL1!"),
     ("금", "TVC:GOLD"),
     ("비트코인", "BITSTAMP:BTCUSD"),
-    ("WTI", "NYMEX:CL1!"),
     ("달러인덱스", "TVC:DXY"),
+    ("원/달러", "FX_IDC:USDKRW"),
 ]
 
 
@@ -4414,7 +4415,9 @@ INDEX_YF = {
     "DJ:DJI": "^DJI",
     "TVC:RUT": "^RUT",
     "NASDAQ:SOX": "^SOX",
+    "FX_IDC:USDKRW": "KRW=X",
     "TVC:US10Y": "^TNX",
+    "TVC:US30Y": "^TYX",
     "TVC:GOLD": "GC=F",
     "BITSTAMP:BTCUSD": "BTC-USD",
     "NYMEX:CL1!": "CL=F",
