@@ -38,11 +38,6 @@
   .idx-cell .down { color:#ff6b6b; }
   .index-box { background:#131722; border:1px solid #131722; border-radius:8px;
     margin:0 0 14px; position:relative; padding:12px 16px 36px; }
-  .hover-toggle { position:absolute; right:16px; bottom:10px;
-    display:inline-flex; align-items:center; gap:5px;
-    font-size:12px; font-weight:600; color:#aeb4bd; white-space:nowrap;
-    cursor:pointer; }
-  .hover-toggle input { cursor:pointer; margin:0; }
   main { max-width:900px; margin:0 auto; padding:18px 20px 60px; }
   fieldset { border:1px solid var(--bd); border-radius:8px; margin:0 0 14px;
              padding:12px 14px; }
@@ -119,7 +114,7 @@
   .fin-years { display:flex; flex-wrap:wrap; gap:4px 12px; margin-bottom:12px; }
   .fin-years label { font-size:12px; color:var(--mut); display:inline-flex;
     align-items:center; gap:3px; cursor:pointer; }
-  .fin-chart { border:1px solid var(--bd); border-radius:8px; padding:8px;
+    .fin-chart { border:1px solid var(--bd); border-radius:8px; padding:34px 8px 8px;
     margin-bottom:12px; background:#fff; }
   .chart-svg { width:100%; height:auto; display:block; }
   .chart-svg .bar-rect { fill:var(--pri); fill-opacity:.16; }
@@ -144,18 +139,26 @@
     align-items:center; gap:5px; cursor:pointer; white-space:nowrap; }
   .stock-qtr-toggle input { cursor:pointer; margin:0; }
   .stock-qtr-metric { height:28px; }
-  .multpl-tip { position:absolute; pointer-events:none; display:none;
-    transform:translate(-50%,-145%); background:#131722; color:#fff;
-    font-size:12px; padding:4px 9px; border-radius:6px; white-space:nowrap;
-    z-index:5; box-shadow:0 2px 6px rgba(0,0,0,.25); }
+    .multpl-tip { position:absolute; top:8px; right:8px; pointer-events:none; display:none;
+        align-items:center; justify-content:flex-end; gap:10px; max-width:calc(100% - 16px);
+        color:var(--mut); font-size:12px; white-space:nowrap; overflow-x:auto; z-index:5; }
   .multpl-tip .d { opacity:.75; margin-right:7px; }
   .multpl-tip .v { font-weight:700; }
   .chart-svg .cmp-guide-dot { pointer-events:none; stroke:#fff; stroke-width:1; }
-  .multpl-tip .tip-date { opacity:.75; margin-bottom:3px; }
-  .multpl-tip .row { display:flex; align-items:center; gap:6px; line-height:1.55; }
+    .multpl-tip .tip-date { opacity:.75; }
+    .multpl-tip .row { display:flex; align-items:center; gap:6px; line-height:1.3; }
   .multpl-tip .row i { width:9px; height:9px; border-radius:2px; flex:0 0 auto; }
   .multpl-tip .row .nm { margin-right:10px; }
   .multpl-tip .row .v { font-weight:700; margin-left:auto; }
+    .candle-tip-host { position:relative; padding-bottom:70px; }
+    .multpl-tip.candle-tip { top:auto; bottom:8px; left:8px; right:8px;
+        display:none; flex-direction:column; align-items:flex-start; gap:3px;
+        max-width:none; overflow:hidden; }
+    .candle-tip .tip-date { font-weight:600; }
+    .candle-tip .tip-ohlc, .candle-tip .tip-ma { display:flex; gap:10px;
+        white-space:nowrap; }
+    .candle-tip .tip-ma { color:var(--mut); }
+    .candle-tip .tip-ma span { font-weight:600; }
   .fin-table-wrap { overflow:auto; max-height:440px; border:1px solid var(--bd);
     border-radius:8px; }
   .fin-table { width:100%; border-collapse:collapse; font-size:13px; }
@@ -444,9 +447,6 @@
          value="https://investing-proxy.sw3855.workers.dev/?url=">
   <fieldset class="index-box">
     <div id="indices" class="idx-grid">로딩중…</div>
-    <label class="hover-toggle" title="모든 차트의 마우스 호버 툴팁 표시를 켜고 끕니다">
-      <input type="checkbox" id="hoverToggle" checked> 차트 툴팁
-    </label>
   </fieldset>
 
   <fieldset class="fav-fieldset">
@@ -2424,73 +2424,23 @@ def _cmp_hide_hover():
             el.style.display = "none"
 
 
-# 차트 마우스 호버 툴팁 전역 on/off 상태. 사용자가 헤더 체크박스로 토글한다.
-_HOVER_ENABLED = {"on": True}
-
-# 모든 차트의 툴팁/가이드선/가이드점 요소 id 목록(끄기 시 일괄 숨김).
-_ALL_HOVER_IDS = [
-    "idxchart-tip", "idxchart-guide", "idxchart-guide-dot",
-    "stockchart-tip", "stockchart-guide", "stockchart-guide-dot",
-    "cmp-tip", "cmp-guide",
-    "cmp-guide-dot-0", "cmp-guide-dot-1", "cmp-guide-dot-2", "cmp-guide-dot-3",
-    "fin-tip", "fin-guide", "fin-guide-dot",
-    "macro-tip", "macro-guide", "macro-guide-dot",
-    "multpl-tip", "multpl-guide", "multpl-guide-dot",
-    "liq-tip", "liq-guide", "liq-guide-dot",
-]
-
-
-def _hide_all_hover_tips():
-    """표시 중인 모든 차트 툴팁·가이드 요소를 숨긴다."""
-    for hid in _ALL_HOVER_IDS:
-        el = document.querySelector("#" + hid)
-        if el is not None:
-            el.style.display = "none"
-
-
 def _place_tip_clamped(tip, svg, cx_svg, cy_svg, W, H):
-    """툴팁을 (cx_svg, cy_svg) SVG 좌표 근처에 배치하되 차트(SVG) 표시 영역을
-    벗어나지 않도록 좌표를 클램핑한다. 툴팁 내용(innerHTML)은 호출 전에
-    채워져 있어야 크기(offsetWidth/Height)를 정확히 측정할 수 있다."""
-    rect = svg.getBoundingClientRect()
-    wrap = svg.parentElement
-    wrect = wrap.getBoundingClientRect()
-    chart_left = rect.left - wrect.left
-    chart_top = rect.top - wrect.top
-    chart_right = chart_left + rect.width
-    chart_bottom = chart_top + rect.height
-    cx = chart_left + cx_svg / W * rect.width
-    cy = chart_top + cy_svg / H * rect.height
-    # CSS transform 대신 좌상단 좌표로 직접 배치(클램핑을 위해).
+    """툴팁 데이터를 차트 컨테이너의 우측 상단에 고정 표시한다."""
     tip.style.transform = "none"
-    tip.style.display = "block"
-    tip_w = tip.offsetWidth
-    tip_h = tip.offsetHeight
-    # 가로: 점 중앙 정렬하되 차트 좌우 경계를 넘지 않도록 클램핑.
-    left_px = cx - tip_w / 2.0
-    if left_px < chart_left:
-        left_px = chart_left
-    if left_px + tip_w > chart_right:
-        left_px = chart_right - tip_w
-    if left_px < chart_left:
-        left_px = chart_left
-    # 세로: 기본은 점 위쪽, 위로 넘치면 점 아래쪽에 표시하고 하단도 클램핑.
-    top_px = cy - tip_h - 10.0
-    if top_px < chart_top:
-        top_px = cy + 14.0
-    if top_px + tip_h > chart_bottom:
-        top_px = chart_bottom - tip_h
-    if top_px < chart_top:
-        top_px = chart_top
-    tip.style.left = "%gpx" % left_px
-    tip.style.top = "%gpx" % top_px
+    tip.style.display = "flex"
+    tip.style.left = "auto"
+    if tip.classList.contains("candle-tip"):
+        tip.style.top = "auto"
+        tip.style.bottom = "8px"
+    else:
+        tip.style.top = "8px"
+        tip.style.bottom = "auto"
+    tip.style.right = "8px"
 
 
 @when("mousemove", "#compare-section")
 def on_cmp_hover(event):
     """지표 비교 꺾은선 위에서 가장 가까운 기간의 라벨과 종목별 값을 표시."""
-    if not _HOVER_ENABLED["on"]:
-        return
     cols = _CMP_HOVER["cols"]
     if not cols:
         return
@@ -4671,8 +4621,7 @@ def _candle_svg(rows, dec=2, prefix="idxchart", hover=None, overlay=None):
         for period, color, vals in ma_series:
             v = vals[idx]
             if v is not None:
-                out.append('<div class="row"><span class="nm" style="color:%s">'
-                           'MA%d</span><span class="v">%s</span></div>'
+                out.append('<span style="color:%s">MA%d %s</span>'
                            % (color, period, axfmt(v)))
         return "".join(out)
 
@@ -4712,8 +4661,8 @@ def _render_idxchart(name, rows):
             '<span class="dt">%s 기준 · 최근 %d일</span></div>') % (
         _esc(name), fmt_num(last_c, dec), cls, arrow, chg, pct, d, len(rows))
     el.innerHTML = ('<div class="fin-chart">%s'
-                    '<div style="position:relative">%s'
-                    '<div id="idxchart-tip" class="multpl-tip"></div></div></div>'
+                    '<div class="candle-tip-host">%s'
+                    '<div id="idxchart-tip" class="multpl-tip candle-tip"></div></div></div>'
                     % (head, _candle_svg(rows, dec, "idxchart", _IDXCHART_HOVER)))
 
 
@@ -4751,8 +4700,6 @@ async def _run_idxchart():
 # ── 캔들 차트 공통 호버(툴팁) ────────────────────────────────
 def _candle_hover(event, root_sel, hover, tip_id, guide_id, dot_id):
     """캔들 차트(root_sel 내부) 위에서 가장 가까운 봉의 날짜·OHLC 툴팁을 표시."""
-    if not _HOVER_ENABLED["on"]:
-        return
     pts = hover.get("pts")
     if not pts:
         return
@@ -4788,13 +4735,11 @@ def _candle_hover(event, root_sel, hover, tip_id, guide_id, dot_id):
     col = "#089981" if best["up"] else "#f23645"
     tip.innerHTML = (
         '<div class="tip-date">%s</div>'
-        '<div class="row"><span class="nm">시가</span><span class="v">%s</span></div>'
-        '<div class="row"><span class="nm">고가</span><span class="v">%s</span></div>'
-        '<div class="row"><span class="nm">저가</span><span class="v">%s</span></div>'
-        '<div class="row"><span class="nm">종가</span>'
-        '<span class="v" style="color:%s">%s</span></div>'
+        '<div class="tip-ohlc"><span>시가 %s</span><span>고가 %s</span>'
+        '<span>저가 %s</span><span>종가 <b style="color:%s">%s</b></span></div>'
+        '<div class="tip-ma">이평선 %s</div>'
         % (_esc(best["date"]), _esc(best["o"]), _esc(best["h"]),
-           _esc(best["l"]), col, _esc(best["c"]))) + best.get("ma_html", "")
+           _esc(best["l"]), col, _esc(best["c"]), best.get("ma_html", "")))
     _place_tip_clamped(tip, svg, best["x"], best["y"], W, H)
 
 
@@ -5016,8 +4961,8 @@ def _render_stock_chart(name, rows):
             rows, fin, _STOCKCHART_STATE.get("overlay_metric", "revenue"),
             annual)
     box.innerHTML = ('<div class="card"><div class="sec">%s%s%s'
-                     '<div class="fin-chart" style="position:relative">%s'
-                     '<div id="stockchart-tip" class="multpl-tip"></div></div>'
+                     '<div class="fin-chart candle-tip-host">%s'
+                     '<div id="stockchart-tip" class="multpl-tip candle-tip"></div></div>'
                      '</div></div>'
                      % (top, controls, head,
                         _candle_svg(rows, dec, "stockchart", _STOCKCHART_HOVER,
@@ -8062,14 +8007,6 @@ def on_index_header_click(event):
         _open_index_chart(sym)
 
 
-@when("change", "#hoverToggle")
-def on_hover_toggle(event):
-    """차트 마우스 호버 툴팁 표시를 전역으로 켜고 끈다."""
-    _HOVER_ENABLED["on"] = bool(event.target.checked)
-    if not _HOVER_ENABLED["on"]:
-        _hide_all_hover_tips()
-
-
 @when("click", "#idxChartRange button")
 async def on_idxchart_range(event):
     btn = event.target
@@ -8154,8 +8091,6 @@ async def on_multpl_period(event):
 @when("mousemove", "#multpl-result")
 def on_multpl_hover(event):
     """꺾은선 그래프 위에서 가장 가까운 점의 날짜·값 툴팁을 표시한다."""
-    if not _HOVER_ENABLED["on"]:
-        return
     pts = _MULTPL_CHART["pts"]
     if not pts:
         return
@@ -8301,8 +8236,6 @@ def on_liq_hover(event):
 
     툴팁 박스는 차트(SVG) 영역을 벗어나지 않도록 좌표를 클램핑한다.
     """
-    if not _HOVER_ENABLED["on"]:
-        return
     pts = _LIQ_CHART["pts"]
     if not pts:
         return
@@ -8356,8 +8289,6 @@ def on_liq_leave(event):
 @when("mousemove", "#macro-chart")
 def on_macro_hover(event):
     """매크로 지표 차트 위에서 가장 가까운 점의 기간·값 툴팁을 표시한다."""
-    if not _HOVER_ENABLED["on"]:
-        return
     pts = _MACRO_CHART_HOVER["pts"]
     if not pts:
         return
@@ -8409,8 +8340,6 @@ def on_macro_leave(event):
 @when("mousemove", "#result")
 def on_fin_hover(event):
     """재무 지표(막대+꺾은선) 차트 위에서 가장 가까운 점의 기간·값을 표시한다."""
-    if not _HOVER_ENABLED["on"]:
-        return
     pts = _FIN_CHART_HOVER["pts"]
     if not pts:
         return
