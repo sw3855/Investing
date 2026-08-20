@@ -7792,6 +7792,22 @@ async def _run_ai_eval():
 
 # ===================== 이벤트 =====================
 
+def _is_enter(event):
+    """엔터 입력 여부. 모바일 IME 는 key 가 없거나 'Unidentified' 로 올 수 있어
+    Pyodide 에서 event.key 접근만으로 AttributeError 가 발생한다."""
+    try:
+        k = event.key
+    except AttributeError:
+        k = None
+    if k in ("Enter", "Go", "Done", "Search"):
+        return True
+    try:
+        code = event.keyCode
+    except AttributeError:
+        code = None
+    return code == 13
+
+
 @when("click", "#lookupBtn")
 async def on_lookup(event):
     ticker = document.querySelector("#ticker").value.strip()
@@ -7854,7 +7870,7 @@ def on_ai_use_ticker(event):
 
 @when("keydown", "#aiTicker")
 def on_ai_enter(event):
-    if event.key == "Enter":
+    if _is_enter(event):
         document.querySelector("#aiEvalBtn").click()
 
 
@@ -7907,7 +7923,7 @@ async def on_ai_access_refresh(event):
 
 @when("keydown", "#ticker")
 def on_enter(event):
-    if event.key == "Enter":
+    if _is_enter(event):
         document.querySelector("#lookupBtn").click()
 @when("click", ".tab-btn")
 def on_tab(event):
@@ -8174,7 +8190,7 @@ async def on_macro(event):
 
 @when("keydown", "#fredKey")
 def on_fred_enter(event):
-    if event.key == "Enter":
+    if _is_enter(event):
         document.querySelector("#macroBtn").click()
 
 
@@ -8409,7 +8425,7 @@ def on_guru_search(event):
 
 @when("keydown", "#guru-search")
 def on_guru_search_enter(event):
-    if event.key == "Enter":
+    if _is_enter(event):
         document.querySelector("#guruSearchBtn").click()
 
 
@@ -8676,8 +8692,11 @@ async def on_fav_delete_account(event):
 
 @when("keydown", "#favKey")
 def on_fav_key_enter(event):
-    if event.key == "Enter":
-        document.querySelector("#favLoginBtn").click()
+    if not _is_enter(event):
+        return
+    btn = document.querySelector("#favLoginBtn")
+    if btn is not None and not btn.disabled:
+        btn.click()
 
 
 # ===================== 거시경제 자료실 (Cloudflare KV · 관리자 등록) =====================
