@@ -148,6 +148,12 @@
         text-align:right; white-space:nowrap; }
     .rrg-table th { color:var(--mut); background:var(--bg); font-weight:600; }
     .rrg-table th:first-child, .rrg-table td:first-child { text-align:left; }
+    .rrg-pane { margin-top:8px; }
+    .rrg-help { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));
+        gap:8px; margin-top:10px; }
+    .rrg-help .item { border:1px solid var(--bd); border-radius:8px; padding:8px 10px;
+        background:#fff; font-size:12px; color:var(--mut); line-height:1.45; }
+    .rrg-help .item b { display:block; margin-bottom:4px; color:#1f2328; font-size:12px; }
     .rrg-table .leading { color:#089981; font-weight:700; }
     .rrg-table .weakening { color:#e67e22; font-weight:700; }
     .rrg-table .lagging { color:#f23645; font-weight:700; }
@@ -582,8 +588,8 @@
                 <span id="rrg-status"></span>
             </div>
             <div class="hint">꼬리는 최근 12거래일의 이동 경로입니다.</div>
+            <div id="rrg-result"></div>
         </fieldset>
-        <div id="rrg-result"></div>
     </div>
 
   <div class="tab-panel" id="tab-macro">
@@ -4742,6 +4748,7 @@ _RRG_SECTORS = [
     ("SOXX", "반도체", "#4e79a7"), ("XSD", "반도체장비", "#59a14f"),
     ("GRID", "전력인프라", "#f28e2b"), ("IBIT", "암호화폐", "#b07aa1"),
     ("BOTZ", "로봇", "#76b7b2"), ("XLF", "금융", "#9c755f"),
+    ("IGV", "소프트웨어", "#6b5b95"), ("SKYY", "클라우드", "#00a6d6"),
     ("ITA", "방산", "#e15759"), ("XBI", "바이오", "#edc948"),
     ("XLV", "헬스케어", "#499894"), ("XLP", "필수소비", "#af7aa1"),
     ("NLR", "원자력", "#8cd17d"), ("XLE", "에너지", "#ff9d9a"),
@@ -4789,6 +4796,30 @@ def _rrg_quadrant(ratio, momentum):
     if momentum < 100:
         return "lagging", "관심 밖"
     return "improving", "부상 중"
+
+
+def _rrg_help_html():
+    return (
+        '<div class="rrg-help">'
+        '<div class="item"><b>주도</b>가이드: 비중 유지·확대 검토<br>주의: 단기 과열(급등) 여부 점검</div>'
+        '<div class="item"><b>부상 중</b>가이드: 관찰 후 분할 진입 후보<br>주의: 추격 매수보다 거래량·추세 확인</div>'
+        '<div class="item"><b>주도에서 이탈 중</b>가이드: 부분 차익·비중 축소 검토<br>주의: 둔화가 이어지면 회전 이탈 가능</div>'
+        '<div class="item"><b>관심 밖</b>가이드: 신규 진입 보류·관망<br>주의: 전환 신호 전까지 약세 지속 가능</div>'
+        '</div>'
+    )
+
+
+def _rrg_sort_key(item):
+    """사분면 우선순위로 정렬하고, 같은 사분면에서는 강한 순으로 정렬한다."""
+    _ts, ratio, momentum = item["tail"][-1]
+    qclass, _qlabel = _rrg_quadrant(ratio, momentum)
+    order = {
+        "leading": 0,
+        "improving": 1,
+        "weakening": 2,
+        "lagging": 3,
+    }.get(qclass, 9)
+    return (order, -ratio, -momentum)
 
 
 def _rrg_svg(items):
@@ -4876,11 +4907,11 @@ def _render_rrg(items):
     date = datetime.fromtimestamp(items[0]["tail"][-1][0], tz=timezone.utc).strftime("%Y-%m-%d")
     legend = "".join('<span><i style="background:%s"></i>%s %s</span>' % (item["color"], _esc(item["ticker"]), _esc(item["name"])) for item in items)
     rows = []
-    for item in sorted(items, key=lambda value: value["tail"][-1][1], reverse=True):
+    for item in sorted(items, key=_rrg_sort_key):
         _ts, ratio, momentum = item["tail"][-1]
         qclass, qlabel = _rrg_quadrant(ratio, momentum)
         rows.append('<tr><td><span style="color:%s;font-weight:700">%s</span> %s</td><td>%.2f</td><td>%.2f</td><td class="%s">%s</td></tr>' % (item["color"], _esc(item["ticker"]), _esc(item["name"]), ratio, momentum, qclass, qlabel))
-    el.innerHTML = ('<div class="fin-chart"><div class="rrg-summary"><span><strong>기준:</strong> SPY</span><span><strong>기준일:</strong> %s</span><span>선택 기간 누적 상대성과 · 최근 5일 모멘텀</span></div><div class="rrg-chart-wrap">%s</div><div class="rrg-legend">%s</div><div class="table-wrap"><table class="rrg-table"><thead><tr><th>테마 ETF</th><th>RS Ratio</th><th>RS Momentum</th><th>사분면</th></tr></thead><tbody>%s</tbody></table></div></div>') % (_esc(date), _rrg_svg(items), legend, "".join(rows))
+    el.innerHTML = ('<div class="rrg-pane"><div class="rrg-summary"><span><strong>기준:</strong> SPY</span><span><strong>기준일:</strong> %s</span><span>선택 기간 누적 상대성과 · 최근 5일 모멘텀</span></div><div class="rrg-chart-wrap">%s</div><div class="rrg-legend">%s</div><div class="table-wrap"><table class="rrg-table"><thead><tr><th>테마 ETF</th><th>RS Ratio</th><th>RS Momentum</th><th>사분면</th></tr></thead><tbody>%s</tbody></table></div>%s</div>') % (_esc(date), _rrg_svg(items), legend, "".join(rows), _rrg_help_html())
 
 
 async def _run_rrg():
