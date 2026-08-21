@@ -132,6 +132,26 @@
   .idx-chart-head .nm { font-size:15px; font-weight:700; color:#131722; }
   .idx-chart-head .pv { font-size:15px; font-weight:600; }
   .idx-chart-head .dt { font-size:12px; color:var(--mut); margin-left:auto; }
+    .rrg-summary { display:flex; flex-wrap:wrap; gap:8px 18px; margin:2px 4px 12px;
+        color:var(--mut); font-size:12px; }
+    .rrg-summary strong { color:#1f2328; }
+    .rrg-chart-wrap { border:1px solid #26313a; border-radius:4px; padding:0;
+        background:#111920; overflow:auto; }
+    .rrg-chart { min-width:660px; }
+      .rrg-point { cursor:pointer; }
+    .rrg-legend { display:flex; flex-wrap:wrap; gap:6px 12px; margin:10px 4px 2px;
+        font-size:12px; color:var(--mut); }
+    .rrg-legend span { display:inline-flex; align-items:center; gap:4px; }
+    .rrg-legend i { display:inline-block; width:9px; height:9px; border-radius:50%; }
+    .rrg-table { width:100%; border-collapse:collapse; margin-top:12px; font-size:13px; }
+    .rrg-table th, .rrg-table td { padding:6px 8px; border-bottom:1px solid #eaecef;
+        text-align:right; white-space:nowrap; }
+    .rrg-table th { color:var(--mut); background:var(--bg); font-weight:600; }
+    .rrg-table th:first-child, .rrg-table td:first-child { text-align:left; }
+    .rrg-table .leading { color:#089981; font-weight:700; }
+    .rrg-table .weakening { color:#e67e22; font-weight:700; }
+    .rrg-table .lagging { color:#f23645; font-weight:700; }
+    .rrg-table .improving { color:#2962ff; font-weight:700; }
   .stock-chart-top { display:flex; justify-content:space-between;
     align-items:center; gap:10px 14px; flex-wrap:wrap; margin-bottom:8px; }
   .stock-qtr-ctrl { display:inline-flex; align-items:center; gap:8px; }
@@ -478,12 +498,13 @@
   <div class="tabs">
     <button class="tab-btn active" data-tab="stock">종목</button>
     <button class="tab-btn" data-tab="ai">AI 평가</button>
-    <button class="tab-btn" data-tab="idxchart">지수 차트</button>
+    <button class="tab-btn" data-tab="idxchart">지수차트</button>
     <button class="tab-btn" data-tab="macro">경제지표</button>
-    <button class="tab-btn" data-tab="guru">13F</button>
     <button class="tab-btn" data-tab="feargreed">공포·탐욕</button>
+    <button class="tab-btn" data-tab="rrg">섹터 RRG</button>
     <button class="tab-btn" data-tab="multpl">밸류에이션</button>
     <button class="tab-btn" data-tab="liquidity">유동성</button>
+    <button class="tab-btn" data-tab="guru">13F</button>
     <button class="tab-btn" data-tab="macrodoc">거시경제</button>
   </div>
 
@@ -547,6 +568,23 @@
 
     <div id="idxchart-result"></div>
   </div>
+
+    <div class="tab-panel" id="tab-rrg">
+        <fieldset>
+            <legend>섹터 로테이션 · Relative Rotation Graph</legend>
+            <div class="row">
+                <label>기준 지수: <strong>S&amp;P 500 (SPY)</strong></label>
+                <span class="fin-period" id="rrgRange">
+                    <button type="button" data-rrg-range="1mo" class="on">1개월</button>
+                    <button type="button" data-rrg-range="3mo">3개월</button>
+                    <button type="button" data-rrg-range="6mo">6개월</button>
+                </span>
+                <span id="rrg-status"></span>
+            </div>
+            <div class="hint">꼬리는 최근 12거래일의 이동 경로입니다.</div>
+        </fieldset>
+        <div id="rrg-result"></div>
+    </div>
 
   <div class="tab-panel" id="tab-macro">
     <fieldset>
@@ -4697,6 +4735,176 @@ async def _run_idxchart():
             btn.disabled = False
 
 
+# ===================== 섹터 Relative Rotation Graph (RRG) =====================
+
+# 참고 이미지의 테마를 Yahoo Finance 에서 안정적으로 조회 가능한 미국 상장 ETF로 매핑한다.
+_RRG_SECTORS = [
+    ("SOXX", "반도체", "#4e79a7"), ("XSD", "반도체장비", "#59a14f"),
+    ("GRID", "전력인프라", "#f28e2b"), ("IBIT", "암호화폐", "#b07aa1"),
+    ("BOTZ", "로봇", "#76b7b2"), ("XLF", "금융", "#9c755f"),
+    ("ITA", "방산", "#e15759"), ("XBI", "바이오", "#edc948"),
+    ("XLV", "헬스케어", "#499894"), ("XLP", "필수소비", "#af7aa1"),
+    ("NLR", "원자력", "#8cd17d"), ("XLE", "에너지", "#ff9d9a"),
+    ("SRVR", "AI인프라", "#79706e"),
+]
+_RRG_STATE = {"range": "1mo"}
+_RRG_LOADED = {"done": False}
+
+
+def _set_rrg_status(msg):
+    el = document.querySelector("#rrg-status")
+    if el is not None:
+        el.textContent = msg
+
+
+def _rrg_series(rows, benchmark_by_ts):
+    """선택 기간의 SPY 대비 누적 상대성과와 최근 5일 모멘텀을 계산한다."""
+    rel = []
+    for ts, _o, _h, _l, close in rows:
+        benchmark = benchmark_by_ts.get(ts)
+        if isinstance(benchmark, (int, float)) and benchmark > 0 and close > 0:
+            rel.append((ts, close / benchmark))
+    # 1개월 일봉에서도 최근 12개 이동 경로를 만들 수 있는 최소 데이터 수다.
+    if len(rel) < 17:
+        return []
+    base_rel = rel[0][1]
+    out = []
+    for i in range(5, len(rel)):
+        # 선택한 분석 기간의 첫날을 100으로 둬 기간 변경이 현재 RS Ratio에 반영된다.
+        ratio = 100.0 * rel[i][1] / base_rel if base_rel else 100.0
+        prior_ratio = 100.0 * rel[i - 5][1] / base_rel if base_rel else 100.0
+        recent_factor = ratio / prior_ratio if prior_ratio else 1.0
+        # 기간 전체의 일평균 상대 추세 대비 최근 5일 변화율을 모멘텀으로 사용한다.
+        period_factor = (ratio / 100.0) ** (5.0 / i) if ratio > 0 else 1.0
+        momentum = 100.0 * recent_factor / period_factor if period_factor else 100.0
+        out.append((rel[i][0], ratio, momentum))
+    return out
+
+
+def _rrg_quadrant(ratio, momentum):
+    if ratio >= 100 and momentum >= 100:
+        return "leading", "주도"
+    if ratio >= 100:
+        return "weakening", "주도에서 이탈 중"
+    if momentum < 100:
+        return "lagging", "관심 밖"
+    return "improving", "부상 중"
+
+
+def _rrg_svg(items):
+    """참조 이미지처럼 중심축·사분면·버블 꼬리를 가진 어두운 RRG 보드를 그린다."""
+    W, H = 900.0, 540.0
+    pad_l, pad_r, pad_t, pad_b = 72.0, 28.0, 26.0, 62.0
+    plot_w, plot_h = W - pad_l - pad_r, H - pad_t - pad_b
+    # 현재 버블의 중앙 90%에 축을 맞춰, 원점 부근의 섹터 군집을 확대한다.
+    current_ratio = sorted(abs(item["tail"][-1][1] - 100.0) for item in items)
+    current_momentum = sorted(abs(item["tail"][-1][2] - 100.0) for item in items)
+    focus_idx = min(len(items) - 1, int(len(items) * 0.9))
+    span_x = max(current_ratio[focus_idx] * 1.35, 0.40)
+    span_y = max(current_momentum[focus_idx] * 1.35, 0.30)
+    min_x, max_x = 100.0 - span_x, 100.0 + span_x
+    min_y, max_y = 100.0 - span_y, 100.0 + span_y
+    # 버블 반지름과 호버 정보가 축·사분면 영역 밖으로 넘지 않도록 안쪽 여백을 둔다.
+    point_l, point_r = pad_l + 19.0, W - pad_r - 19.0
+    point_t, point_b = pad_t + 19.0, H - pad_b - 19.0
+
+    def X(value):
+        value = max(min_x, min(max_x, value))
+        return point_l + (value - min_x) / (max_x - min_x) * (point_r - point_l)
+
+    def Y(value):
+        value = max(min_y, min(max_y, value))
+        return point_t + (max_y - value) / (max_y - min_y) * (point_b - point_t)
+
+    mid_x, mid_y = X(100.0), Y(100.0)
+    parts = ['<svg viewBox="0 0 %g %g" class="chart-svg rrg-chart" preserveAspectRatio="xMidYMid meet">' % (W, H)]
+    quadrants = [
+        (pad_l, pad_t, mid_x - pad_l, mid_y - pad_t, "#122b2e", "부상 중", "#31c9ad"),
+        (mid_x, pad_t, W - pad_r - mid_x, mid_y - pad_t, "#20282c", "주도", "#e8bc5c"),
+        (pad_l, mid_y, mid_x - pad_l, H - pad_b - mid_y, "#1c2732", "관심 밖", "#75869a"),
+        (mid_x, mid_y, W - pad_r - mid_x, H - pad_b - mid_y, "#2b2027", "주도에서 이탈 중", "#e34a52"),
+    ]
+    for x, y, width, height, fill, label, text_color in quadrants:
+        parts.append('<rect x="%g" y="%g" width="%g" height="%g" fill="%s"/>' % (x, y, width, height, fill))
+        right_side = x >= mid_x
+        bottom_side = y >= mid_y
+        label_x = x + width - 18 if right_side else x + 18
+        label_y = y + height - 18 if bottom_side else y + 24
+        anchor = "end" if right_side else "start"
+        parts.append('<text x="%g" y="%g" text-anchor="%s" style="fill:%s;font-size:13px;font-weight:700">%s</text>' % (label_x, label_y, anchor, text_color, label))
+    parts.append('<line x1="%g" y1="%g" x2="%g" y2="%g" stroke="#67717b" stroke-width="1.5"/>' % (mid_x, pad_t, mid_x, H - pad_b))
+    parts.append('<line x1="%g" y1="%g" x2="%g" y2="%g" stroke="#67717b" stroke-width="1.5"/>' % (pad_l, mid_y, W - pad_r, mid_y))
+    for fraction in (0.25, 0.5, 0.75):
+        value = max_y - (max_y - min_y) * fraction
+        parts.append('<text x="%g" y="%g" style="fill:#9ba7b4;font-size:11px;text-anchor:end">%+.1f%%</text>' % (pad_l - 9, Y(value) + 4, value - 100.0))
+    parts.append('<text x="%g" y="%g" style="fill:#9ba7b4;font-size:12px">&larr; 자기 범위 하단</text>' % (pad_l, H - 20))
+    parts.append('<text x="%g" y="%g" style="fill:#9ba7b4;font-size:12px;text-anchor:end">자기 범위 상단 &rarr;</text>' % (W - pad_r, H - 20))
+    for item in items:
+        tail = item["tail"]
+        last = tail[-1]
+        color = item["color"]
+        pts = ["%g,%g" % (X(point[1]), Y(point[2])) for point in tail]
+        parts.append('<g class="rrg-trail" data-rrg-ticker="%s" style="display:none">' % _esc(item["ticker"]))
+        parts.append('<polyline points="%s" fill="none" stroke="%s" stroke-width="2" stroke-opacity=".45"/>' % (" ".join(pts), color))
+        for point in tail[:-1]:
+            parts.append('<circle cx="%g" cy="%g" r="2.6" fill="%s" fill-opacity=".38"/>' % (X(point[1]), Y(point[2]), color))
+        parts.append('</g>')
+        lx, ly = X(last[1]), Y(last[2])
+        parts.append('<circle class="rrg-point" data-rrg-ticker="%s" cx="%g" cy="%g" r="17" fill="%s" fill-opacity=".94" stroke="#fff" stroke-opacity=".3" stroke-width="1.2"/>' % (_esc(item["ticker"]), lx, ly, color))
+        label_width = max(82.0, len(item["name"]) * 14.0 + 18.0)
+        label_on_right = lx + 20.0 + label_width <= W - pad_r
+        label_x = lx + 20.0 if label_on_right else lx - 20.0
+        label_anchor = "start" if label_on_right else "end"
+        label_above = ly - 24.0 >= pad_t
+        label_name_y = ly - 22.0 if label_above else ly + 31.0
+        label_perf_y = ly - 7.0 if label_above else ly + 46.0
+        parts.append('<g class="rrg-hover-label" data-rrg-ticker="%s" style="display:none;pointer-events:none">' % _esc(item["ticker"]))
+        parts.append('<text x="%g" y="%g" text-anchor="%s" style="fill:#f4f6f8;font-size:14px;font-weight:700">%s</text>' % (label_x, label_name_y, label_anchor, _esc(item["name"])))
+        parts.append('<text x="%g" y="%g" text-anchor="%s" style="fill:%s;font-size:11px;font-weight:600">%+.2f%%</text>' % (label_x, label_perf_y, label_anchor, color, last[1] - 100.0))
+        parts.append('</g>')
+    parts.append('</svg>')
+    return "".join(parts)
+
+
+def _render_rrg(items):
+    el = document.querySelector("#rrg-result")
+    if el is None:
+        return
+    if not items:
+        el.innerHTML = '<div class="warn">RRG를 계산할 수 있는 섹터 데이터가 없습니다.</div>'
+        return
+    date = datetime.fromtimestamp(items[0]["tail"][-1][0], tz=timezone.utc).strftime("%Y-%m-%d")
+    legend = "".join('<span><i style="background:%s"></i>%s %s</span>' % (item["color"], _esc(item["ticker"]), _esc(item["name"])) for item in items)
+    rows = []
+    for item in sorted(items, key=lambda value: value["tail"][-1][1], reverse=True):
+        _ts, ratio, momentum = item["tail"][-1]
+        qclass, qlabel = _rrg_quadrant(ratio, momentum)
+        rows.append('<tr><td><span style="color:%s;font-weight:700">%s</span> %s</td><td>%.2f</td><td>%.2f</td><td class="%s">%s</td></tr>' % (item["color"], _esc(item["ticker"]), _esc(item["name"]), ratio, momentum, qclass, qlabel))
+    el.innerHTML = ('<div class="fin-chart"><div class="rrg-summary"><span><strong>기준:</strong> SPY</span><span><strong>기준일:</strong> %s</span><span>선택 기간 누적 상대성과 · 최근 5일 모멘텀</span></div><div class="rrg-chart-wrap">%s</div><div class="rrg-legend">%s</div><div class="table-wrap"><table class="rrg-table"><thead><tr><th>테마 ETF</th><th>RS Ratio</th><th>RS Momentum</th><th>사분면</th></tr></thead><tbody>%s</tbody></table></div></div>') % (_esc(date), _rrg_svg(items), legend, "".join(rows))
+
+
+async def _run_rrg():
+    _set_rrg_status("불러오는 중...")
+    try:
+        benchmark_rows, *sector_rows = await asyncio.gather(
+            _fetch_index_history("SPY", _RRG_STATE["range"]),
+            *[_fetch_index_history(ticker, _RRG_STATE["range"]) for ticker, _name, _color in _RRG_SECTORS])
+        benchmark_by_ts = {row[0]: row[4] for row in benchmark_rows}
+        items = []
+        for (ticker, name, color), rows in zip(_RRG_SECTORS, sector_rows):
+            series = _rrg_series(rows, benchmark_by_ts)
+            if len(series) >= 12:
+                items.append({"ticker": ticker, "name": name, "color": color, "tail": series[-12:]})
+        _render_rrg(items)
+        _RRG_LOADED["done"] = True
+        _set_rrg_status("완료")
+    except Exception as exc:
+        _set_rrg_status("오류")
+        el = document.querySelector("#rrg-result")
+        if el is not None:
+            el.innerHTML = '<div class="warn">RRG 데이터를 불러오지 못했습니다.<br>%s</div>' % _esc(str(exc))
+
+
 # ── 캔들 차트 공통 호버(툴팁) ────────────────────────────────
 def _candle_hover(event, root_sel, hover, tip_id, guide_id, dot_id):
     """캔들 차트(root_sel 내부) 위에서 가장 가까운 봉의 날짜·OHLC 툴팁을 표시."""
@@ -7962,6 +8170,8 @@ def on_tab(event):
         _populate_idxchart_select()
         if not _IDXCHART_LOADED["done"]:
             document.querySelector("#idxChartBtn").click()
+    if name == "rrg" and not _RRG_LOADED["done"]:
+        asyncio.ensure_future(_run_rrg())
     # 거시경제 탭: 처음 열면 등록된 자료 목록을 불러온다.
     if name == "macrodoc":
         if not _MACRODOC_LOADED["done"]:
@@ -7978,6 +8188,30 @@ def on_idxchart_hover(event):
 @when("mouseleave", "#idxchart-result")
 def on_idxchart_leave(event):
     _candle_hide("idxchart-tip", "idxchart-guide", "idxchart-guide-dot")
+
+
+def _set_rrg_hover(ticker=None):
+    elements = document.querySelectorAll(".rrg-trail, .rrg-hover-label")
+    for i in range(elements.length):
+        el = elements.item(i)
+        el.style.display = "" if ticker and el.getAttribute("data-rrg-ticker") == ticker else "none"
+    # 호버한 섹터의 이름·수치 레이블은 다른 섹터 버블보다 위에서 보이게 한다.
+    if ticker:
+        label = document.querySelector('.rrg-hover-label[data-rrg-ticker="%s"]' % ticker)
+        if label is not None and label.parentNode is not None:
+            label.parentNode.appendChild(label)
+
+
+@when("mousemove", "#rrg-result")
+def on_rrg_point_hover(event):
+    target = event.target
+    point = target.closest(".rrg-point") if target is not None else None
+    _set_rrg_hover(point.getAttribute("data-rrg-ticker") if point is not None else None)
+
+
+@when("mouseleave", "#rrg-result")
+def on_rrg_point_leave(event):
+    _set_rrg_hover()
 
 
 @when("click", "#idxChartBtn")
@@ -8041,6 +8275,24 @@ async def on_idxchart_range(event):
         else:
             b.classList.remove("on")
     await _run_idxchart()
+
+
+@when("click", "#rrgRange button")
+async def on_rrg_range(event):
+    btn = event.target
+    rng = btn.getAttribute("data-rrg-range") if btn is not None else None
+    if not rng:
+        return
+    _RRG_STATE["range"] = rng
+    cont = document.querySelector("#rrgRange")
+    bs = cont.querySelectorAll("button")
+    for i in range(bs.length):
+        b = bs.item(i)
+        if b.getAttribute("data-rrg-range") == rng:
+            b.classList.add("on")
+        else:
+            b.classList.remove("on")
+    await _run_rrg()
 
 
 @when("click", "#fgBtn")
