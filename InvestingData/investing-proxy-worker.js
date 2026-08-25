@@ -350,6 +350,10 @@ export default {
       upstream = await fetch(targetUrl.toString(), {
         method: "GET",
         headers: upstreamHeaders,
+        // Yahoo 차트 응답은 짧게 캐시해 반복 조회로 인한 429를 줄인다.
+        ...(targetUrl.hostname.endsWith(".yahoo.com")
+          ? { cf: { cacheTtl: 60, cacheEverything: true } }
+          : {}),
       });
     } catch (err) {
       return new Response("Upstream fetch failed: " + err, {

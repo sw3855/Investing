@@ -179,11 +179,15 @@
     .candle-tip-host { position:relative; padding-bottom:70px; }
     .multpl-tip.candle-tip { top:auto; bottom:8px; left:8px; right:8px;
         display:none; flex-direction:column; align-items:flex-start; gap:3px;
-        max-width:none; overflow:hidden; }
+        width:auto; max-width:none; overflow:hidden; }
     .candle-tip .tip-date { font-weight:600; }
-    .candle-tip .tip-ohlc, .candle-tip .tip-ma { display:flex; gap:10px;
-        white-space:nowrap; }
+    .candle-tip .tip-ohlc, .candle-tip .tip-ma { display:grid;
+        grid-template-columns:repeat(4, minmax(0, 1fr)); gap:0 10px;
+        width:100%; min-width:0; }
+    .candle-tip .tip-ohlc span, .candle-tip .tip-ma span {
+        min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .candle-tip .tip-ma { color:var(--mut); }
+    .candle-tip .tip-ma::before { content:"이평선"; font-weight:400; }
     .candle-tip .tip-ma span { font-weight:600; }
   .fin-table-wrap { overflow:auto; max-height:440px; border:1px solid var(--bd);
     border-radius:8px; }
@@ -447,6 +451,8 @@
 
   /* 모바일: 카드 그리드가 2열로 좁아져 읽기 어려우므로 한 줄 표 형태로 전환 */
   @media (max-width:600px) {
+        .multpl-tip.candle-tip { font-size:10px; gap:2px; }
+        .candle-tip .tip-ohlc, .candle-tip .tip-ma { gap:0 4px; }
     .idx-grid, .fav-folder-items { grid-template-columns:1fr; gap:0; }
     .idx-cell, .fav-cell {
       display:grid; grid-template-columns:1fr auto 84px; align-items:center;
@@ -818,6 +824,7 @@ CheckInvestingData.py 의 기능을 PyScript(Pyodide)로 이식한 버전.
 import json
 import re
 import asyncio
+import time
 from datetime import datetime, timezone
 from urllib.parse import urlencode
 from html import unescape as _html_unescape
@@ -4426,6 +4433,9 @@ YF_CHART_HOSTS = [
 
 _IDXCHART_STATE = {"sym": None, "range": "6mo"}
 _IDXCHART_LOADED = {"done": False}
+_YF_HISTORY_CACHE = {}
+_YF_CACHE_TTL = 5 * 60
+_YF_REQUEST_LIMIT = asyncio.Semaphore(1)
 # 호버 툴팁용 좌표/치수 캐시(값이 있는 점만). _candle_svg 에서 갱신한다.
 _IDXCHART_HOVER = {"pts": [], "W": 0.0, "H": 0.0, "y1": 0.0, "y2": 0.0}
 
@@ -4451,13 +4461,26 @@ def _populate_idxchart_select():
 
 async def _fetch_index_history(yf_sym, rng):
     """Yahoo Finance 에서 일봉 OHLC 시계열을 조회. rows=[(ts,o,h,l,c)]."""
+    cache_key = "%s|%s" % (yf_sym, rng)
+    cached = _YF_HISTORY_CACHE.get(cache_key)
+    if cached and time.time() - cached["at"] < _YF_CACHE_TTL:
+        return cached["rows"]
     params = {"range": rng, "interval": "1d"}
     last_err = None
     for base in YF_CHART_HOSTS:
-        try:
-            data = await _get_json(base + yf_sym, params)
-        except InvestingApiError as exc:
-            last_err = exc
+        data = None
+        for attempt in range(2):
+            try:
+                async with _YF_REQUEST_LIMIT:
+                    data = await _get_json(base + yf_sym, params)
+            except InvestingApiError as exc:
+                last_err = exc
+                if "HTTP 429" not in str(exc) or attempt == 1:
+                    break
+                await asyncio.sleep(0.8 * (attempt + 1))
+                continue
+            break
+        if data is None:
             continue
         chart = data.get("chart") if isinstance(data, dict) else None
         res = chart.get("result") if isinstance(chart, dict) else None
@@ -4481,6 +4504,7 @@ async def _fetch_index_history(yf_sym, rng):
                 continue
             rows.append((ts[i], o, h, lo, c))
         if rows:
+            _YF_HISTORY_CACHE[cache_key] = {"at": time.time(), "rows": rows}
             return rows
     if last_err is not None:
         raise last_err
@@ -4917,12 +4941,27 @@ def _render_rrg(items):
 async def _run_rrg():
     _set_rrg_status("불러오는 중...")
     try:
-        benchmark_rows, *sector_rows = await asyncio.gather(
-            _fetch_index_history("SPY", _RRG_STATE["range"]),
-            *[_fetch_index_history(ticker, _RRG_STATE["range"]) for ticker, _name, _color in _RRG_SECTORS])
+        selected_range = _RRG_STATE["range"]
+        # Yahoo의 1mo 응답은 간헐적으로 429가 발생하므로 안정적인 3mo로
+        # 조회한 뒤 최근 한 달의 거래일만 RRG 계산에 사용한다.
+        fetch_range = "3mo" if selected_range == "1mo" else selected_range
+        results = await asyncio.gather(
+            _fetch_index_history("SPY", fetch_range),
+            *[_fetch_index_history(ticker, fetch_range) for ticker, _name, _color in _RRG_SECTORS],
+            return_exceptions=True)
+        benchmark_rows = results[0]
+        if isinstance(benchmark_rows, Exception):
+            raise benchmark_rows
+        sector_rows = results[1:]
+        if selected_range == "1mo":
+            benchmark_rows = benchmark_rows[-23:]
+            sector_rows = [rows[-23:] if not isinstance(rows, Exception) else rows
+                           for rows in sector_rows]
         benchmark_by_ts = {row[0]: row[4] for row in benchmark_rows}
         items = []
         for (ticker, name, color), rows in zip(_RRG_SECTORS, sector_rows):
+            if isinstance(rows, Exception):
+                continue
             series = _rrg_series(rows, benchmark_by_ts)
             if len(series) >= 12:
                 items.append({"ticker": ticker, "name": name, "color": color, "tail": series[-12:]})
@@ -4976,7 +5015,7 @@ def _candle_hover(event, root_sel, hover, tip_id, guide_id, dot_id):
         '<div class="tip-date">%s</div>'
         '<div class="tip-ohlc"><span>시가 %s</span><span>고가 %s</span>'
         '<span>저가 %s</span><span>종가 <b style="color:%s">%s</b></span></div>'
-        '<div class="tip-ma">이평선 %s</div>'
+        '<div class="tip-ma">%s</div>'
         % (_esc(best["date"]), _esc(best["o"]), _esc(best["h"]),
            _esc(best["l"]), col, _esc(best["c"]), best.get("ma_html", "")))
     _place_tip_clamped(tip, svg, best["x"], best["y"], W, H)
