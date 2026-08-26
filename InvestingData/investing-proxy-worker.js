@@ -98,14 +98,8 @@ const CORS_HEADERS = {
   "Access-Control-Max-Age": "86400",
 };
 
-// 항상 "최신" Gemini 모델을 자동으로 선택한다.
-//  1순위: ListModels API 로 generateContent 를 지원하는 gemini-flash 계열 중
-//         버전이 가장 높은 안정 모델을 실시간으로 탐색한다.
-//  2순위(폴백): 구글이 유지·관리하는 최신 별칭(항상 최신 Flash 를 가리킴).
-const GEMINI_MODEL_FALLBACK = "gemini-flash-latest";
-// 탐색 결과는 일정 시간 캐시해 매 요청마다 ListModels 를 부르지 않는다.
-const MODEL_CACHE_MS = 6 * 60 * 60 * 1000; // 6시간
-let _modelCache = { name: null, at: 0 };
+// 모델 목록 조회 없이 안정적인 Lite 모델을 고정 사용한다.
+const GEMINI_FIXED_MODEL = "gemini-3.5-flash-lite";
 
 // Google Gemini 호출은 회사망/엣지 경로에 따라 "User location is not supported"
 // 오류가 날 수 있다. GEMINI_RELAY_URL(예: Vercel 미국 고정 함수)이 설정돼 있으면
@@ -144,42 +138,9 @@ function _modelVersionScore(name) {
   return parseInt(m[1], 10) * 100 + parseInt(m[2], 10);
 }
 
-// ListModels 로 최신 gemini-flash(안정판) 모델명을 찾는다. 실패 시 별칭 폴백.
+// 모델 목록 조회를 생략하고 고정 모델을 반환한다.
 async function resolveLatestModel(env, apiKey) {
-  const now = Date.now();
-  if (_modelCache.name && now - _modelCache.at < MODEL_CACHE_MS) {
-    return _modelCache.name;
-  }
-  try {
-    const resp = await geminiFetch(env, "models?pageSize=1000", "GET", null, apiKey);
-    if (resp.ok) {
-      const data = await resp.json();
-      const models = Array.isArray(data.models) ? data.models : [];
-      const candidates = models.filter((m) => {
-        const n = m && m.name ? m.name : "";
-        const methods = (m && m.supportedGenerationMethods) || [];
-        // gemini-flash 계열 + 텍스트 생성 지원 + 실험/프리뷰/특수 변형 제외(안정판 우선)
-        return (
-          n.includes("gemini") &&
-          n.includes("flash") &&
-          methods.includes("generateContent") &&
-          !/exp|preview|lite|thinking|image|tts|audio|native|vision/i.test(n)
-        );
-      });
-      candidates.sort(
-        (a, b) => _modelVersionScore(b.name) - _modelVersionScore(a.name)
-      );
-      if (candidates.length && _modelVersionScore(candidates[0].name) >= 0) {
-        const best = candidates[0].name.replace(/^models\//, "");
-        _modelCache = { name: best, at: now };
-        return best;
-      }
-    }
-  } catch {
-    // 무시하고 폴백 별칭 사용
-  }
-  _modelCache = { name: GEMINI_MODEL_FALLBACK, at: now };
-  return GEMINI_MODEL_FALLBACK;
+  return GEMINI_FIXED_MODEL;
 }
 
 // 평가 프롬프트(Evaluation_Prompt.md)는 워커 코드에 넣지 않고 PROMPTS(KV)에
@@ -207,6 +168,33 @@ async function getEvaluationPrompt(env) {
     return text;
   }
   return null;
+}
+
+function buildGeminiBody(evaluationPrompt, company, model) {
+  const versionScore = _modelVersionScore("gemini-" + model.replace(/^gemini-/, ""));
+  const searchTool =
+    versionScore >= 200 || versionScore < 0
+      ? { google_search: {} }
+      : { google_search_retrieval: {} };
+  const generationConfig = { temperature: 0.4 };
+  if (versionScore >= 300) {
+    generationConfig.thinkingConfig = { thinkingLevel: "low" };
+  } else if (versionScore >= 205) {
+    generationConfig.thinkingConfig = { thinkingBudget: 0 };
+  }
+  return {
+    body: {
+      systemInstruction: { parts: [{ text: evaluationPrompt }] },
+      contents: [{
+        role: "user",
+        parts: [{ text: "다음 종목을 평가 기준에 따라 분석해줘: " + company }],
+      }],
+      tools: [searchTool],
+      generationConfig,
+    },
+    searchTool,
+    generationConfig,
+  };
 }
 
 // 즐겨찾기 저장 한도(계정별) 및 문자열 길이 제한 (악용 방지)
@@ -751,43 +739,8 @@ async function handleGemini(request, env, reqUrl) {
     return jsonResponse({ error: PROMPT_MISSING_MSG }, 500);
   }
 
-  const model = await resolveLatestModel(env, apiKey);
-  // 모델 세대에 따라 검색 그라운딩 도구 필드가 다르다.
-  //  - Gemini 2.0 이상: tools: [{ google_search: {} }]
-  //  - Gemini 1.5 이하: tools: [{ google_search_retrieval: {} }]
-  // 세대를 잘못 넣으면 Google 이 "Request contains an invalid argument"(400)를 낸다.
-  const versionScore = _modelVersionScore("gemini-" + model.replace(/^gemini-/, ""));
-  const searchTool =
-    versionScore >= 200 || versionScore < 0
-      ? { google_search: {} }
-      : { google_search_retrieval: {} };
-
-  const generationConfig = { temperature: 0.4 };
-  // "thinking"(내부 추론)은 응답을 느리게 하고 검색 그라운딩과 겹치면 릴레이(Vercel)
-  // 60초 한계를 넘겨 504가 나기 쉽다. 그래서 추론을 최소화해 속도/비용을 낮춘다.
-  // 다만 세대마다 제어 필드가 다르므로 버전에 맞춰 넣어야 400(invalid argument)을 피한다.
-  //  - Gemini 2.5 계열(205~299): thinkingBudget=0 으로 추론 완전 차단
-  //  - Gemini 3.x 이상(>=300)   : thinkingBudget 이 없어지고 thinkingLevel 로 대체됨
-  //                               → thinkingLevel="low" 로 추론 최소화
-  if (versionScore >= 300) {
-    generationConfig.thinkingConfig = { thinkingLevel: "low" };
-  } else if (versionScore >= 205) {
-    generationConfig.thinkingConfig = { thinkingBudget: 0 };
-  }
-
-  const geminiBody = {
-    systemInstruction: {
-      parts: [{ text: evaluationPrompt }],
-    },
-    contents: [
-      {
-        role: "user",
-        parts: [{ text: "다음 종목을 평가 기준에 따라 분석해줘: " + company }],
-      },
-    ],
-    tools: [searchTool],
-    generationConfig,
-  };
+  let model = await resolveLatestModel(env, apiKey);
+  let requestParts = buildGeminiBody(evaluationPrompt, company, model);
 
   let upstream;
   try {
@@ -795,7 +748,7 @@ async function handleGemini(request, env, reqUrl) {
       env,
       "models/" + model + ":generateContent",
       "POST",
-      geminiBody,
+      requestParts.body,
       apiKey
     );
   } catch (err) {
@@ -840,9 +793,9 @@ async function handleGemini(request, env, reqUrl) {
       }
     }
     // 실제로 어떤 모델/도구/경로로 호출했는지 함께 노출해 원인 진단을 돕는다.
-    const toolField = Object.keys(searchTool)[0];
-    const thinkingDiag = generationConfig.thinkingConfig
-      ? JSON.stringify(generationConfig.thinkingConfig)
+    const toolField = Object.keys(requestParts.searchTool)[0];
+    const thinkingDiag = requestParts.generationConfig.thinkingConfig
+      ? JSON.stringify(requestParts.generationConfig.thinkingConfig)
       : "off";
     msg +=
       " | diag: model=" +
