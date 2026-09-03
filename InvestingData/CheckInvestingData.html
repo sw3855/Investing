@@ -127,6 +127,9 @@
   .chart-svg .guide-line { stroke:#131722; stroke-width:1; stroke-dasharray:4 3;
     pointer-events:none; }
   .chart-svg .guide-dot { fill:#131722; pointer-events:none; }
+    .daily-indicators { display:grid; gap:10px; margin-top:12px; }
+    .indicator-chart { border:1px solid var(--bd); border-radius:8px; padding:6px 8px;
+        background:#fff; }
   .idx-chart-head { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 12px;
     padding:2px 4px 10px; }
   .idx-chart-head .nm { font-size:15px; font-weight:700; color:#131722; }
@@ -176,18 +179,21 @@
   .multpl-tip .row i { width:9px; height:9px; border-radius:2px; flex:0 0 auto; }
   .multpl-tip .row .nm { margin-right:10px; }
   .multpl-tip .row .v { font-weight:700; margin-left:auto; }
-    .candle-tip-host { position:relative; padding-bottom:70px; }
+    .candle-tooltip-host { position:relative; padding-bottom:90px; }
+    .candle-tip-host { position:relative; }
     .multpl-tip.candle-tip { top:auto; bottom:8px; left:8px; right:8px;
         display:none; flex-direction:column; align-items:flex-start; gap:3px;
         width:auto; max-width:none; overflow:hidden; }
     .candle-tip .tip-date { font-weight:600; }
-    .candle-tip .tip-ohlc, .candle-tip .tip-ma { display:grid;
+    .candle-tip .tip-ohlc, .candle-tip .tip-ma, .candle-tip .tip-osc { display:grid;
         grid-template-columns:repeat(4, minmax(0, 1fr)); gap:0 10px;
         width:100%; min-width:0; }
-    .candle-tip .tip-ohlc span, .candle-tip .tip-ma span {
+    .candle-tip .tip-ohlc span, .candle-tip .tip-ma span, .candle-tip .tip-osc span {
         min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .candle-tip .tip-ma { color:var(--mut); }
     .candle-tip .tip-ma span { font-weight:600; }
+    .candle-tip .tip-osc { color:var(--mut); }
+    .candle-tip .tip-osc span { font-weight:600; }
   .fin-table-wrap { overflow:auto; max-height:440px; border:1px solid var(--bd);
     border-radius:8px; }
   .fin-table { width:100%; border-collapse:collapse; font-size:13px; }
@@ -389,6 +395,10 @@
   .fav-list:empty { display:none; }
   .fav-folder { border:1px solid var(--bd); border-radius:10px;
     background:var(--bg); overflow:hidden; }
+    .fav-folder[draggable=true] > summary { cursor:grab; }
+    .fav-folder.dragging { opacity:.45; }
+    .fav-folder.folder-drag-over { border-color:var(--pri); border-style:dashed;
+        background:#eef3ff; }
   .fav-folder > summary { display:flex; align-items:center; gap:8px;
     cursor:pointer; padding:8px 12px; font-weight:600; color:var(--pri);
     list-style:none; user-select:none; }
@@ -1004,22 +1014,31 @@ def _proxied(url):
 
 
 async def _get_json(url, params):
-    """pyfetch 로 GET 호출 후 JSON 을 반환. (requests 대체)"""
+    """pyfetch 로 GET 호출 후 JSON 을 반환. 일시 장애는 재시도한다."""
     full = url + "?" + urlencode(params)
-    try:
-        resp = await pyfetch(_proxied(full), method="GET")
-    except Exception as exc:  # 네트워크/CORS 오류
-        raise InvestingApiError(
-            "네트워크 요청 실패(브라우저 CORS 제한일 수 있습니다). "
-            "Cloudflare Worker CORS 프록시를 설정했는지 확인하세요.\n상세: %s" % exc
-        )
-    if resp.status >= 400:
-        raise InvestingApiError("HTTP %s 응답" % resp.status)
-    text = await resp.string()
-    try:
-        return json.loads(text)
-    except ValueError:
-        raise InvestingApiError("JSON 이 아닌 응답을 받았습니다: %s" % text[:200])
+    last_error = None
+    for attempt in range(3):
+        try:
+            resp = await pyfetch(_proxied(full), method="GET")
+            if resp.status < 400:
+                text = await resp.string()
+                try:
+                    return json.loads(text)
+                except ValueError:
+                    raise InvestingApiError("JSON 이 아닌 응답을 받았습니다: %s" % text[:200])
+            # 잘못된 요청/심볼은 재시도해도 해결되지 않는다. 요청 제한과 서버 오류만 재시도한다.
+            if resp.status != 429 and resp.status < 500:
+                raise InvestingApiError("HTTP %s 응답" % resp.status)
+            last_error = "HTTP %s 응답" % resp.status
+        except InvestingApiError:
+            raise
+        except Exception as exc:  # 네트워크/CORS 오류
+            last_error = "네트워크 오류: %s" % exc
+        if attempt < 2:
+            await asyncio.sleep(0.4 * (attempt + 1))
+    raise InvestingApiError(
+        "요청이 일시적으로 실패했습니다. 잠시 후 다시 시도하세요.\n상세: %s" % last_error
+    )
 
 
 async def _get_text(url):
@@ -4528,6 +4547,104 @@ def _sma(closes, period):
     return out
 
 
+def _sma_nullable(values, period):
+    """None을 포함할 수 있는 시계열의 단순이동평균을 계산한다."""
+    out = [None] * len(values)
+    for i in range(period - 1, len(values)):
+        window_values = values[i - period + 1:i + 1]
+        if all(isinstance(v, (int, float)) for v in window_values):
+            out[i] = sum(window_values) / period
+    return out
+
+
+def _williams_r(rows, period=10):
+    """Williams %R: 최고가·최저가 대비 종가 위치(-100~0)를 계산한다."""
+    out = [None] * len(rows)
+    for i in range(period - 1, len(rows)):
+        window_rows = rows[i - period + 1:i + 1]
+        highest = max(row[2] for row in window_rows)
+        lowest = min(row[3] for row in window_rows)
+        if highest != lowest:
+            out[i] = -100.0 * (highest - rows[i][4]) / (highest - lowest)
+    return out
+
+
+def _stochastic_slow(rows, period=15, slow_k_period=5, slow_d_period=5):
+    """Stochastic Slow의 SlowK·SlowD 시계열을 계산한다."""
+    raw_k = [None] * len(rows)
+    for i in range(period - 1, len(rows)):
+        window_rows = rows[i - period + 1:i + 1]
+        highest = max(row[2] for row in window_rows)
+        lowest = min(row[3] for row in window_rows)
+        if highest != lowest:
+            raw_k[i] = 100.0 * (rows[i][4] - lowest) / (highest - lowest)
+    slow_k = _sma_nullable(raw_k, slow_k_period)
+    return slow_k, _sma_nullable(slow_k, slow_d_period)
+
+
+def _oscillator_svg(rows, title, series, levels, vmin, vmax, guide_id=None):
+    """고정 범위 오실레이터 보조 패널을 SVG로 렌더링한다."""
+    W, H = 820.0, 150.0
+    pad_l, pad_r, pad_t, pad_b = 48.0, 14.0, 25.0, 25.0
+    plot_w, plot_h = W - pad_l - pad_r, H - pad_t - pad_b
+    n = len(rows)
+    if not n:
+        return ""
+
+    def X(i):
+        return pad_l + plot_w * ((i + 0.5) / n)
+
+    def Y(value):
+        return pad_t + (vmax - value) / (vmax - vmin) * plot_h
+
+    parts = ['<div class="indicator-chart"><svg viewBox="0 0 %g %g" '
+             'class="chart-svg oscillator-svg" preserveAspectRatio="xMidYMid meet">' % (W, H)]
+    parts.append('<text x="%g" y="16" style="fill:#1f2328;font-size:11px;font-weight:700">%s</text>'
+                 % (pad_l, _esc(title)))
+    legend_x = pad_l + 155
+    for label, color, values in series:
+        parts.append('<line x1="%g" y1="12" x2="%g" y2="12" stroke="%s" stroke-width="2"/>'
+                     % (legend_x, legend_x + 14, color))
+        parts.append('<text x="%g" y="16" style="fill:%s;font-size:10px;font-weight:600">%s</text>'
+                     % (legend_x + 18, color, _esc(label)))
+        legend_x += 72
+    for level, label in levels:
+        y = Y(level)
+        parts.append('<line x1="%g" y1="%g" x2="%g" y2="%g" stroke="#aeb4bd" '
+                     'stroke-width="1" stroke-dasharray="4 3"/>' % (pad_l, y, W - pad_r, y))
+        parts.append('<text x="%g" y="%g" class="ax-y">%s</text>'
+                     % (pad_l - 7, y + 4, _esc(label)))
+    for label, color, values in series:
+        points = ["%g,%g" % (X(i), Y(value)) for i, value in enumerate(values)
+                  if isinstance(value, (int, float))]
+        if len(points) >= 2:
+            parts.append('<polyline points="%s" fill="none" stroke="%s" stroke-width="1.6" '
+                         'stroke-linejoin="round" stroke-linecap="round"/>'
+                         % (" ".join(points), color))
+    if guide_id:
+        parts.append('<line id="%s" class="guide-line" x1="0" y1="%g" x2="0" y2="%g" '
+                     'style="display:none"/>' % (guide_id, pad_t, H - pad_b))
+    parts.append('</svg></div>')
+    return "".join(parts)
+
+
+def _daily_indicators_html(rows, prefix):
+    """일봉용 Williams %R 및 Stochastic Slow 보조지표 패널 HTML."""
+    wr = _williams_r(rows, 10)
+    wr_signal = _sma_nullable(wr, 9)
+    slow_k, slow_d = _stochastic_slow(rows, 15, 5, 5)
+    return ('<div class="daily-indicators">%s%s</div>' % (
+        _oscillator_svg(rows, "Williams %R (10, 9)",
+                        [("%R", "#2962ff", wr), ("Signal", "#ff9800", wr_signal)],
+                        [(-20, "-20"), (-80, "-80")], -100.0, 0.0,
+                        prefix + "-wr-guide"),
+        _oscillator_svg(rows, "Stochastic Slow (15, 5, 5)",
+                        [("SlowK", "#2962ff", slow_k),
+                         ("SlowD", "#ff9800", slow_d)],
+                        [(20, "20"), (80, "80")], 0.0, 100.0,
+                        prefix + "-stoch-guide")))
+
+
 def _candle_svg(rows, dec=2, prefix="idxchart", hover=None, overlay=None):
     """일봉 OHLC 를 캔들스틱 SVG 로 렌더링. rows=[(ts,o,h,l,c)].
 
@@ -4692,12 +4809,28 @@ def _candle_svg(rows, dec=2, prefix="idxchart", hover=None, overlay=None):
                            % (color, period, axfmt(v)))
         return "".join(out)
 
+    # 보조지표 패널과 동일한 설정으로 날짜별 값을 미리 계산해 호버 툴팁에 사용한다.
+    wr = _williams_r(rows, 10)
+    wr_signal = _sma_nullable(wr, 9)
+    slow_k, slow_d = _stochastic_slow(rows, 15, 5, 5)
+
+    def _osc_tip(idx):
+        values = [
+            ("Williams %R", "#2962ff", wr[idx]),
+            ("Signal", "#ff9800", wr_signal[idx]),
+            ("SlowK", "#2962ff", slow_k[idx]),
+            ("SlowD", "#ff9800", slow_d[idx]),
+        ]
+        return "".join(
+            '<span style="color:%s">%s %.2f</span>' % (color, label, value)
+            for label, color, value in values if isinstance(value, (int, float)))
+
     # 호버 툴팁용 좌표/치수 캐시 갱신(가이드 점은 종가 위치에 표시)
     hover["pts"] = [
         {"x": X(idx), "y": Y(c),
          "date": datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d"),
          "o": axfmt(o), "h": axfmt(h), "l": axfmt(lo), "c": axfmt(c),
-         "up": c >= o, "ma_html": _ma_tip(idx)}
+         "up": c >= o, "ma_html": _ma_tip(idx), "osc_html": _osc_tip(idx)}
         for idx, (ts, o, h, lo, c) in enumerate(rows)]
     hover["W"] = W
     hover["H"] = H
@@ -4727,10 +4860,11 @@ def _render_idxchart(name, rows):
             '<span class="%s">%s%+.2f (%+.2f%%)</span>'
             '<span class="dt">%s 기준 · 최근 %d일</span></div>') % (
         _esc(name), fmt_num(last_c, dec), cls, arrow, chg, pct, d, len(rows))
-    el.innerHTML = ('<div class="fin-chart">%s'
-                    '<div class="candle-tip-host">%s'
+    el.innerHTML = ('<div class="fin-chart">%s<div class="candle-tooltip-host">'
+                    '<div class="candle-tip-host">%s</div>%s'
                     '<div id="idxchart-tip" class="multpl-tip candle-tip"></div></div></div>'
-                    % (head, _candle_svg(rows, dec, "idxchart", _IDXCHART_HOVER)))
+                    % (head, _candle_svg(rows, dec, "idxchart", _IDXCHART_HOVER),
+                       _daily_indicators_html(rows, "idxchart")))
 
 
 async def _run_idxchart():
@@ -5004,6 +5138,15 @@ def _candle_hover(event, root_sel, hover, tip_id, guide_id, dot_id):
         guide.setAttribute("y1", "%g" % hover["y1"])
         guide.setAttribute("y2", "%g" % hover["y2"])
         guide.style.display = "block"
+    # 보조지표 SVG는 같은 날짜 인덱스를 자체 좌표계로 변환해 세로선을 표시한다.
+    prefix = guide_id.rsplit("-guide", 1)[0]
+    indicator_x = 48.0 + (820.0 - 48.0 - 14.0) * ((pts.index(best) + 0.5) / len(pts))
+    for indicator_id in (prefix + "-wr-guide", prefix + "-stoch-guide"):
+        indicator_guide = document.querySelector("#" + indicator_id)
+        if indicator_guide is not None:
+            indicator_guide.setAttribute("x1", "%g" % indicator_x)
+            indicator_guide.setAttribute("x2", "%g" % indicator_x)
+            indicator_guide.style.display = "block"
     if dot is not None:
         dot.setAttribute("cx", "%g" % best["x"])
         dot.setAttribute("cy", "%g" % best["y"])
@@ -5015,13 +5158,17 @@ def _candle_hover(event, root_sel, hover, tip_id, guide_id, dot_id):
         '<div class="tip-ohlc"><span>시가 %s</span><span>고가 %s</span>'
         '<span>저가 %s</span><span>종가 <b style="color:%s">%s</b></span></div>'
         '<div class="tip-ma">%s</div>'
-        % (_esc(best["date"]), _esc(best["o"]), _esc(best["h"]),
-           _esc(best["l"]), col, _esc(best["c"]), best.get("ma_html", "")))
+          '<div class="tip-osc">%s</div>'
+          % (_esc(best["date"]), _esc(best["o"]), _esc(best["h"]),
+              _esc(best["l"]), col, _esc(best["c"]), best.get("ma_html", ""),
+              best.get("osc_html", "")))
     _place_tip_clamped(tip, svg, best["x"], best["y"], W, H)
 
 
 def _candle_hide(tip_id, guide_id, dot_id):
-    for sel in ("#" + tip_id, "#" + guide_id, "#" + dot_id):
+    prefix = guide_id.rsplit("-guide", 1)[0]
+    for sel in ("#" + tip_id, "#" + guide_id, "#" + dot_id,
+                "#" + prefix + "-wr-guide", "#" + prefix + "-stoch-guide"):
         el = document.querySelector(sel)
         if el is not None:
             el.style.display = "none"
@@ -5238,12 +5385,13 @@ def _render_stock_chart(name, rows):
             rows, fin, _STOCKCHART_STATE.get("overlay_metric", "revenue"),
             annual)
     box.innerHTML = ('<div class="card"><div class="sec">%s%s%s'
-                     '<div class="fin-chart candle-tip-host">%s'
-                     '<div id="stockchart-tip" class="multpl-tip candle-tip"></div></div>'
+                     '<div class="fin-chart"><div class="candle-tooltip-host">'
+                     '<div class="candle-tip-host">%s</div>%s'
+                     '<div id="stockchart-tip" class="multpl-tip candle-tip"></div></div></div>'
                      '</div></div>'
                      % (top, controls, head,
                         _candle_svg(rows, dec, "stockchart", _STOCKCHART_HOVER,
-                                    overlay)))
+                                    overlay), _daily_indicators_html(rows, "stockchart")))
     _bind_stockchart_controls()
 
 
@@ -6378,6 +6526,9 @@ _FAV_LAST = {"list": []}
 # 드래그 중인 항목(심볼·원래 폴더)을 임시 보관한다.
 _FAV_DRAG = {"symbol": None, "folder": None}
 
+# 드래그 중인 사용자 폴더를 임시 보관한다. Default 폴더는 항상 맨 위로 고정한다.
+_FAV_FOLDER_DRAG = {"folder": None}
+
 
 def _fav_creds():
     """현재 세션의 (계정 ID, 공유 키)를 반환. 없으면 (None, None)."""
@@ -6556,6 +6707,16 @@ async def fav_rename_folder(old_name, new_name):
     return favs
 
 
+async def fav_reorder_folders(order):
+    """사용자 폴더 순서를 서버에 저장하고 갱신된 즐겨찾기를 반환한다."""
+    favs, err = await _fav_request(
+        "POST", extra_query="&folder_op=reorder", body=json.dumps({"order": order}))
+    if err:
+        _set_fav_status("폴더 순서 변경 실패: %s" % err)
+        return None
+    return favs
+
+
 def render_favorites(favs):
     """즐겨찾기 목록을 폴더별로 그룹화해 렌더링한다(빈 폴더 포함)."""
     box = document.querySelector("#favorites-list")
@@ -6577,12 +6738,17 @@ def render_favorites(favs):
         box.innerHTML = ""
         return
 
-    # Default 를 맨 위로, 나머지는 이름순 정렬
-    def _folder_sort_key(name):
-        return (0 if name == "Default" else 1, name.lower())
+    # Default 는 맨 위, 사용자 폴더는 서버에 저장한 순서로 표시한다.
+    ordered_folders = ["Default"] if "Default" in groups else []
+    for name in _FAV_FOLDERS:
+        if name in groups and name != "Default" and name not in ordered_folders:
+            ordered_folders.append(name)
+    for name in sorted(groups.keys(), key=str.lower):
+        if name not in ordered_folders:
+            ordered_folders.append(name)
 
     html = []
-    for folder in sorted(groups.keys(), key=_folder_sort_key):
+    for folder in ordered_folders:
         items = groups[folder]
         chips = []
         for f in items:
@@ -6609,13 +6775,14 @@ def render_favorites(favs):
                  '<button class="fav-folder-del" data-folder="%s" '
                  'title="폴더 삭제">🗑</button></span>'
                  % (_esc(folder), _esc(folder)))
+        drag_attr = (' draggable="true"' if folder != "Default" else '')
         html.append(
-            '<details class="fav-folder" open>'
+            '<details class="fav-folder" data-folder="%s"%s open>'
             '<summary><span class="fav-folder-name">📁 %s</span>'
             '<span class="fav-folder-count">%d</span>%s</summary>'
             '<div class="fav-folder-items" data-folder="%s">%s%s</div>'
             '</details>'
-            % (_esc(folder), len(items), actions, _esc(folder),
+            % (_esc(folder), drag_attr, _esc(folder), len(items), actions, _esc(folder),
                "".join(chips), empty_hint))
     box.innerHTML = "".join(html)
     _bind_favorites()
@@ -6775,6 +6942,14 @@ def _bind_favorites():
         el = boxes.item(i)
         _bind(el, "dragover", _on_fav_container_dragover)
         _bind(el, "drop", _on_fav_container_drop)
+    folders = document.querySelectorAll("#favorites-list .fav-folder[draggable=true]")
+    for i in range(folders.length):
+        el = folders.item(i)
+        _bind(el, "dragstart", _on_fav_folder_dragstart)
+        _bind(el, "dragend", _on_fav_folder_dragend)
+        _bind(el, "dragover", _on_fav_folder_dragover)
+        _bind(el, "dragleave", _on_fav_folder_dragleave)
+        _bind(el, "drop", _on_fav_folder_drop)
 
 
 def _clear_fav_drag_over():
@@ -6785,6 +6960,80 @@ def _clear_fav_drag_over():
     boxes = document.querySelectorAll("#favorites-list .drag-over-empty")
     for i in range(boxes.length):
         boxes.item(i).classList.remove("drag-over-empty")
+    folders = document.querySelectorAll("#favorites-list .folder-drag-over")
+    for i in range(folders.length):
+        folders.item(i).classList.remove("folder-drag-over")
+
+
+def _on_fav_folder_dragstart(evt):
+    if evt.target.closest(".fav-cell") is not None:
+        return
+    folder = evt.target.closest(".fav-folder") if evt.target is not None else None
+    if folder is None:
+        return
+    name = folder.getAttribute("data-folder")
+    if not name or name == "Default":
+        return
+    _FAV_FOLDER_DRAG["folder"] = name
+    try:
+        evt.dataTransfer.effectAllowed = "move"
+        evt.dataTransfer.setData("text/plain", name)
+    except Exception:
+        pass
+    folder.classList.add("dragging")
+
+
+def _on_fav_folder_dragend(evt):
+    folder = evt.target.closest(".fav-folder") if evt.target is not None else None
+    if folder is not None:
+        folder.classList.remove("dragging")
+    _FAV_FOLDER_DRAG["folder"] = None
+    _clear_fav_drag_over()
+
+
+def _on_fav_folder_dragover(evt):
+    if not _FAV_FOLDER_DRAG.get("folder") or evt.target.closest(".fav-cell") is not None:
+        return
+    folder = evt.target.closest(".fav-folder") if evt.target is not None else None
+    if folder is None or folder.getAttribute("data-folder") == _FAV_FOLDER_DRAG["folder"]:
+        return
+    evt.preventDefault()
+    _clear_fav_drag_over()
+    folder.classList.add("folder-drag-over")
+
+
+def _on_fav_folder_dragleave(evt):
+    folder = evt.target.closest(".fav-folder") if evt.target is not None else None
+    if folder is not None:
+        folder.classList.remove("folder-drag-over")
+
+
+def _on_fav_folder_drop(evt):
+    if evt.target.closest(".fav-cell") is not None:
+        return
+    target = evt.target.closest(".fav-folder") if evt.target is not None else None
+    source_name = _FAV_FOLDER_DRAG.get("folder")
+    _clear_fav_drag_over()
+    if target is None or not source_name:
+        return
+    evt.preventDefault()
+    target_name = target.getAttribute("data-folder")
+    if not target_name or target_name == source_name:
+        return
+    asyncio.ensure_future(_apply_fav_folder_drop(source_name, target_name))
+
+
+async def _apply_fav_folder_drop(source_name, target_name):
+    """사용자 폴더를 대상 폴더 바로 앞으로 이동한다."""
+    order = [name for name in _FAV_FOLDERS if name != source_name]
+    if target_name in order:
+        order.insert(order.index(target_name), source_name)
+    else:
+        order.append(source_name)
+    favs = await fav_reorder_folders(order)
+    if favs is not None:
+        render_favorites(favs)
+        _set_fav_status("폴더 순서가 변경되었습니다.")
 
 
 def _on_fav_dragstart(evt):

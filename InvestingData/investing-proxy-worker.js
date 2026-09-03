@@ -42,6 +42,7 @@
  *    POST   https://<worker>/favorites?account=<id>&pw_op=change → 본문 {newKey} 로그인 상태에서 공유 키 변경
  *    POST   https://<worker>/favorites?account=<id>&folder_op=create → 본문 {folder} 빈 폴더 생성
  *    POST   https://<worker>/favorites?account=<id>&folder_op=rename → 본문 {folder,newFolder} 폴더 이름 변경
+ *    POST   https://<worker>/favorites?account=<id>&folder_op=reorder → 본문 {order:[folder,...]} 폴더 순서 변경
  *    POST   https://<worker>/favorites?account=<id>&reorder=1 → 본문 {folder,order:[symbol,...]} 폴더 내 순서 변경
  *    POST   https://<worker>/favorites?account=<id>            → 본문 {symbol,name,folder} 추가/이동
  *    POST   https://<worker>/favorites?account=<id>&guru_op=add → 본문 {cik,ko,name,firm} 13F 대가 즐겨찾기 등록
@@ -1035,6 +1036,35 @@ async function handleFavorites(request, env, reqUrl) {
       const idx = folders.indexOf(oldName);
       if (idx >= 0) folders[idx] = newName;
       else folders.push(newName);
+      await env.FAVORITES.put(
+        kvKey,
+        JSON.stringify({ keyHash: authHash, favorites, folders, gurus })
+      );
+      return jsonResponse({ favorites, folders });
+    }
+
+    // 사용자 폴더 순서 변경 요청: ?folder_op=reorder, 본문 {order:[folder,...]}.
+    // 기존 폴더만 재배치하고 누락된 폴더는 뒤에 보존한다.
+    if (reqUrl.searchParams.get("folder_op") === "reorder") {
+      const order = Array.isArray(payload && payload.order)
+        ? payload.order.filter((name) => typeof name === "string")
+        : null;
+      if (!order) {
+        return jsonResponse({ error: "order 배열이 필요합니다.", favorites, folders }, 400);
+      }
+      const current = new Set(folders);
+      const used = new Set();
+      const reordered = [];
+      for (const name of order) {
+        if (current.has(name) && !used.has(name)) {
+          reordered.push(name);
+          used.add(name);
+        }
+      }
+      for (const name of folders) {
+        if (!used.has(name)) reordered.push(name);
+      }
+      folders.splice(0, folders.length, ...reordered);
       await env.FAVORITES.put(
         kvKey,
         JSON.stringify({ keyHash: authHash, favorites, folders, gurus })
