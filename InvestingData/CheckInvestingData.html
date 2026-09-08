@@ -581,6 +581,10 @@
           <button type="button" data-range="5y">5년</button>
           <button type="button" data-range="10y">10년</button>
         </span>
+                <select id="idxChartInterval" title="차트 주기">
+                    <option value="1d">일봉</option>
+                    <option value="1wk">주봉</option>
+                </select>
         <button class="primary" id="idxChartBtn">조회</button>
         <span id="idxchart-status"></span>
       </div>
@@ -4449,7 +4453,7 @@ YF_CHART_HOSTS = [
     "https://query2.finance.yahoo.com/v8/finance/chart/",
 ]
 
-_IDXCHART_STATE = {"sym": None, "range": "6mo"}
+_IDXCHART_STATE = {"sym": None, "range": "6mo", "interval": "1d"}
 _IDXCHART_LOADED = {"done": False}
 _YF_HISTORY_CACHE = {}
 _YF_CACHE_TTL = 5 * 60
@@ -4477,13 +4481,13 @@ def _populate_idxchart_select():
     sel.innerHTML = "".join(parts)
 
 
-async def _fetch_index_history(yf_sym, rng):
-    """Yahoo Finance 에서 일봉 OHLC 시계열을 조회. rows=[(ts,o,h,l,c)]."""
-    cache_key = "%s|%s" % (yf_sym, rng)
+async def _fetch_index_history(yf_sym, rng, interval="1d"):
+    """Yahoo Finance 에서 OHLC 시계열을 조회. rows=[(ts,o,h,l,c)]."""
+    cache_key = "%s|%s|%s" % (yf_sym, rng, interval)
     cached = _YF_HISTORY_CACHE.get(cache_key)
     if cached and time.time() - cached["at"] < _YF_CACHE_TTL:
         return cached["rows"]
-    params = {"range": rng, "interval": "1d"}
+    params = {"range": rng, "interval": interval}
     last_err = None
     for base in YF_CHART_HOSTS:
         data = None
@@ -4881,7 +4885,8 @@ async def _run_idxchart():
     if btn is not None:
         btn.disabled = True
     try:
-        rows = await _fetch_index_history(yf_sym, _IDXCHART_STATE["range"])
+        rows = await _fetch_index_history(
+            yf_sym, _IDXCHART_STATE["range"], _IDXCHART_STATE["interval"])
         _render_idxchart(name, rows)
         _IDXCHART_STATE["sym"] = sym
         _IDXCHART_LOADED["done"] = True
@@ -4909,6 +4914,7 @@ _RRG_SECTORS = [
     ("ITA", "방산", "#e15759"), ("XBI", "바이오", "#edc948"),
     ("XLV", "헬스케어", "#499894"), ("XLP", "필수소비", "#af7aa1"),
     ("NLR", "원자력", "#8cd17d"), ("XLE", "에너지", "#ff9d9a"),
+    ("XLU", "유틸리티", "#577590"),
     ("SRVR", "AI인프라", "#79706e"), ("NASA", "우주", "#2ec4b6"),
 ]
 _RRG_STATE = {"range": "1mo"}
@@ -5195,7 +5201,7 @@ _YF_SUFFIX = {
     "EURONEXT": [".PA", ".AS", ".BR", ".LS"],
 }
 
-_STOCKCHART_STATE = {"symbol": None, "name": None, "range": "6mo",
+_STOCKCHART_STATE = {"symbol": None, "name": None, "range": "6mo", "interval": "1d",
                      "rows": None, "overlay": False, "overlay_metric": "revenue"}
 _STOCKCHART_HOVER = {"pts": [], "W": 0.0, "H": 0.0, "y1": 0.0, "y2": 0.0}
 _STOCKCHART_RANGES = [("1mo", "1개월"), ("3mo", "3개월"),
@@ -5323,12 +5329,12 @@ def _yf_symbol_candidates(full_symbol):
     return out
 
 
-async def _fetch_history_any(cands, rng):
-    """후보 심볼들을 차례로 시도해 첫 성공한 일봉 시계열을 반환."""
+async def _fetch_history_any(cands, rng, interval="1d"):
+    """후보 심볼들을 차례로 시도해 첫 성공한 시계열을 반환."""
     last_err = None
     for sym in cands:
         try:
-            return await _fetch_index_history(sym, rng)
+            return await _fetch_index_history(sym, rng, interval)
         except InvestingApiError as exc:
             last_err = exc
             continue
@@ -5343,7 +5349,16 @@ def _stockchart_range_html():
         '<button type="button" data-srange="%s" class="%s">%s</button>'
         % (rv, "on" if rv == cur else "", _esc(lbl))
         for rv, lbl in _STOCKCHART_RANGES)
-    return '<span class="fin-period" id="stockChartRange">%s</span>' % btns
+    interval = _STOCKCHART_STATE.get("interval", "1d")
+    long_range = cur in ("1y", "5y", "10y")
+    interval_html = ('<select id="stockChartInterval" title="차트 주기">'
+                     '<option value="1d"%s>일봉</option>'
+                     '<option value="1wk"%s>주봉</option></select>'
+                     % (" selected" if interval == "1d" else "",
+                        " selected" if interval == "1wk" else ""))
+    return ('<span class="fin-period" id="stockChartRange">%s</span>%s'
+            % (btns, interval_html if long_range else
+               interval_html.replace('<select ', '<select disabled ')))
 
 
 def _render_stock_chart(name, rows):
@@ -5417,6 +5432,8 @@ def _make_stockchart_range_handler(rng):
         if not rng:
             return
         _STOCKCHART_STATE["range"] = rng
+        if rng not in ("1y", "5y", "10y"):
+            _STOCKCHART_STATE["interval"] = "1d"
         sym = _STOCKCHART_STATE.get("symbol")
         name = _STOCKCHART_STATE.get("name")
         if sym:
@@ -5430,12 +5447,25 @@ def _bind_stockchart_controls():
         b = btns.item(i)
         _bind(b, "click",
               _make_stockchart_range_handler(b.getAttribute("data-srange")))
+    interval = document.querySelector("#stockChartInterval")
+    if interval is not None:
+        _bind(interval, "change", _on_stockchart_interval)
     tgl = document.querySelector("#stockQtrToggle")
     if tgl is not None:
         _bind(tgl, "change", _on_stock_qtr_toggle)
     msel = document.querySelector("#stockQtrMetric")
     if msel is not None:
         _bind(msel, "change", _on_stock_qtr_metric)
+
+
+def _on_stockchart_interval(evt):
+    value = evt.target.value
+    if value not in ("1d", "1wk"):
+        return
+    _STOCKCHART_STATE["interval"] = value
+    sym = _STOCKCHART_STATE.get("symbol")
+    if sym:
+        asyncio.ensure_future(load_stock_chart(sym, _STOCKCHART_STATE.get("name")))
 
 
 async def load_stock_chart(full_symbol, name):
@@ -5452,7 +5482,8 @@ async def load_stock_chart(full_symbol, name):
     box.innerHTML = ('<div class="card"><div class="sec"><h3>일봉 차트</h3>'
                      '<div class="hint">차트를 불러오는 중...</div></div></div>')
     try:
-        rows = await _fetch_history_any(cands, _STOCKCHART_STATE["range"])
+        rows = await _fetch_history_any(
+            cands, _STOCKCHART_STATE["range"], _STOCKCHART_STATE["interval"])
     except Exception:
         rows = None
     _render_stock_chart(name or full_symbol, rows)
@@ -8584,6 +8615,9 @@ async def on_idxchart_range(event):
     if not rng:
         return
     _IDXCHART_STATE["range"] = rng
+    if rng not in ("1y", "5y", "10y"):
+        _IDXCHART_STATE["interval"] = "1d"
+    _update_idxchart_interval_control()
     cont = document.querySelector("#idxChartRange")
     bs = cont.querySelectorAll("button")
     for i in range(bs.length):
@@ -8592,6 +8626,29 @@ async def on_idxchart_range(event):
             b.classList.add("on")
         else:
             b.classList.remove("on")
+    await _run_idxchart()
+
+
+def _update_idxchart_interval_control():
+    """장기 구간에서만 주봉 선택을 허용한다."""
+    select = document.querySelector("#idxChartInterval")
+    if select is None:
+        return
+    enabled = _IDXCHART_STATE.get("range") in ("1y", "5y", "10y")
+    select.disabled = not enabled
+    select.value = _IDXCHART_STATE.get("interval", "1d")
+
+
+@when("change", "#idxChartInterval")
+async def on_idxchart_interval(event):
+    value = event.target.value
+    if value not in ("1d", "1wk"):
+        return
+    if _IDXCHART_STATE.get("range") not in ("1y", "5y", "10y"):
+        _IDXCHART_STATE["interval"] = "1d"
+        _update_idxchart_interval_control()
+        return
+    _IDXCHART_STATE["interval"] = value
     await _run_idxchart()
 
 
