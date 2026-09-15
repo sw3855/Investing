@@ -4516,12 +4516,19 @@ async def _fetch_index_history(yf_sym, rng, interval="1d"):
         highs = quote.get("high") or []
         lows = quote.get("low") or []
         closes = quote.get("close") or []
+        market_price = (r0.get("meta") or {}).get("regularMarketPrice")
+        market_ts = (r0.get("meta") or {}).get("regularMarketTime")
         rows = []
         for i in range(len(ts)):
             o = opens[i] if i < len(opens) else None
             h = highs[i] if i < len(highs) else None
             lo = lows[i] if i < len(lows) else None
             c = closes[i] if i < len(closes) else None
+            if (c is None and i == len(ts) - 1 and
+                    isinstance(market_price, (int, float)) and market_ts and
+                    datetime.fromtimestamp(ts[i], timezone.utc).date() ==
+                    datetime.fromtimestamp(market_ts, timezone.utc).date()):
+                c = market_price
             if o is None or h is None or lo is None or c is None:
                 continue
             rows.append((ts[i], o, h, lo, c))
@@ -4918,7 +4925,7 @@ _RRG_SECTORS = [
     ("SRVR", "AI인프라", "#79706e"), ("NASA", "우주", "#2ec4b6"),
 ]
 _RRG_STATE = {"range": "1mo"}
-_RRG_LOADED = {"done": False}
+_RRG_LOADED = {"done": False, "at": 0.0}
 
 
 def _set_rrg_status(msg):
@@ -5106,6 +5113,7 @@ async def _run_rrg():
                 items.append({"ticker": ticker, "name": name, "color": color, "tail": series[-12:]})
         _render_rrg(items)
         _RRG_LOADED["done"] = True
+        _RRG_LOADED["at"] = time.time()
         _set_rrg_status("완료")
     except Exception as exc:
         _set_rrg_status("오류")
@@ -8519,7 +8527,8 @@ def on_tab(event):
         _populate_idxchart_select()
         if not _IDXCHART_LOADED["done"]:
             document.querySelector("#idxChartBtn").click()
-    if name == "rrg" and not _RRG_LOADED["done"]:
+    if name == "rrg" and (not _RRG_LOADED["done"] or
+                           time.time() - _RRG_LOADED["at"] >= _YF_CACHE_TTL):
         asyncio.ensure_future(_run_rrg())
     # 거시경제 탭: 처음 열면 등록된 자료 목록을 불러온다.
     if name == "macrodoc":
