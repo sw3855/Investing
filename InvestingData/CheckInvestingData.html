@@ -130,6 +130,19 @@
     .daily-indicators { display:grid; gap:10px; margin-top:12px; }
     .indicator-chart { border:1px solid var(--bd); border-radius:8px; padding:6px 8px;
         background:#fff; }
+    .recov-wrap { position:relative; }
+    .recov-help-btn:hover circle { fill:#dfe3e8; }
+    .recov-help-pop { position:absolute; top:26px; left:8px; z-index:20;
+        width:min(360px, calc(100% - 16px)); background:#fff; border:1px solid var(--bd);
+        border-radius:8px; box-shadow:0 6px 20px rgba(0,0,0,.16); padding:12px 30px 12px 14px;
+        font-size:12px; line-height:1.5; color:#1f2328; }
+    .recov-help-pop h4 { margin:0 0 8px; font-size:13px; }
+    .recov-help-pop p { margin:6px 0; }
+    .recov-help-pop .recov-help-note { color:var(--mut); font-size:11px; }
+    .recov-help-close { position:absolute; top:6px; right:8px; width:22px; height:22px;
+        border:none; background:transparent; font-size:16px; line-height:1; cursor:pointer;
+        color:var(--mut); padding:0; }
+    .recov-help-close:hover { color:var(--sell); }
   .idx-chart-head { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 12px;
     padding:2px 4px 10px; }
   .idx-chart-head .nm { font-size:15px; font-weight:700; color:#131722; }
@@ -179,7 +192,7 @@
   .multpl-tip .row i { width:9px; height:9px; border-radius:2px; flex:0 0 auto; }
   .multpl-tip .row .nm { margin-right:10px; }
   .multpl-tip .row .v { font-weight:700; margin-left:auto; }
-    .candle-tooltip-host { position:relative; padding-bottom:90px; }
+    .candle-tooltip-host { position:relative; }
     .candle-tip-host { position:relative; }
     .multpl-tip.candle-tip { top:auto; bottom:8px; left:8px; right:8px;
         display:none; flex-direction:column; align-items:flex-start; gap:3px;
@@ -4456,6 +4469,7 @@ YF_CHART_HOSTS = [
 _IDXCHART_STATE = {"sym": None, "range": "6mo", "interval": "1d"}
 _IDXCHART_LOADED = {"done": False}
 _YF_HISTORY_CACHE = {}
+_YF_VOLUME_CACHE = {}
 _YF_CACHE_TTL = 5 * 60
 _YF_REQUEST_LIMIT = asyncio.Semaphore(1)
 # 호버 툴팁용 좌표/치수 캐시(값이 있는 점만). _candle_svg 에서 갱신한다.
@@ -4516,14 +4530,19 @@ async def _fetch_index_history(yf_sym, rng, interval="1d"):
         highs = quote.get("high") or []
         lows = quote.get("low") or []
         closes = quote.get("close") or []
+        volumes = quote.get("volume") or []
         market_price = (r0.get("meta") or {}).get("regularMarketPrice")
         market_ts = (r0.get("meta") or {}).get("regularMarketTime")
         rows = []
+        vmap = {}
         for i in range(len(ts)):
             o = opens[i] if i < len(opens) else None
             h = highs[i] if i < len(highs) else None
             lo = lows[i] if i < len(lows) else None
             c = closes[i] if i < len(closes) else None
+            vv = volumes[i] if i < len(volumes) else None
+            if isinstance(vv, (int, float)) and vv > 0:
+                vmap[datetime.fromtimestamp(ts[i], timezone.utc).date()] = vv
             if (c is None and i == len(ts) - 1 and
                     isinstance(market_price, (int, float)) and market_ts and
                     datetime.fromtimestamp(ts[i], timezone.utc).date() ==
@@ -4534,6 +4553,7 @@ async def _fetch_index_history(yf_sym, rng, interval="1d"):
             rows.append((ts[i], o, h, lo, c))
         if rows:
             _YF_HISTORY_CACHE[cache_key] = {"at": time.time(), "rows": rows}
+            _YF_VOLUME_CACHE[cache_key] = vmap
             return rows
     if last_err is not None:
         raise last_err
@@ -4593,6 +4613,23 @@ def _stochastic_slow(rows, period=15, slow_k_period=5, slow_d_period=5):
     return slow_k, _sma_nullable(slow_k, slow_d_period)
 
 
+# 오실레이터 패널 값 id -> [(label,color,values), ...]. 호버 시 값 갱신에 쓴다.
+_OSC_HOVER = {}
+# 캔들 차트 prefix -> (가격 마크업, MA 마크업) 마지막 봉 값. 호버 해제 시 복원용.
+_CANDLE_VAL_LAST = {}
+
+
+def _osc_value_markup(series_data, idx):
+    """오실레이터 패널 우측 상단 값 표시용 tspan 마크업(라벨+값)."""
+    spans = []
+    for label, color, values in series_data:
+        v = values[idx] if (idx is not None and 0 <= idx < len(values)) else None
+        txt = ("%s %.2f" % (label, v)) if isinstance(v, (int, float)) else ("%s -" % label)
+        attr = ' dx="10"' if spans else ''
+        spans.append('<tspan fill="%s"%s>%s</tspan>' % (color, attr, _esc(txt)))
+    return "".join(spans)
+
+
 def _oscillator_svg(rows, title, series, levels, vmin, vmax, guide_id=None):
     """고정 범위 오실레이터 보조 패널을 SVG로 렌더링한다."""
     W, H = 820.0, 150.0
@@ -4633,6 +4670,11 @@ def _oscillator_svg(rows, title, series, levels, vmin, vmax, guide_id=None):
                          'stroke-linejoin="round" stroke-linecap="round"/>'
                          % (" ".join(points), color))
     if guide_id:
+        val_id = guide_id.rsplit("-guide", 1)[0] + "-val"
+        _OSC_HOVER[val_id] = [(label, color, values) for label, color, values in series]
+        parts.append('<text id="%s" x="%g" y="16" text-anchor="end" '
+                     'style="font-size:10px;font-weight:700">%s</text>'
+                     % (val_id, W - pad_r, _osc_value_markup(_OSC_HOVER[val_id], n - 1)))
         parts.append('<line id="%s" class="guide-line" x1="0" y1="%g" x2="0" y2="%g" '
                      'style="display:none"/>' % (guide_id, pad_t, H - pad_b))
     parts.append('</svg></div>')
@@ -4654,6 +4696,279 @@ def _daily_indicators_html(rows, prefix):
                          ("SlowD", "#ff9800", slow_d)],
                         [(20, "20"), (80, "80")], 0.0, 100.0,
                         prefix + "-stoch-guide")))
+
+
+# ===== 회복 점수 · 조정 압력 모델 =====
+# 회복 점수 = 상대강도(지수/벤치마크)의 60일 스토캐스틱 위치, 5일 평활
+# 조정 압력 = 절대가격의 60일 역스토캐스틱 위치, 5일 평활 (높을수록 조정 진행)
+# 두 입력이 달라 대략 대칭(합≈일정)이나 완벽 대칭은 아니다.
+_RECOV_WIN = 60
+_RECOV_SMOOTH = 5
+_RECOV_DEFAULT_BENCH = "^NDX"          # 상대강도 기본 벤치마크(나스닥100)
+_RECOV_BENCH = {"NASDAQ:NDX": "^GSPC"}  # 나스닥100 자신은 S&P500 대비
+_RECOV_ELIGIBLE = {"NASDAQ:NDX", "SP:SPX", "DJ:DJI", "TVC:RUT", "NASDAQ:SOX",
+                   "TVC:GOLD", "BITSTAMP:BTCUSD"}
+_REGIME_BG = {"recover": "#e3f5e8", "neutral": "#eef1f4", "weak": "#fdecea"}
+# 확인(confirmation): 변동성·거래량이 평균보다 튀는 날에만 신호 강화.
+_RECOV_CONF_KV = 0.6       # 변동성(σ) 확인 민감도
+_RECOV_CONF_KN = 0.6       # 거래량 확인 민감도
+_RECOV_CONF_CAP = 1.8      # 최대 증폭
+_RECOV_VOL_WIN = 20        # 변동성·거래량 평균 창
+# 지수는 거래량이 없거나 부정확해 대표 ETF 거래량을 확인용으로 쓴다.
+_RECOV_PROXY_ETF = {
+    "NASDAQ:NDX": "QQQ", "SP:SPX": "SPY", "DJ:DJI": "DIA",
+    "TVC:RUT": "IWM", "NASDAQ:SOX": "SOXX",
+    "TVC:GOLD": "GLD", "BITSTAMP:BTCUSD": "BTC-USD",
+}
+# 호버 시 회복/조정 숫자를 해당 날짜 값으로 갱신하기 위한 시계열 캐시(prefix별).
+_RECOV_HOVER = {}
+
+
+def _last_num(seq):
+    """뒤에서부터 첫 숫자값을 반환. 없으면 None."""
+    for x in reversed(seq):
+        if isinstance(x, (int, float)):
+            return x
+    return None
+
+
+def _recov_value_markup(rv, cv):
+    """회복/조정 현재값 표시용 tspan 마크업."""
+    r = ('회복 %.0f' % rv) if isinstance(rv, (int, float)) else '회복 -'
+    c = ('조정 %.0f' % cv) if isinstance(cv, (int, float)) else '조정 -'
+    return ('<tspan fill="#2e9e5b">%s</tspan>'
+            '<tspan fill="#e8663d" dx="8">%s</tspan>' % (r, c))
+
+
+def _stoch_position(series, i, win):
+    """series[i]가 최근 win구간 저점~고점에서 차지하는 위치(0~100). 부족 시 None."""
+    seg = [series[j] for j in range(max(0, i - win + 1), i + 1)
+           if series[j] is not None]
+    cur = series[i]
+    if cur is None or len(seg) < 2:
+        return None
+    lo, hi = min(seg), max(seg)
+    if hi <= lo:
+        return 50.0
+    return 100.0 * (cur - lo) / (hi - lo)
+
+
+def _align_bench_closes(rows, bench_rows):
+    """벤치마크 종가를 rows의 각 봉 UTC날짜에 정렬. 없는 날짜는 직전값으로 채움(ffill).
+
+    거래 캘린더가 다른 자산(금선물·비트코인 vs 지수)도 맞추기 위해 raw ts가
+    아닌 날짜로 매칭하고, 주말 등 벤치마크 공백은 직전 종가로 채운다.
+    """
+    def _daykey(ts):
+        return datetime.fromtimestamp(ts, timezone.utc).date()
+
+    bench = sorted(((_daykey(b[0]), b[4]) for b in bench_rows), key=lambda x: x[0])
+    out = []
+    last = None
+    bi = 0
+    m = len(bench)
+    for r in rows:
+        dk = _daykey(r[0])
+        while bi < m and bench[bi][0] <= dk:
+            last = bench[bi][1]
+            bi += 1
+        out.append(last)
+    return out
+
+
+async def _recov_volume_aligned(rows, vol_yf, rng, interval):
+    """대표 심볼(vol_yf)의 일자별 거래량을 rows 날짜에 ffill 정렬. 실패 시 None."""
+    if not vol_yf or not rows:
+        return None
+    cache_key = "%s|%s|%s" % (vol_yf, rng, interval)
+    try:
+        await _fetch_index_history(vol_yf, rng, interval)
+    except Exception:
+        return None
+    vmap = _YF_VOLUME_CACHE.get(cache_key)
+    if not vmap:
+        return None
+    items = sorted(vmap.items())
+    out, last, bi, m = [], None, 0, len(items)
+    for r in rows:
+        dk = datetime.fromtimestamp(r[0], timezone.utc).date()
+        while bi < m and items[bi][0] <= dk:
+            last = items[bi][1]
+            bi += 1
+        out.append(last)
+    return out
+
+
+def _recov_conf_factors(closes, vol_aligned):
+    """변동성(σ 평균초과분)·거래량(스파이크)만 반영하는 확인 팩터 F(≥1) 배열."""
+    n = len(closes)
+    ret = [None] + [(closes[i] / closes[i - 1] - 1.0) if closes[i - 1] else None
+                    for i in range(1, n)]
+    sig = [None] * n
+    for i in range(n):
+        seg = [ret[j] for j in range(max(1, i - _RECOV_VOL_WIN + 1), i + 1)
+               if ret[j] is not None]
+        if len(seg) >= _RECOV_VOL_WIN:
+            mean = sum(seg) / len(seg)
+            sig[i] = (sum((x - mean) ** 2 for x in seg) / len(seg)) ** 0.5
+    sig_avg = _sma_nullable(sig, _RECOV_WIN)
+    vol_avg = _sma_nullable(vol_aligned, _RECOV_VOL_WIN) if vol_aligned else None
+    out = []
+    for i in range(n):
+        f = 1.0
+        if sig[i] is not None and sig_avg[i]:
+            f *= 1.0 + _RECOV_CONF_KV * max(0.0, sig[i] / sig_avg[i] - 1.0)
+        if vol_aligned and vol_avg and vol_aligned[i] and vol_avg[i]:
+            f *= 1.0 + _RECOV_CONF_KN * max(0.0, vol_aligned[i] / vol_avg[i] - 1.0)
+        out.append(max(1.0, min(_RECOV_CONF_CAP, f)))
+    return out
+
+
+def _recov_apply_conf(base, f):
+    """기준 점수의 중립(50) 대비 편차를 확인 팩터로 증폭(0~100 클램프)."""
+    if base is None:
+        return None
+    return max(0.0, min(100.0, 50.0 + (base - 50.0) * f))
+
+
+def _recovery_pressure_series(rows, bench_closes, vol_aligned=None):
+    """회복 점수·조정 압력 시계열과 레짐(회복/중립/약세)을 계산한다.
+
+    변동성·거래량이 평균 대비 튀는 날에만 신호를 강화하는 확인 팩터를 적용한다.
+    """
+    n = len(rows)
+    closes = [r[4] for r in rows]
+    rs = []
+    for i in range(n):
+        b = bench_closes[i] if bench_closes and i < len(bench_closes) else None
+        rs.append(closes[i] / b if isinstance(b, (int, float)) and b > 0 else None)
+    factors = _recov_conf_factors(closes, vol_aligned)
+    recov_raw = [_recov_apply_conf(_stoch_position(rs, i, _RECOV_WIN), factors[i])
+                 for i in range(n)]
+    corr_raw = []
+    for i in range(n):
+        p = _stoch_position(closes, i, _RECOV_WIN)
+        corr_raw.append(_recov_apply_conf(None if p is None else 100.0 - p, factors[i]))
+    recov = _sma_nullable(recov_raw, _RECOV_SMOOTH)
+    corr = _sma_nullable(corr_raw, _RECOV_SMOOTH)
+    regime = []
+    for v in recov:
+        if v is None:
+            regime.append(None)
+        elif v >= 66:
+            regime.append("recover")
+        elif v <= 33:
+            regime.append("weak")
+        else:
+            regime.append("neutral")
+    return recov, corr, regime
+
+
+def _recovery_pressure_svg(rows, recov, corr, regime, prefix="idxchart"):
+    """회복 점수·조정 압력 패널(레짐 배경 포함)을 SVG로 렌더링한다."""
+    W, H = 820.0, 172.0
+    pad_l, pad_r, pad_t, pad_b = 48.0, 14.0, 30.0, 24.0
+    plot_w, plot_h = W - pad_l - pad_r, H - pad_t - pad_b
+    n = len(rows)
+    if not n:
+        return ""
+
+    def Xe(i):
+        return pad_l + plot_w * (i / n)
+
+    def X(i):
+        return pad_l + plot_w * ((i + 0.5) / n)
+
+    def Y(v):
+        return pad_t + (100.0 - v) / 100.0 * plot_h
+
+    parts = ['<div class="indicator-chart"><svg viewBox="0 0 %g %g" '
+             'class="chart-svg oscillator-svg" preserveAspectRatio="xMidYMid meet">'
+             % (W, H)]
+    i = 0
+    while i < n:
+        reg = regime[i]
+        j = i
+        while j + 1 < n and regime[j + 1] == reg:
+            j += 1
+        if reg is not None:
+            parts.append('<rect x="%g" y="%g" width="%g" height="%g" fill="%s"/>'
+                         % (Xe(i), pad_t, Xe(j + 1) - Xe(i), plot_h, _REGIME_BG[reg]))
+        i = j + 1
+    parts.append('<rect x="%g" y="%g" width="%g" height="%g" fill="none" '
+                 'stroke="#d0d5db" stroke-width="1"/>' % (pad_l, pad_t, plot_w, plot_h))
+    parts.append('<text x="%g" y="16" style="fill:#1f2328;font-size:11px;'
+                 'font-weight:700">회복 점수 · 조정 압력 (60, 5)</text>' % pad_l)
+    parts.append('<g class="recov-help-btn" style="cursor:pointer">'
+                 '<circle cx="232" cy="11" r="7" fill="#eef1f4" stroke="#9aa0a6"/>'
+                 '<text x="232" y="15" text-anchor="middle" style="font-size:10px;'
+                 'font-weight:700;fill:#57606a">?</text></g>')
+    for level in (33.0, 66.0):
+        y = Y(level)
+        parts.append('<line x1="%g" y1="%g" x2="%g" y2="%g" stroke="#aeb4bd" '
+                     'stroke-width="1" stroke-dasharray="4 3"/>' % (pad_l, y, W - pad_r, y))
+        parts.append('<text x="%g" y="%g" class="ax-y">%g</text>' % (pad_l - 7, y + 4, level))
+    for values, color in ((recov, "#2e9e5b"), (corr, "#e8663d")):
+        pts = ["%g,%g" % (X(k), Y(v)) for k, v in enumerate(values)
+               if isinstance(v, (int, float))]
+        if len(pts) >= 2:
+            parts.append('<polyline points="%s" fill="none" stroke="%s" '
+                         'stroke-width="1.6" stroke-linejoin="round" '
+                         'stroke-linecap="round"/>' % (" ".join(pts), color))
+
+    def _last(v):
+        for x in reversed(v):
+            if isinstance(x, (int, float)):
+                return x
+        return None
+
+    lr, lc = _last(recov), _last(corr)
+    parts.append('<text id="%s-recov-val" x="%g" y="16" text-anchor="end" '
+                 'style="font-size:10px;font-weight:700">%s</text>'
+                 % (prefix, W - pad_r, _recov_value_markup(lr, lc)))
+    parts.append('<line id="%s-recov-guide" class="guide-line" x1="0" '
+                 'y1="%g" x2="0" y2="%g" style="display:none"/>'
+                 % (prefix, pad_t, pad_t + plot_h))
+    parts.append('</svg></div>')
+    return "".join(parts)
+
+
+def _recovery_pressure_html(rows, bench_closes, prefix="idxchart", vol_aligned=None):
+    """회복 점수·조정 압력 패널 HTML. 조건 미충족 시 빈 문자열."""
+    if not bench_closes or len(rows) < _RECOV_WIN:
+        return ""
+    recov, corr, regime = _recovery_pressure_series(rows, bench_closes, vol_aligned)
+    if not any(v is not None for v in recov):
+        return ""
+    _RECOV_HOVER[prefix] = {"recov": recov, "corr": corr,
+                           "last_recov": _last_num(recov),
+                           "last_corr": _last_num(corr)}
+    return ('<div class="daily-indicators"><div class="recov-wrap">%s%s</div></div>'
+            % (_recovery_pressure_svg(rows, recov, corr, regime, prefix),
+               _recov_help_popup()))
+
+
+def _recov_help_popup():
+    """회복 점수·조정 압력 계산 방식 설명 팝업 HTML."""
+    return (
+        '<div class="recov-help-pop" style="display:none">'
+        '<button type="button" class="recov-help-close" title="닫기">×</button>'
+        '<h4>회복 점수 · 조정 압력 계산 방식</h4>'
+        '<p><b>입력</b><br>· 회복 점수 = 상대강도(지수 ÷ 벤치마크)<br>'
+        '· 조정 압력 = 절대가격(종가)</p>'
+        '<p><b>핵심 · 60일 스토캐스틱 위치</b><br>'
+        '최근 60일 저점~고점 대비 현재 위치를 0~100으로 환산<br>'
+        'pos = 100 × (현재 − 60일저점) ÷ (60일고점 − 60일저점)</p>'
+        '<p>· 회복 점수 = 상대강도 pos <i>(100 = 60일 고점 회복)</i><br>'
+        '· 조정 압력 = 100 − 절대가격 pos <i>(100 = 60일 저점, 조정 심함)</i></p>'
+        '<p><b>평활</b> 두 값 모두 5일 이동평균으로 완만화</p>'
+        '<p><b>벤치마크</b> 기본 나스닥100(^NDX), 나스닥100은 S&amp;P500. '
+        'UTC 날짜로 정렬하고 주말 등 공백은 직전값으로 채움(ffill)</p>'
+        '<p><b>확인(거래량·변동성)</b> 변동성(20일 σ)이 자기 평균을 넘거나 '
+        '대표 ETF 거래량이 20일 평균 대비 튀는 날에만 중립(50) 대비 편차를 '
+        '증폭(최대 1.8배). 평소엔 원본과 거의 동일</p>'
+        '<p><b>배경 레짐</b> 회복 점수 기준 ≥66 회복 · 34~65 중립 · ≤33 약세</p>'
+        '</div>')
 
 
 def _candle_svg(rows, dec=2, prefix="idxchart", hover=None, overlay=None):
@@ -4725,14 +5040,34 @@ def _candle_svg(rows, dec=2, prefix="idxchart", hover=None, overlay=None):
     parts = ['<svg viewBox="0 0 %g %g" class="chart-svg candle-svg" '
              'preserveAspectRatio="xMidYMid meet">' % (W, H)]
 
-    # 이동평균선 범례(상단)
-    lx = padL
-    for period, color, vals in ma_series:
-        parts.append('<line x1="%g" y1="16" x2="%g" y2="16" stroke="%s" '
-                     'stroke-width="2"/>' % (lx, lx + 15, color))
-        parts.append('<text x="%g" y="19" style="fill:%s;font-size:11px;'
-                     'font-weight:600">MA%d</text>' % (lx + 19, color, period))
-        lx += 62
+    # 우측 상단 값 표시(가격 + 이동평균), 호버 시 갱신
+    def _price_markup(i):
+        o_, h_, l_, c_ = rows[i][1], rows[i][2], rows[i][3], rows[i][4]
+        pcol = "#089981" if c_ >= o_ else "#f23645"
+        return ('<tspan fill="#57606a">시 %s</tspan>'
+                '<tspan fill="#57606a" dx="8">고 %s</tspan>'
+                '<tspan fill="#57606a" dx="8">저 %s</tspan>'
+                '<tspan fill="%s" dx="8">종 %s</tspan>'
+                % (axfmt(o_), axfmt(h_), axfmt(l_), pcol, axfmt(c_)))
+
+    def _ma_markup(i):
+        spans = []
+        for period, color, vals in ma_series:
+            v = vals[i]
+            if v is None:
+                continue
+            attr = ' dx="8"' if spans else ''
+            spans.append('<tspan fill="%s"%s>MA%d %s</tspan>'
+                         % (color, attr, period, axfmt(v)))
+        return "".join(spans)
+
+    _CANDLE_VAL_LAST[prefix] = (_price_markup(n - 1), _ma_markup(n - 1))
+    parts.append('<text id="%s-price-val" x="%g" y="14" text-anchor="end" '
+                 'style="font-size:11px;font-weight:700">%s</text>'
+                 % (prefix, W - padR, _CANDLE_VAL_LAST[prefix][0]))
+    parts.append('<text id="%s-ma-val" x="%g" y="27" text-anchor="end" '
+                 'style="font-size:10px;font-weight:600">%s</text>'
+                 % (prefix, W - padR, _CANDLE_VAL_LAST[prefix][1]))
 
     # y축 그리드 + 눈금
     for k in range(5):
@@ -4841,7 +5176,8 @@ def _candle_svg(rows, dec=2, prefix="idxchart", hover=None, overlay=None):
         {"x": X(idx), "y": Y(c),
          "date": datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d"),
          "o": axfmt(o), "h": axfmt(h), "l": axfmt(lo), "c": axfmt(c),
-         "up": c >= o, "ma_html": _ma_tip(idx), "osc_html": _osc_tip(idx)}
+         "up": c >= o, "ma_html": _ma_tip(idx), "osc_html": _osc_tip(idx),
+         "psvg": _price_markup(idx), "masvg": _ma_markup(idx)}
         for idx, (ts, o, h, lo, c) in enumerate(rows)]
     hover["W"] = W
     hover["H"] = H
@@ -4850,7 +5186,7 @@ def _candle_svg(rows, dec=2, prefix="idxchart", hover=None, overlay=None):
     return "".join(parts)
 
 
-def _render_idxchart(name, rows):
+def _render_idxchart(name, rows, bench_closes=None, vol_aligned=None):
     el = document.querySelector("#idxchart-result")
     if el is None:
         return
@@ -4872,9 +5208,10 @@ def _render_idxchart(name, rows):
             '<span class="dt">%s 기준 · 최근 %d일</span></div>') % (
         _esc(name), fmt_num(last_c, dec), cls, arrow, chg, pct, d, len(rows))
     el.innerHTML = ('<div class="fin-chart">%s<div class="candle-tooltip-host">'
-                    '<div class="candle-tip-host">%s</div>%s'
-                    '<div id="idxchart-tip" class="multpl-tip candle-tip"></div></div></div>'
+                    '<div class="candle-tip-host">%s</div>%s%s</div></div>'
                     % (head, _candle_svg(rows, dec, "idxchart", _IDXCHART_HOVER),
+                       _recovery_pressure_html(rows, bench_closes, "idxchart",
+                                               vol_aligned),
                        _daily_indicators_html(rows, "idxchart")))
 
 
@@ -4894,7 +5231,20 @@ async def _run_idxchart():
     try:
         rows = await _fetch_index_history(
             yf_sym, _IDXCHART_STATE["range"], _IDXCHART_STATE["interval"])
-        _render_idxchart(name, rows)
+        bench_closes = None
+        vol_aligned = None
+        if sym in _RECOV_ELIGIBLE:
+            bench_yf = _RECOV_BENCH.get(sym, _RECOV_DEFAULT_BENCH)
+            try:
+                bench_rows = await _fetch_index_history(
+                    bench_yf, _IDXCHART_STATE["range"], _IDXCHART_STATE["interval"])
+                bench_closes = _align_bench_closes(rows, bench_rows)
+            except Exception:
+                bench_closes = None
+            vol_aligned = await _recov_volume_aligned(
+                rows, _RECOV_PROXY_ETF.get(sym),
+                _IDXCHART_STATE["range"], _IDXCHART_STATE["interval"])
+        _render_idxchart(name, rows, bench_closes, vol_aligned)
         _IDXCHART_STATE["sym"] = sym
         _IDXCHART_LOADED["done"] = True
         _set_idxchart_status("완료")
@@ -5129,8 +5479,7 @@ def _candle_hover(event, root_sel, hover, tip_id, guide_id, dot_id):
     if not pts:
         return
     svg = document.querySelector(root_sel + " svg.candle-svg")
-    tip = document.querySelector("#" + tip_id)
-    if svg is None or tip is None:
+    if svg is None:
         return
     rect = svg.getBoundingClientRect()
     if not rect.width or not rect.height:
@@ -5154,38 +5503,68 @@ def _candle_hover(event, root_sel, hover, tip_id, guide_id, dot_id):
         guide.style.display = "block"
     # 보조지표 SVG는 같은 날짜 인덱스를 자체 좌표계로 변환해 세로선을 표시한다.
     prefix = guide_id.rsplit("-guide", 1)[0]
-    indicator_x = 48.0 + (820.0 - 48.0 - 14.0) * ((pts.index(best) + 0.5) / len(pts))
-    for indicator_id in (prefix + "-wr-guide", prefix + "-stoch-guide"):
+    bi = pts.index(best)
+    indicator_x = 48.0 + (820.0 - 48.0 - 14.0) * ((bi + 0.5) / len(pts))
+    for indicator_id in (prefix + "-wr-guide", prefix + "-stoch-guide",
+                         prefix + "-recov-guide"):
         indicator_guide = document.querySelector("#" + indicator_id)
         if indicator_guide is not None:
             indicator_guide.setAttribute("x1", "%g" % indicator_x)
             indicator_guide.setAttribute("x2", "%g" % indicator_x)
             indicator_guide.style.display = "block"
+    # 오실레이터 패널 값(우측 상단)을 호버한 날짜 값으로 갱신
+    for val_id in (prefix + "-wr-val", prefix + "-stoch-val"):
+        el = document.querySelector("#" + val_id)
+        series_data = _OSC_HOVER.get(val_id)
+        if el is not None and series_data:
+            el.innerHTML = _osc_value_markup(series_data, bi)
+    recov_state = _RECOV_HOVER.get(prefix)
+    val_el = document.querySelector("#" + prefix + "-recov-val")
+    if val_el is not None and recov_state:
+        recov_vals = recov_state.get("recov") or []
+        corr_vals = recov_state.get("corr") or []
+        rv = recov_vals[bi] if bi < len(recov_vals) else None
+        cv = corr_vals[bi] if bi < len(corr_vals) else None
+        val_el.innerHTML = _recov_value_markup(rv, cv)
     if dot is not None:
         dot.setAttribute("cx", "%g" % best["x"])
         dot.setAttribute("cy", "%g" % best["y"])
         dot.style.display = "block"
 
-    col = "#089981" if best["up"] else "#f23645"
-    tip.innerHTML = (
-        '<div class="tip-date">%s</div>'
-        '<div class="tip-ohlc"><span>시가 %s</span><span>고가 %s</span>'
-        '<span>저가 %s</span><span>종가 <b style="color:%s">%s</b></span></div>'
-        '<div class="tip-ma">%s</div>'
-          '<div class="tip-osc">%s</div>'
-          % (_esc(best["date"]), _esc(best["o"]), _esc(best["h"]),
-              _esc(best["l"]), col, _esc(best["c"]), best.get("ma_html", ""),
-              best.get("osc_html", "")))
-    _place_tip_clamped(tip, svg, best["x"], best["y"], W, H)
+    price_el = document.querySelector("#" + prefix + "-price-val")
+    if price_el is not None:
+        price_el.innerHTML = best.get("psvg", "")
+    ma_el = document.querySelector("#" + prefix + "-ma-val")
+    if ma_el is not None:
+        ma_el.innerHTML = best.get("masvg", "")
 
 
 def _candle_hide(tip_id, guide_id, dot_id):
     prefix = guide_id.rsplit("-guide", 1)[0]
     for sel in ("#" + tip_id, "#" + guide_id, "#" + dot_id,
-                "#" + prefix + "-wr-guide", "#" + prefix + "-stoch-guide"):
+                "#" + prefix + "-wr-guide", "#" + prefix + "-stoch-guide",
+                "#" + prefix + "-recov-guide"):
         el = document.querySelector(sel)
         if el is not None:
             el.style.display = "none"
+    recov_state = _RECOV_HOVER.get(prefix)
+    val_el = document.querySelector("#" + prefix + "-recov-val")
+    if val_el is not None and recov_state:
+        val_el.innerHTML = _recov_value_markup(
+            recov_state.get("last_recov"), recov_state.get("last_corr"))
+    for val_id in (prefix + "-wr-val", prefix + "-stoch-val"):
+        el = document.querySelector("#" + val_id)
+        series_data = _OSC_HOVER.get(val_id)
+        if el is not None and series_data and series_data[0][2]:
+            el.innerHTML = _osc_value_markup(series_data, len(series_data[0][2]) - 1)
+    last = _CANDLE_VAL_LAST.get(prefix)
+    if last:
+        pe = document.querySelector("#" + prefix + "-price-val")
+        if pe is not None:
+            pe.innerHTML = last[0]
+        me = document.querySelector("#" + prefix + "-ma-val")
+        if me is not None:
+            me.innerHTML = last[1]
 
 
 # ===================== 종목 일봉 캔들 차트 (Yahoo Finance) =====================
@@ -5338,11 +5717,11 @@ def _yf_symbol_candidates(full_symbol):
 
 
 async def _fetch_history_any(cands, rng, interval="1d"):
-    """후보 심볼들을 차례로 시도해 첫 성공한 시계열을 반환."""
+    """후보 심볼들을 차례로 시도해 첫 성공한 (시계열, 심볼)을 반환."""
     last_err = None
     for sym in cands:
         try:
-            return await _fetch_index_history(sym, rng, interval)
+            return await _fetch_index_history(sym, rng, interval), sym
         except InvestingApiError as exc:
             last_err = exc
             continue
@@ -5409,12 +5788,15 @@ def _render_stock_chart(name, rows):
             annual)
     box.innerHTML = ('<div class="card"><div class="sec">%s%s%s'
                      '<div class="fin-chart"><div class="candle-tooltip-host">'
-                     '<div class="candle-tip-host">%s</div>%s'
-                     '<div id="stockchart-tip" class="multpl-tip candle-tip"></div></div></div>'
+                     '<div class="candle-tip-host">%s</div>%s%s</div></div>'
                      '</div></div>'
                      % (top, controls, head,
                         _candle_svg(rows, dec, "stockchart", _STOCKCHART_HOVER,
-                                    overlay), _daily_indicators_html(rows, "stockchart")))
+                                    overlay),
+                        _recovery_pressure_html(
+                            rows, _STOCKCHART_STATE.get("bench"), "stockchart",
+                            _STOCKCHART_STATE.get("vol")),
+                        _daily_indicators_html(rows, "stockchart")))
     _bind_stockchart_controls()
 
 
@@ -5490,10 +5872,26 @@ async def load_stock_chart(full_symbol, name):
     box.innerHTML = ('<div class="card"><div class="sec"><h3>일봉 차트</h3>'
                      '<div class="hint">차트를 불러오는 중...</div></div></div>')
     try:
-        rows = await _fetch_history_any(
+        rows, win_sym = await _fetch_history_any(
             cands, _STOCKCHART_STATE["range"], _STOCKCHART_STATE["interval"])
     except Exception:
-        rows = None
+        rows, win_sym = None, None
+    # 회복 점수용 벤치마크(기본 ^NDX) 상대강도 + 종목 거래량을 함께 받는다.
+    bench = None
+    vol = None
+    if rows and len(rows) >= _RECOV_WIN:
+        try:
+            bench_rows = await _fetch_index_history(
+                _RECOV_DEFAULT_BENCH, _STOCKCHART_STATE["range"],
+                _STOCKCHART_STATE["interval"])
+            bench = _align_bench_closes(rows, bench_rows)
+        except Exception:
+            bench = None
+        vol = await _recov_volume_aligned(
+            rows, win_sym, _STOCKCHART_STATE["range"],
+            _STOCKCHART_STATE["interval"])
+    _STOCKCHART_STATE["bench"] = bench
+    _STOCKCHART_STATE["vol"] = vol
     _render_stock_chart(name or full_symbol, rows)
 
 
@@ -8548,6 +8946,33 @@ def on_idxchart_leave(event):
     _candle_hide("idxchart-tip", "idxchart-guide", "idxchart-guide-dot")
 
 
+@when("click", "#idxchart-result")
+def on_idxchart_click(event):
+    """회복/조정 패널의 도움말 버튼 클릭 시 설명 팝업을 토글한다."""
+    _handle_recov_help_click(event)
+
+
+def _handle_recov_help_click(event):
+    """도움말 버튼/닫기/바깥 클릭에 따라 회복·조정 설명 팝업을 토글한다."""
+    target = event.target
+    if target is None:
+        return
+    btn = target.closest(".recov-help-btn")
+    if btn is not None:
+        wrap = btn.closest(".recov-wrap")
+        pop = wrap.querySelector(".recov-help-pop") if wrap is not None else None
+        if pop is not None:
+            pop.style.display = "block" if pop.style.display == "none" else "none"
+        return
+    if target.closest(".recov-help-pop") is not None:
+        if target.closest(".recov-help-close") is not None:
+            target.closest(".recov-help-pop").style.display = "none"
+        return
+    pops = document.querySelectorAll(".recov-help-pop")
+    for i in range(pops.length):
+        pops.item(i).style.display = "none"
+
+
 def _set_rrg_hover(ticker=None):
     elements = document.querySelectorAll(".rrg-trail, .rrg-hover-label")
     for i in range(elements.length):
@@ -9051,6 +9476,12 @@ def on_stockchart_hover(event):
 @when("mouseleave", "#result")
 def on_stockchart_leave(event):
     _candle_hide("stockchart-tip", "stockchart-guide", "stockchart-guide-dot")
+
+
+@when("click", "#result")
+def on_result_recov_help(event):
+    """종목 탭 회복/조정 패널의 도움말 팝업 토글."""
+    _handle_recov_help_click(event)
 
 
 @when("input", "#guru-search")
