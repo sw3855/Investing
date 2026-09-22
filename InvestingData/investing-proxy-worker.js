@@ -21,6 +21,15 @@
  * 사용 형식:
  *   GET  https://<worker>/?url=<encodeURIComponent(대상 TradingView URL)>
  *
+ * ── FRED API 키 설정 (환경변수 FRED_API_KEY) ───────────────
+ *  FRED(api.stlouisfed.org) 요청은 API 키가 필요하다. 키를 클라이언트(HTML)에
+ *  노출하지 않도록 Worker 환경변수로 등록하면, 프록시가 요청에 자동으로 주입한다.
+ *  1) https://fred.stlouisfed.org 에서 무료 API 키 발급
+ *  2) 이 Worker → Settings → Variables and Secrets →
+ *       Variable name: FRED_API_KEY, Value: <발급받은 키> (Secret 권장) → Deploy
+ *     (wrangler:  wrangler secret put FRED_API_KEY )
+ *  설정하면 클라이언트가 api_key 없이 보낸 FRED 요청에 워커가 키를 채워 넣는다.
+ *
  * ── 즐겨찾기(Favorites) 저장을 위한 KV 설정 ────────────────
  *  즐겨찾기는 Cloudflare KV 에 사용자별 JSON 으로 저장한다.
  *  1) 대시보드: Workers & Pages → KV → Create namespace
@@ -306,6 +315,16 @@ export default {
         status: 403,
         headers: CORS_HEADERS,
       });
+    }
+
+    // FRED(api.stlouisfed.org) 요청은 API 키를 클라이언트에 노출하지 않도록
+    // Worker 환경변수(FRED_API_KEY)로 서버에서 주입한다. 클라이언트는 키를
+    // 비워 보내거나 생략하며, 여기서 실제 키로 채운다.
+    if (targetUrl.hostname === "api.stlouisfed.org") {
+      const envKey = env && env.FRED_API_KEY;
+      if (envKey) {
+        targetUrl.searchParams.set("api_key", envKey);
+      }
     }
 
     const upstreamHeaders = {

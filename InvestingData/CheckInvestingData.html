@@ -148,6 +148,32 @@
   .idx-chart-head .nm { font-size:15px; font-weight:700; color:#131722; }
   .idx-chart-head .pv { font-size:15px; font-weight:600; }
   .idx-chart-head .dt { font-size:12px; color:var(--mut); margin-left:auto; }
+  .fx-converter { margin:2px 4px 12px; padding:10px 12px; border:1px solid var(--bd);
+    border-radius:8px; background:#f8fafc; }
+  .fx-conv-title { font-size:13px; font-weight:700; color:#131722; margin-bottom:8px; }
+  .fx-conv-rate { font-weight:500; color:var(--mut); }
+  .fx-conv-row { display:flex; flex-wrap:wrap; align-items:flex-end; gap:8px 12px; }
+  .fx-conv-row label { display:flex; flex-direction:column; gap:4px; font-size:12px;
+    color:var(--mut); }
+  .fx-conv-row input { width:160px; padding:6px 8px; border:1px solid var(--bd);
+    border-radius:6px; font-size:14px; }
+  .fx-conv-eq { font-size:18px; font-weight:700; color:var(--mut); padding-bottom:6px; }
+  .cmp-summary { display:flex; flex-wrap:wrap; gap:10px; margin:4px 0 14px; }
+  .cmp-stat { flex:1 1 160px; border:1px solid var(--bd); border-radius:8px;
+    padding:12px 14px; background:#f8fafc; display:flex; flex-direction:column; gap:6px; }
+  .cmp-stat .cl { font-size:12px; color:var(--mut); }
+  .cmp-stat .vl { font-size:18px; font-weight:700; color:#131722; }
+  .cmp-stat .vl small { font-size:12px; font-weight:600; color:var(--mut); }
+  .cmp-stat.profit { background:#fef6f5; border-color:#f4c9c2; }
+  .cmp-stat.profit .vl { color:#f23645; }
+  .cmp-stat.final { background:#eef7ff; border-color:#bfdcf5; }
+  .cmp-stat.final .vl { color:#1e64c8; }
+  .cmp-table { width:100%; border-collapse:collapse; font-size:13px; }
+  .cmp-table th, .cmp-table td { padding:6px 10px; border-bottom:1px solid var(--bd);
+    text-align:left; }
+  .cmp-table th { background:#f5f7fa; color:var(--mut); font-weight:600; }
+  .cmp-table td.num, .cmp-table th.num { text-align:right; font-variant-numeric:tabular-nums; }
+  .cmp-table td.up { color:#f23645; }
     .rrg-summary { display:flex; flex-wrap:wrap; gap:8px 18px; margin:2px 4px 12px;
         color:var(--mut); font-size:12px; }
     .rrg-summary strong { color:#1f2328; }
@@ -225,11 +251,22 @@
   .fin-table thead th.cur-col { background:#fdf1c9; color:#7a5c00; }
   @media (max-width:640px){ .grid{ grid-template-columns:1fr; } }
 
-  .tabs { display:flex; flex-wrap:wrap; gap:4px; border-bottom:2px solid var(--bd);
-    margin:0 0 16px; }
-  .tab-btn { border:1px solid var(--bd); border-bottom:none; background:var(--bg);
-    padding:9px 16px; border-radius:8px 8px 0 0; cursor:pointer; font-size:14px;
-    color:var(--mut); margin-bottom:-2px; white-space:nowrap; }
+  .tab-groups { display:flex; flex-wrap:wrap; gap:6px; margin:0 0 10px; }
+  .group-btn { display:inline-flex; align-items:center; justify-content:center;
+    border:1px solid var(--bd); background:var(--bg); padding:8px 18px;
+    border-radius:8px; cursor:pointer; font-size:14px; color:var(--mut);
+    font-weight:600; white-space:nowrap; line-height:1.2; }
+  .group-btn:hover { background:#eef1f5; }
+  .group-btn.active { background:#1f2328; color:#fff; border-color:#1f2328; }
+  .tabs { display:flex; border-bottom:2px solid var(--bd); margin:0 0 16px; }
+  .tab-group { display:none; width:100%; }
+  .tab-group.active { display:flex; flex-wrap:nowrap; gap:4px; }
+  .tab-btn { flex:1 1 0; min-width:0; display:inline-flex; align-items:center;
+    justify-content:center; border:1px solid var(--bd);
+    border-bottom:none; background:var(--bg);
+    padding:9px 14px; border-radius:8px 8px 0 0; cursor:pointer; font-size:14px;
+    color:var(--mut); margin-bottom:-2px; white-space:nowrap; line-height:1.2;
+    overflow:hidden; text-overflow:ellipsis; }
   .tab-btn.active { background:#fff; color:#1f2328; font-weight:600;
     border-bottom:2px solid #fff; }
   .tab-panel { display:none; }
@@ -475,6 +512,9 @@
   @media (max-width:600px) {
         .multpl-tip.candle-tip { font-size:10px; gap:2px; }
         .candle-tip .tip-ohlc, .candle-tip .tip-ma { gap:0 4px; }
+    .tab-groups { display:grid; grid-template-columns:repeat(4, 1fr); gap:6px; }
+    .group-btn { padding:8px 4px; font-size:12px; text-align:center; }
+    .tab-btn { padding:9px 8px; font-size:13px; }
     .idx-grid, .fav-folder-items { grid-template-columns:1fr; gap:0; }
     .idx-cell, .fav-cell {
       display:grid; grid-template-columns:1fr auto 84px; align-items:center;
@@ -529,17 +569,33 @@
     </div>
   </fieldset>
 
+  <div class="tab-groups">
+    <button class="group-btn active" data-group="analysis">종목 분석</button>
+    <button class="group-btn" data-group="market">시장 지표</button>
+    <button class="group-btn" data-group="macro">거시 경제</button>
+    <button class="group-btn" data-group="tools">계산기</button>
+  </div>
+
   <div class="tabs">
-    <button class="tab-btn active" data-tab="stock">종목</button>
-    <button class="tab-btn" data-tab="ai">AI 평가</button>
-    <button class="tab-btn" data-tab="idxchart">지수차트</button>
-    <button class="tab-btn" data-tab="macro">경제지표</button>
-    <button class="tab-btn" data-tab="feargreed">공포·탐욕</button>
-    <button class="tab-btn" data-tab="rrg">섹터 RRG</button>
-    <button class="tab-btn" data-tab="multpl">밸류에이션</button>
-    <button class="tab-btn" data-tab="liquidity">유동성</button>
-    <button class="tab-btn" data-tab="guru">13F</button>
-    <button class="tab-btn" data-tab="macrodoc">거시경제</button>
+    <div class="tab-group active" data-group="analysis">
+      <button class="tab-btn active" data-tab="stock">종목</button>
+      <button class="tab-btn" data-tab="ai">AI 평가</button>
+      <button class="tab-btn" data-tab="guru">13F</button>
+    </div>
+    <div class="tab-group" data-group="market">
+      <button class="tab-btn" data-tab="idxchart">지수차트</button>
+      <button class="tab-btn" data-tab="feargreed">공포·탐욕</button>
+      <button class="tab-btn" data-tab="rrg">섹터 RRG</button>
+      <button class="tab-btn" data-tab="multpl">밸류에이션</button>
+    </div>
+    <div class="tab-group" data-group="macro">
+      <button class="tab-btn" data-tab="macro">경제지표</button>
+      <button class="tab-btn" data-tab="liquidity">유동성</button>
+      <button class="tab-btn" data-tab="macrodoc">거시경제</button>
+    </div>
+    <div class="tab-group" data-group="tools">
+      <button class="tab-btn" data-tab="compound">복리계산기</button>
+    </div>
   </div>
 
   <div class="tab-panel active" id="tab-stock">
@@ -626,21 +682,13 @@
 
   <div class="tab-panel" id="tab-macro">
     <fieldset>
-      <legend>FRED 설정 · 미국 매크로 경제지표</legend>
-      <div class="row">
-        <input type="text" id="fredKey" class="grow"
-               value="95dccb1b1f992d3759fc48b757194ee9"
-               placeholder="FRED API 키 (예: abcdef0123456789abcdef0123456789)">
-        <button class="primary" id="macroBtn" disabled>조회</button>
-      </div>
-      <div class="row">
-        <span id="macro-status"></span>
-      </div>
+      <legend>미국 매크로 경제지표</legend>
       <div class="row">
         <span class="fin-quick">분류:
           <button type="button" class="macro-mode active" data-mode="normal">NORMAL</button>
           <button type="button" class="macro-mode" data-mode="custom">CUSTOM</button>
         </span>
+        <span id="macro-status"></span>
       </div>
       <div class="macro-note" id="cycle-note" style="display:none">
         <table class="cycle">
@@ -795,6 +843,45 @@
     </fieldset>
 
     <div id="macrodoc-viewer"></div>
+  </div>
+
+  <div class="tab-panel" id="tab-compound">
+    <fieldset>
+      <legend>적립식 복리 계산기</legend>
+      <div class="row">
+        <label>시작 금액 (₩)
+          <input type="text" id="cmpInitial" inputmode="decimal"
+                 style="width:160px" placeholder="예: 1,000,000" value="1,000,000">
+        </label>
+        <label>매월 적립 금액 (₩)
+          <input type="text" id="cmpMonthly" inputmode="decimal"
+                 style="width:160px" placeholder="예: 500,000" value="500,000">
+        </label>
+      </div>
+      <div class="row">
+        <label>투자 기간 (년)
+          <input type="text" id="cmpYears" inputmode="decimal"
+                 style="width:90px" placeholder="예: 10" value="10">
+        </label>
+        <label>연 이자율 (%)
+          <input type="text" id="cmpRate" inputmode="decimal"
+                 style="width:90px" placeholder="예: 7" value="7">
+        </label>
+        <label>복리 방식
+          <select id="cmpMode" style="width:130px">
+            <option value="12">월복리</option>
+            <option value="1" selected>연복리</option>
+            <option value="2">반기복리</option>
+            <option value="4">분기복리</option>
+            <option value="360">일복리(360)</option>
+          </select>
+        </label>
+        <button class="primary" id="cmpBtn">계산하기</button>
+      </div>
+      <div class="hint">매월 적립 금액은 두 번째 달부터 원금에 가산됩니다. 세금·수수료·물가상승률은 반영하지 않습니다.</div>
+    </fieldset>
+
+    <div id="cmp-result"></div>
   </div>
 
   <div class="tab-panel" id="tab-ai">
@@ -3410,6 +3497,7 @@ _CUSTOM_GROUP_LABEL = {"선행": "선행지표", "동행": "동행지표", "후�
 # 메크로 표시 상태(분류 모드) 및 마지막 조회 결과 캐시
 _MACRO_MODE = {"mode": "normal"}
 _MACRO_LAST = {"rows": None}
+_MACRO_LOADED = {"done": False}
 
 
 async def fetch_fred_series(ind, api_key):
@@ -3563,6 +3651,11 @@ async def fetch_dbnomics_chart(ind, freq="q"):
     return out
 
 
+# FRED API 키는 Cloudflare Worker 환경변수(FRED_API_KEY)로 서버에서 주입한다.
+# 클라이언트는 키를 비워 보내며 프록시가 실제 키로 채운다(키 비노출).
+FRED_API_KEY = ""
+
+
 async def _fetch_one_macro(ind, api_key):
     """지표 소스(fred/tv/db)에 맞게 한 개 조회."""
     src = ind.get("source")
@@ -3573,10 +3666,37 @@ async def _fetch_one_macro(ind, api_key):
     return await fetch_fred_series(ind, api_key)
 
 
+# 모바일 네트워크는 동시 연결 수가 적어 지표를 한꺼번에 병렬 요청하면 일부가
+# 드롭된다. 세마포어로 동시 요청 수를 제한해 FRED/프록시 과부하를 막는다.
+# (재조회 시에는 더 낮은 동시성 세마포어를 사용)
+_MACRO_REQUEST_LIMIT = asyncio.Semaphore(4)
+_MACRO_RETRY_LIMIT = asyncio.Semaphore(2)
+
+
+async def _fetch_one_macro_limited(ind, api_key, sem_size=4):
+    sem = _MACRO_RETRY_LIMIT if sem_size <= 2 else _MACRO_REQUEST_LIMIT
+    async with sem:
+        return await _fetch_one_macro(ind, api_key)
+
+
 async def fetch_all_macro(api_key):
-    """모든 지표를 병렬로 조회해 [(ind, result), ...] 반환."""
-    tasks = [_fetch_one_macro(ind, api_key) for ind in MACRO_INDICATORS]
+    """모든 지표를 동시 요청 수를 제한해 조회하고 [(ind, result), ...] 반환.
+    실패(None)한 지표는 동시성을 더 낮춰 최대 2회 자동 재조회한다."""
+    tasks = [_fetch_one_macro_limited(ind, api_key) for ind in MACRO_INDICATORS]
     results = await asyncio.gather(*tasks)
+    for _ in range(2):
+        failed = [i for i, r in enumerate(results)
+                  if not r or r.get("value") is None]
+        if not failed:
+            break
+        await asyncio.sleep(0.6)
+        # 재조회는 동시성을 2로 더 낮춰 모바일 드롭 가능성을 줄인다.
+        retry = [_fetch_one_macro_limited(MACRO_INDICATORS[i], api_key, 2)
+                 for i in failed]
+        retried = await asyncio.gather(*retry)
+        for i, r in zip(failed, retried):
+            if r and r.get("value") is not None:
+                results[i] = r
     return list(zip(MACRO_INDICATORS, results))
 
 
@@ -3646,18 +3766,9 @@ def render_macro(rows, mode=None):
                         % (_esc(ind["series"]), _esc(ind["label"]), _esc(cur_txt),
                            _esc(prev_txt), _esc(chg_txt), _esc(r.get("date") or "-")))
         html.append('</tbody></table></div></div>')
-    html.append('<div class="sec"><div class="hint">출처: FRED (St. Louis Fed) · '
-                'ISM PMI 는 DBnomics(ISM) 피드. 전년동월/전월 증감은 변환값'
-                '입니다. ISM PMI 는 비정상값을 걸러 마지막 정상 관측월 기준으로 '
-                '표시하므로 기준일이 최신월과 다를 수 있습니다. '
-                '지표 행을 클릭하면 위에 차트가 표시됩니다.'
-                '</div></div>')
     html.append('</div>')
     document.querySelector("#macro-result").innerHTML = "".join(html)
-    document.querySelector("#macro-chart").innerHTML = (
-        '<div class="card"><div class="sec"><div class="hint">'
-        '아래 지표 행을 클릭하면 차트가 여기에 표시됩니다.'
-        '</div></div></div>')
+    document.querySelector("#macro-chart").innerHTML = ""
     _bind_macro_rows()
 
 
@@ -3877,12 +3988,8 @@ async def _show_macro_chart(series, freq=None):
     _MACRO_CHART["series"] = series
     _MACRO_CHART["freq"] = freq
     box = document.querySelector("#macro-chart")
+    key = FRED_API_KEY
     is_db = ind.get("source") == "db"
-    key = document.querySelector("#fredKey").value.strip()
-    if not is_db and not key:
-        box.innerHTML = ('<div class="card"><div class="sec"><div class="hint">'
-                         'FRED API 키를 먼저 입력하세요.</div></div></div>')
-        return
     _highlight_macro_row(series)
     box.innerHTML = ('<div class="card"><div class="sec"><h3>%s</h3>'
                      '<div class="hint">차트를 불러오는 중...</div></div></div>'
@@ -3999,7 +4106,9 @@ def _set_macro_status(msg):
 
 
 def _macro_busy(busy):
-    document.querySelector("#macroBtn").disabled = busy
+    btn = document.querySelector("#macroBtn")
+    if btn is not None:
+        btn.disabled = busy
 
 
 # ===================== 연준 유동성 (Net Liquidity) =====================
@@ -4421,6 +4530,9 @@ async def update_indices():
         # 미 10년물 금리를 실시간 무위험수익률(WACC용)로 저장한다.
         if sym == "TVC:US10Y" and d and isinstance(d.get("close"), (int, float)):
             _RF_RATE["rate"] = d["close"] / 100.0
+        # 원/달러 실시간 환율(헤더·차트·계산기 공용)을 저장한다.
+        if sym == "FX_IDC:USDKRW" and d and isinstance(d.get("close"), (int, float)):
+            _FX_RATE["rate"] = round(d["close"], 2)
         charted = sym in INDEX_YF
         cell_cls = "idx-cell idx-link" if charted else "idx-cell"
         attr = ' data-idxsym="%s"' % _esc(sym) if charted else ""
@@ -5186,6 +5298,41 @@ def _candle_svg(rows, dec=2, prefix="idxchart", hover=None, overlay=None):
     return "".join(parts)
 
 
+# 원/달러 차트에서 현재 환율(1 USD = rate KRW)로 환전 금액을 계산하는 변환기.
+_FX_RATE = {"rate": None}
+
+
+def _fx_converter_html(rate):
+    rate = round(rate, 2)
+    _FX_RATE["rate"] = rate
+    return (
+        '<div class="fx-converter">'
+        '<div class="fx-conv-title">환율 계산기 '
+        '<span class="fx-conv-rate">(1 USD = %s KRW)</span></div>'
+        '<div class="fx-conv-row">'
+        '<label>원화(KRW) '
+        '<input type="text" inputmode="decimal" id="fxKrwInput" '
+        'placeholder="예: 1,000,000"></label>'
+        '<span class="fx-conv-eq">=</span>'
+        '<label>달러(USD) '
+        '<input type="text" inputmode="decimal" id="fxUsdInput" '
+        'placeholder="예: 1,000"></label>'
+        '</div></div>'
+    ) % fmt_num(rate, 2)
+
+
+def _fx_num(el):
+    if el is None:
+        return None
+    raw = (el.value or "").replace(",", "").strip()
+    if raw == "":
+        return None
+    try:
+        return float(raw)
+    except (ValueError, TypeError):
+        return None
+
+
 def _render_idxchart(name, rows, bench_closes=None, vol_aligned=None):
     el = document.querySelector("#idxchart-result")
     if el is None:
@@ -5198,7 +5345,12 @@ def _render_idxchart(name, rows, bench_closes=None, vol_aligned=None):
     last_c, prev_c = last[4], prev[4]
     chg = last_c - prev_c
     pct = (chg / prev_c * 100.0) if prev_c else 0.0
-    dec = 2 if last_c < 1000 else 0
+    sel = document.querySelector("#idxChartSel")
+    is_fx = sel is not None and sel.value == "FX_IDC:USDKRW"
+    # 원/달러는 헤더 그리드와 동일한 실시간 환율을 우선 사용(없으면 일봉 종가).
+    fx_live = _FX_RATE.get("rate") if is_fx else None
+    disp_c = fx_live if fx_live else last_c
+    dec = 2 if (last_c < 1000 or is_fx) else 0
     cls = "up" if chg >= 0 else "down"
     arrow = "▲" if chg >= 0 else "▼"
     d = datetime.fromtimestamp(last[0], tz=timezone.utc).strftime("%Y-%m-%d")
@@ -5206,10 +5358,14 @@ def _render_idxchart(name, rows, bench_closes=None, vol_aligned=None):
             '<span class="pv">%s</span>'
             '<span class="%s">%s%+.2f (%+.2f%%)</span>'
             '<span class="dt">%s 기준 · 최근 %d일</span></div>') % (
-        _esc(name), fmt_num(last_c, dec), cls, arrow, chg, pct, d, len(rows))
-    el.innerHTML = ('<div class="fin-chart">%s<div class="candle-tooltip-host">'
+        _esc(name), fmt_num(disp_c, dec), cls, arrow, chg, pct, d, len(rows))
+    fx_html = ""
+    if is_fx:
+        fx_html = _fx_converter_html(disp_c)
+    el.innerHTML = ('<div class="fin-chart">%s%s<div class="candle-tooltip-host">'
                     '<div class="candle-tip-host">%s</div>%s%s</div></div>'
-                    % (head, _candle_svg(rows, dec, "idxchart", _IDXCHART_HOVER),
+                    % (head, fx_html,
+                       _candle_svg(rows, dec, "idxchart", _IDXCHART_HOVER),
                        _recovery_pressure_html(rows, bench_closes, "idxchart",
                                                vol_aligned),
                        _daily_indicators_html(rows, "idxchart")))
@@ -8888,6 +9044,45 @@ async def on_ai_access_refresh(event):
 def on_enter(event):
     if _is_enter(event):
         document.querySelector("#lookupBtn").click()
+
+
+# 상위 그룹 활성 상태와 하위 탭 표시를 현재 탭 기준으로 동기화한다.
+_GROUP_LAST = {}
+
+
+def _sync_tab_group(name):
+    btn = document.querySelector('.tab-btn[data-tab="%s"]' % name)
+    grp_el = btn.closest(".tab-group") if btn is not None else None
+    grp = grp_el.getAttribute("data-group") if grp_el is not None else None
+    if not grp:
+        return
+    _GROUP_LAST[grp] = name
+    gbtns = document.querySelectorAll(".group-btn")
+    for i in range(gbtns.length):
+        b = gbtns.item(i)
+        b.classList.toggle("active", b.getAttribute("data-group") == grp)
+    groups = document.querySelectorAll(".tab-group")
+    for i in range(groups.length):
+        g = groups.item(i)
+        g.classList.toggle("active", g.getAttribute("data-group") == grp)
+
+
+@when("click", ".group-btn")
+def on_group(event):
+    g = event.target.getAttribute("data-group")
+    if not g:
+        return
+    last = _GROUP_LAST.get(g)
+    target = None
+    if last:
+        target = document.querySelector('.tab-btn[data-tab="%s"]' % last)
+    if target is None:
+        target = document.querySelector(
+            '.tab-group[data-group="%s"] .tab-btn' % g)
+    if target is not None:
+        target.click()
+
+
 @when("click", ".tab-btn")
 def on_tab(event):
     name = event.target.getAttribute("data-tab")
@@ -8907,9 +9102,14 @@ def on_tab(event):
             p.classList.add("active")
         else:
             p.classList.remove("active")
+    _sync_tab_group(name)
     # 공포·탐욕 탭을 처음 열면 자동으로 1회 조회한다.
     if name == "feargreed" and not _FG_LOADED["done"]:
         document.querySelector("#fgBtn").click()
+    # 경제지표 탭을 처음 열면 자동으로 1회 조회한다.
+    if name == "macro" and not _MACRO_LOADED["done"]:
+        _MACRO_LOADED["done"] = True
+        asyncio.ensure_future(run_macro())
     # 밸류에이션 탭: 지표 목록을 채우고 처음 열면 기본 지표를 1회 조회한다.
     if name == "multpl":
         _populate_multpl_select()
@@ -8931,6 +9131,10 @@ def on_tab(event):
         if not _MACRODOC_LOADED["done"]:
             asyncio.ensure_future(_load_macrodoc_list())
         _update_macrodoc_admin_ui()
+    # 복리계산기 탭: 처음 열면 기본값으로 1회 계산한다.
+    if name == "compound" and not _CMP_LOADED["done"]:
+        _render_compound()
+        _CMP_LOADED["done"] = True
 
 
 @when("mousemove", "#idxchart-result")
@@ -8948,6 +9152,133 @@ def on_idxchart_leave(event):
 def on_idxchart_click(event):
     """회복/조정 패널의 도움말 버튼 클릭 시 설명 팝업을 토글한다."""
     _handle_recov_help_click(event)
+
+
+@when("input", "#idxchart-result")
+def on_fx_input(event):
+    """환율 계산기: 원화/달러 입력 시 현재 환율로 반대 통화를 환산."""
+    target = event.target
+    if target is None:
+        return
+    tid = getattr(target, "id", "")
+    if tid not in ("fxKrwInput", "fxUsdInput"):
+        return
+    rate = _FX_RATE.get("rate")
+    krw_el = document.querySelector("#fxKrwInput")
+    usd_el = document.querySelector("#fxUsdInput")
+    if krw_el is None or usd_el is None or not rate:
+        return
+    if tid == "fxKrwInput":
+        krw = _fx_num(krw_el)
+        usd_el.value = "" if krw is None else fmt_num(krw / rate, 2)
+    else:
+        usd = _fx_num(usd_el)
+        krw_el.value = "" if usd is None else fmt_num(usd * rate, 0)
+
+
+# ===================== 적립식 복리 계산기 =====================
+
+_CMP_LOADED = {"done": False}
+
+
+def _cmp_num(sel):
+    el = document.querySelector(sel)
+    if el is None:
+        return None
+    raw = (el.value or "").replace(",", "").strip()
+    if raw == "":
+        return None
+    try:
+        return float(raw)
+    except (ValueError, TypeError):
+        return None
+
+
+def _compound_simulate(initial, monthly, years, rate_pct, ppy):
+    """월 단위로 적립하고 선택한 복리 주기(ppy=연간 복리 횟수)에 맞춰 이자를 반영.
+    반환: (총투자금, 최종금액, [(연차, 누적투자금, 잔액)...])."""
+    r = rate_pct / 100.0
+    total_months = int(round(years * 12))
+    balance = initial
+    invested = initial
+    yearly = []
+    for m in range(1, total_months + 1):
+        # 매월 적립금은 두 번째 달부터 원금에 가산.
+        if m >= 2:
+            balance += monthly
+            invested += monthly
+        if ppy == 360:
+            balance *= (1.0 + r / 360.0) ** 30
+        elif ppy == 12:
+            balance *= (1.0 + r / 12.0)
+        else:
+            mpp = int(12 / ppy)
+            if m % mpp == 0:
+                balance *= (1.0 + r / ppy)
+        if m % 12 == 0:
+            yearly.append((m // 12, invested, balance))
+    return invested, balance, yearly
+
+
+def _render_compound():
+    el = document.querySelector("#cmp-result")
+    if el is None:
+        return
+    initial = _cmp_num("#cmpInitial") or 0.0
+    monthly = _cmp_num("#cmpMonthly") or 0.0
+    years = _cmp_num("#cmpYears")
+    rate = _cmp_num("#cmpRate")
+    mode = document.querySelector("#cmpMode")
+    ppy = int(mode.value) if mode is not None else 12
+    if not years or years <= 0 or rate is None:
+        el.innerHTML = '<div class="warn">투자 기간(1년 이상)과 이자율을 입력하세요.</div>'
+        return
+    invested, final, yearly = _compound_simulate(initial, monthly, years, rate, ppy)
+    profit = final - invested
+    ror = (profit / invested * 100.0) if invested else 0.0
+    summary = (
+        '<div class="cmp-summary">'
+        '<div class="cmp-stat"><span class="cl">총 투자금</span>'
+        '<span class="vl">%s 원</span></div>'
+        '<div class="cmp-stat profit"><span class="cl">총 수익</span>'
+        '<span class="vl">%s 원 <small>(+%.1f%%)</small></span></div>'
+        '<div class="cmp-stat final"><span class="cl">최종 금액</span>'
+        '<span class="vl">%s 원</span></div>'
+        '</div>') % (fmt_num(invested, 0), fmt_num(profit, 0), ror,
+                     fmt_num(final, 0))
+    rows = []
+    for yr, inv, bal in yearly:
+        rows.append('<tr><td>%d년차</td><td class="num">%s</td>'
+                    '<td class="num">%s</td><td class="num up">%s</td></tr>'
+                    % (yr, fmt_num(inv, 0), fmt_num(bal - inv, 0),
+                       fmt_num(bal, 0)))
+    table = ""
+    if rows:
+        table = (
+            '<table class="cmp-table"><thead><tr><th>기간</th>'
+            '<th class="num">누적 투자금</th><th class="num">누적 수익</th>'
+            '<th class="num">잔액</th></tr></thead><tbody>%s</tbody></table>'
+            % "".join(rows))
+    el.innerHTML = summary + table
+
+
+@when("click", "#cmpBtn")
+def on_compound_calc(event):
+    _render_compound()
+
+
+@when("change", "#cmpInitial")
+def on_cmp_initial_change(event):
+    v = _cmp_num("#cmpInitial")
+    if v is not None:
+        event.target.value = fmt_num(v, 0)
+
+
+@when("change", "#cmpMonthly")
+def on_cmp_monthly_change(event):
+    v = _cmp_num("#cmpMonthly")
+    if v is not None:
+        event.target.value = fmt_num(v, 0)
 
 
 def _handle_recov_help_click(event):
@@ -9021,6 +9352,7 @@ def _open_index_chart(sym):
             p.classList.add("active")
         else:
             p.classList.remove("active")
+    _sync_tab_group("idxchart")
     _populate_idxchart_select()
     sel = document.querySelector("#idxChartSel")
     if sel is not None and sym:
@@ -9218,25 +9550,16 @@ def on_multpl_leave(event):
             el.style.display = "none"
 
 
-@when("click", "#macroBtn")
-async def on_macro(event):
-    key = document.querySelector("#fredKey").value.strip()
-    if not key:
-        window.alert("FRED API 키를 입력하세요.")
-        return
-    try:
-        window.localStorage.setItem("fredApiKey", key)
-    except Exception:
-        pass
+async def run_macro():
     _macro_busy(True)
     _set_macro_status("조회 중...")
     document.querySelector("#macro-result").innerHTML = ""
     try:
-        rows = await fetch_all_macro(key)
+        rows = await fetch_all_macro(FRED_API_KEY)
         render_macro(rows, _MACRO_MODE.get("mode", "normal"))
         ok = sum(1 for _, r in rows if r and r.get("value") is not None)
         if ok == 0:
-            _set_macro_status("실패 · 데이터 없음 (API 키/프록시 확인)")
+            _set_macro_status("실패 · 데이터 없음 (프록시 확인)")
         else:
             _set_macro_status("완료 · %d/%d 지표" % (ok, len(rows)))
     except InvestingApiError as exc:
@@ -9247,12 +9570,6 @@ async def on_macro(event):
         window.alert("조회 중 오류가 발생했습니다:\n%s" % exc)
     finally:
         _macro_busy(False)
-
-
-@when("keydown", "#fredKey")
-def on_fred_enter(event):
-    if _is_enter(event):
-        document.querySelector("#macroBtn").click()
 
 
 @when("click", ".macro-mode")
@@ -9278,10 +9595,7 @@ def on_macro_mode(event):
 
 @when("click", "#liqBtn")
 async def on_liquidity(event):
-    key = document.querySelector("#fredKey").value.strip()
-    if not key:
-        window.alert("'경제지표' 탭에서 FRED API 키를 먼저 입력하세요.")
-        return
+    key = FRED_API_KEY
     btn = document.querySelector("#liqBtn")
     btn.disabled = True
     _set_liq_status("불러오는 중...")
@@ -10084,15 +10398,8 @@ async def on_macrodoc_register(event):
 
 # 초기화: 조회 버튼 활성화
 document.querySelector("#lookupBtn").disabled = False
-document.querySelector("#macroBtn").disabled = False
-try:
-    _saved_key = window.localStorage.getItem("fredApiKey")
-    if _saved_key:
-        document.querySelector("#fredKey").value = _saved_key
-except Exception:
-    pass
 _set_status("준비 완료")
-_set_macro_status("준비 완료 · FRED API 키 입력 후 조회")
+_set_macro_status("준비 완료")
 
 # 대가 13F 탭: 검색으로 찾도록 안내
 render_guru_list([])
