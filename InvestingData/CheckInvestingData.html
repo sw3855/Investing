@@ -4818,8 +4818,15 @@ async def _fetch_index_history(yf_sym, rng, interval="1d"):
                     datetime.fromtimestamp(ts[i], timezone.utc).date() ==
                     datetime.fromtimestamp(market_ts, timezone.utc).date()):
                 c = market_price
-            if o is None or h is None or lo is None or c is None:
+            # 야후가 마지막 봉의 시/고/저를 0(또는 None)으로 주는 경우가 있어 종가로 보정한다.
+            if not (isinstance(c, (int, float)) and c > 0):
                 continue
+            if not (isinstance(o, (int, float)) and o > 0):
+                o = c
+            if not (isinstance(h, (int, float)) and h > 0):
+                h = c
+            if not (isinstance(lo, (int, float)) and lo > 0):
+                lo = c
             rows.append((ts[i], o, h, lo, c))
         if rows:
             _YF_HISTORY_CACHE[cache_key] = {"at": time.time(), "rows": rows}
