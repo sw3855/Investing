@@ -11,11 +11,12 @@
 
 <style>
   :root { --bd:#d0d7de; --bg:#f6f8fa; --pri:#2962ff; --mut:#57606a;
-          --buy:#089981; --sell:#f23645; --hold:#787b86; }
+          --buy:#089981; --sell:#f23645; --hold:#787b86;
+          color-scheme: light dark; }
   * { box-sizing: border-box; }
   body { font-family:"Segoe UI","Malgun Gothic",sans-serif; margin:0;
          color:#1f2328; background:#fff; }
-  header { background:#131722; color:#fff; padding:14px 20px;
+  header { background:#0e1e46; color:#fff; padding:14px 20px;
     display:flex; align-items:center; justify-content:space-between; gap:12px; }
   header h1 { font-size:18px; margin:0; }
   .fx-rate { position:absolute; left:16px; bottom:10px; font-size:13px;
@@ -23,6 +24,35 @@
   .fx-rate .up { color:#3fd1a2; }
   .fx-rate .down { color:#ff6b6b; }
   .hdr-right { display:flex; flex-direction:column; align-items:flex-end; gap:4px; }
+  .hdr-acct { position:relative; }
+  .acct-btn { position:relative; width:38px; height:38px; border-radius:50%;
+    border:1px solid #2a3f70; background:#16274f; color:#cdd6e6; cursor:pointer;
+    display:inline-flex; align-items:center; justify-content:center; padding:0; }
+  .acct-btn:hover { background:#1d3268; border-color:var(--pri); color:#fff; }
+  .acct-btn svg { width:21px; height:21px; }
+  .acct-btn.logged-in { border-color:#3fd1a2; color:#fff; }
+  .acct-btn.logged-in::after { content:""; position:absolute; top:1px; right:1px;
+    width:9px; height:9px; border-radius:50%; background:#3fd1a2;
+    border:2px solid #0e1e46; }
+  .acct-popup { display:none; position:absolute; right:0; top:calc(100% + 10px);
+    z-index:60; width:260px; background:#fff; color:#1f2328;
+    border:1px solid var(--bd); border-radius:10px;
+    box-shadow:0 10px 30px rgba(0,0,0,.3); padding:14px; }
+  .acct-popup.open { display:block; }
+  .acct-popup::before { content:""; position:absolute; top:-7px; right:11px;
+    width:12px; height:12px; background:#fff; border-left:1px solid var(--bd);
+    border-top:1px solid var(--bd); transform:rotate(45deg); }
+  .acct-popup-title { font-size:14px; font-weight:700; margin:0 0 10px; }
+  .acct-fields { display:flex; flex-direction:column; gap:8px; margin-bottom:10px; }
+  .acct-fields label { display:flex; flex-direction:column; gap:3px;
+    font-size:12px; color:var(--mut); }
+  .acct-fields input { width:100%; height:34px; padding:4px 8px;
+    border:1px solid var(--bd); border-radius:6px; font-size:14px; }
+  #favAccountInfo { font-size:13px; color:#1f2328; }
+  .acct-actions { display:flex; flex-direction:column; gap:6px; }
+  .acct-actions button { width:100%; height:34px; }
+  .acct-status { margin-top:8px; font-size:12px; color:var(--mut);
+    min-height:16px; text-align:center; }
   .idx-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(108px, 1fr));
     gap:8px; width:100%; }
   .idx-cell { background:#1b2130; border:1px solid #232838; border-radius:8px;
@@ -36,6 +66,21 @@
   .idx-cell .chg { display:block; font-size:12px; font-weight:600; margin-top:2px; }
   .idx-cell .up { color:#3fd1a2; }
   .idx-cell .down { color:#ff6b6b; }
+  .idx-cell.skeleton { pointer-events:none; }
+  .idx-cell.skeleton .sk { display:block; height:11px; border-radius:4px;
+    margin:0 auto; background:#2a3145;
+    background-image:linear-gradient(90deg, #262c3e 25%, #333b52 37%, #262c3e 63%);
+    background-size:400px 100%; animation:idx-shimmer 1.3s ease-in-out infinite; }
+  .idx-cell.skeleton .sk.nm { width:62%; margin-top:2px; }
+  .idx-cell.skeleton .sk.pv { width:82%; height:15px; margin-top:7px; }
+  .idx-cell.skeleton .sk.chg { width:46%; margin-top:6px; }
+  @keyframes idx-shimmer {
+    0% { background-position:-160px 0; }
+    100% { background-position:160px 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .idx-cell.skeleton .sk { animation:none; }
+  }
   .index-box { background:#131722; border:1px solid #131722; border-radius:8px;
     margin:0 0 14px; position:relative; padding:12px 16px 36px; }
   main { max-width:900px; margin:0 auto; padding:18px 20px 60px; }
@@ -58,10 +103,16 @@
   .warn { color:#9a6700; background:#fff8c5; border:1px solid #eac54f;
     border-radius:6px; padding:8px 10px; font-size:13px; margin:0 0 14px; }
   .hint { color:var(--mut); font-size:12px; margin-top:8px; }
+  .mini-spin { display:inline-block; width:11px; height:11px; margin-right:6px;
+    vertical-align:-1px; border:2px solid rgba(41,98,255,.25);
+    border-top-color:var(--pri); border-radius:50%;
+    animation:mini-spin .7s linear infinite; }
+  @keyframes mini-spin { to { transform:rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .mini-spin { animation-duration:1.6s; } }
 
   .card { border:1px solid var(--bd); border-radius:10px; margin-top:16px;
     overflow:hidden; }
-  .card-head { background:#131722; color:#fff; padding:14px 18px; }
+  .card-head { background:#0e1e46; color:#fff; padding:14px 18px; }
   .card-head .name { font-size:17px; font-weight:600; }
   .card-head .sym { font-size:13px; opacity:.75; margin-left:6px; }
   .card-head .price { font-size:15px; margin-top:4px; }
@@ -185,11 +236,27 @@
         font-size:12px; color:var(--mut); }
     .rrg-legend span { display:inline-flex; align-items:center; gap:4px; }
     .rrg-legend i { display:inline-block; width:9px; height:9px; border-radius:50%; }
+    .rrg-custom-list { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+    .rrg-custom-list:empty { display:none; }
+    .rrg-custom-chip { display:inline-flex; align-items:center; gap:5px;
+        font-size:13px; font-weight:600; border:1px solid var(--bd);
+        border-radius:14px; padding:3px 6px 3px 10px; background:var(--bg); }
+    .rrg-custom-chip i { width:9px; height:9px; border-radius:50%; display:inline-block; }
+    .rrg-custom-del { width:18px; height:18px; border-radius:50%; border:none;
+        background:transparent; color:var(--mut); cursor:pointer; font-size:14px;
+        line-height:1; padding:0; }
+    .rrg-custom-del:hover { background:#ffe9e9; color:var(--sell); }
+    .rrg-eye-cell { width:34px; text-align:center; }
+    .rrg-eye { border:none; background:transparent; cursor:pointer; padding:2px;
+        line-height:0; color:var(--pri); display:inline-flex; }
+    .rrg-eye.off { color:var(--mut); }
+    .rrg-table tr.rrg-row-hidden td:not(.rrg-eye-cell) { opacity:.4; }
     .rrg-table { width:100%; border-collapse:collapse; margin-top:12px; font-size:13px; }
     .rrg-table th, .rrg-table td { padding:6px 8px; border-bottom:1px solid #eaecef;
         text-align:right; white-space:nowrap; }
     .rrg-table th { color:var(--mut); background:var(--bg); font-weight:600; }
     .rrg-table th:first-child, .rrg-table td:first-child { text-align:left; }
+    .rrg-table th:nth-child(2), .rrg-table td:nth-child(2) { text-align:left; }
     .rrg-pane { margin-top:8px; }
     .rrg-help { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));
         gap:8px; margin-top:10px; }
@@ -253,22 +320,23 @@
 
   .tab-groups { display:flex; flex-wrap:wrap; gap:6px; margin:0 0 10px; }
   .group-btn { display:inline-flex; align-items:center; justify-content:center;
-    border:1px solid var(--bd); background:var(--bg); padding:8px 18px;
-    border-radius:8px; cursor:pointer; font-size:14px; color:var(--mut);
+    border:1px solid #243b6e; background:#16274f; padding:8px 18px;
+    border-radius:8px; cursor:pointer; font-size:14px; color:#aeb4bd;
     font-weight:600; white-space:nowrap; line-height:1.2; }
-  .group-btn:hover { background:#eef1f5; }
-  .group-btn.active { background:#1f2328; color:#fff; border-color:#1f2328; }
-  .tabs { display:flex; border-bottom:2px solid var(--bd); margin:0 0 16px; }
+  .group-btn:hover { background:#1d3268; border-color:var(--pri); color:#e6e8eb; }
+  .group-btn.active { background:#1c47c4; color:#fff; border-color:#1c47c4; }
+  .tabs { display:flex; border-bottom:2px solid #243b6e; margin:0 0 16px; }
   .tab-group { display:none; width:100%; }
   .tab-group.active { display:flex; flex-wrap:nowrap; gap:4px; }
   .tab-btn { flex:1 1 0; min-width:0; display:inline-flex; align-items:center;
-    justify-content:center; border:1px solid var(--bd);
-    border-bottom:none; background:var(--bg);
+    justify-content:center; border:1px solid #243b6e;
+    border-bottom:none; background:#16274f;
     padding:9px 14px; border-radius:8px 8px 0 0; cursor:pointer; font-size:14px;
-    color:var(--mut); margin-bottom:-2px; white-space:nowrap; line-height:1.2;
+    color:#aeb4bd; margin-bottom:-2px; white-space:nowrap; line-height:1.2;
     overflow:hidden; text-overflow:ellipsis; }
-  .tab-btn.active { background:#fff; color:#1f2328; font-weight:600;
-    border-bottom:2px solid #fff; }
+  .tab-btn:hover { background:#1d3268; color:#e6e8eb; }
+  .tab-btn.active { background:#1c47c4; color:#fff; font-weight:600;
+    border-color:#1c47c4; border-bottom:2px solid #1c47c4; }
   .tab-panel { display:none; }
   .tab-panel.active { display:block; }
   .macrodoc-title { font-size:16px; font-weight:600; margin:16px 0 8px; }
@@ -282,7 +350,7 @@
   /* AI 기업 평가 결과(마크다운) */
   .ai-card { border:1px solid var(--bd); border-radius:10px; margin-top:16px;
     overflow:hidden; }
-  .ai-card-head { background:#131722; color:#fff; padding:14px 18px;
+  .ai-card-head { background:#0e1e46; color:#fff; padding:14px 18px;
     font-size:16px; font-weight:600; }
   .ai-body { padding:16px 20px; font-size:14px; line-height:1.7; color:#1f2328; }
   .ai-body h1, .ai-body h2, .ai-body h3 { color:#131722; line-height:1.35;
@@ -529,43 +597,120 @@
     .fav-cell { background:transparent; border-color:#eaecef; padding-right:24px; }
     .fav-cell .fav-del,
     .fav-cell .guru-fav-del { top:50%; transform:translateY(-50%); right:0; }
+    /* 섹터 RRG: 가로 스크롤 대신 화면 폭에 맞춰 축소 */
+    .rrg-chart { min-width:0; }
+    .rrg-chart-wrap { overflow:hidden; }
+  }
+
+  /* ===== 다크 모드: OS/기기 기본 테마(prefers-color-scheme)에 자동으로 맞춤 ===== */
+  @media (prefers-color-scheme: dark) {
+    :root { --bd:#2b323b; --bg:#1a2029; --pri:#4d8bff; --mut:#9aa4b0; }
+    body { background:#0f1419; color:#e6e8eb; }
+
+    /* 밝은 표면 → 어두운 카드 표면 */
+    .fin-period button, .fin-chart, .indicator-chart, .recov-help-pop,
+    .rrg-help .item, .ai-suggest, .fav-cell, .fav-chip,
+    .fin-table td:first-child { background:#161c24; }
+
+    /* 살짝 떠 있는 서브 패널 */
+    .fx-converter, .cmp-stat, .cmp-table th { background:#1b222b; }
+    .acct-popup { background:#161c24; color:#e6e8eb; border-color:#2b323b; }
+    .acct-popup::before { background:#161c24; border-color:#2b323b; }
+    #favAccountInfo { color:#e6e8eb; }
+
+    /* 강조 텍스트 → 밝게 */
+    .recov-help-pop, .rrg-summary strong, .rrg-help .item b,
+    .ai-body, .ai-body h1, .ai-body h2, .ai-body strong,
+    .fg-comp-name, table.cycle, .cmp-legend, .fav-cell .nm, .fav-cell .pv,
+    .idx-chart-head .nm, .fx-conv-title, .cmp-stat .vl,
+    .tech-tab:hover, table.holdings th.sortable:hover { color:#e6e8eb; }
+
+    /* 옅은 경계선 */
+    .kv, table.holdings th, table.holdings td, .rrg-table th, .rrg-table td,
+    .fin-table th, .fin-table td { border-color:#262d36; }
+
+    /* 파란 선택/호버 */
+    .fin-table tr.sel-metric td, .fin-table tr.sel-metric td:first-child,
+    .ai-suggest-item:hover, .ai-suggest-item.active,
+    table.holdings tbody tr.macro-sel, .guru-item:hover, .cmp-detail:hover,
+    .fav-collapse-btn:hover, .fav-folder.folder-drag-over,
+    .fav-folder-items.drag-over-empty, .fav-cell:hover, .fav-cell.drag-over,
+    .fav-folder .fav-folder-ren:hover { background:#18243c; }
+    table.holdings tbody tr.macro-sel:hover { background:#1e2c48; }
+    table.holdings tbody tr:hover { background:#1a212b; }
+
+    /* 위험(삭제) 호버 */
+    .cmp-remove:hover, #favDeleteBtn:hover, .fav-folder .fav-folder-del:hover,
+    .fav-cell .fav-del:hover, .fav-cell .guru-fav-del:hover,
+    .fav-chip .fav-del:hover, .ai-error { background:#3a1f22; }
+
+    /* 특수 강조 카드 */
+    .cmp-stat.profit { background:#2a1a1a; border-color:#5a2e2e; }
+    .cmp-stat.final { background:#152238; border-color:#284b74; }
+    .fin-table th.cur-col, .fin-table td.cur-col { background:#2e2716; }
+    .fin-table thead th.cur-col { background:#3a3016; color:#e2c774; }
+    .warn { background:#332b0e; border-color:#6b5a1e; color:#e0c85a; }
+    #favAddBtn:not(:disabled) { background:#332b0e; border-color:#8a7420; color:#e6cf74; }
+
+    /* 차트 SVG(클래스 기반 요소) */
+    .chart-svg .pt-val { fill:#e6e8eb; }
+    .chart-svg .guide-line { stroke:#8b95a1; }
+    .chart-svg .guide-dot { fill:#8b95a1; }
   }
 </style>
 </head>
 <body>
 <header>
   <h1>Investing Data</h1>
+  <div class="hdr-acct">
+    <button id="acctBtn" class="acct-btn" type="button" title="계정"
+            aria-haspopup="true" aria-expanded="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path fill="currentColor" d="M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5Zm0 2c-4 0-8 2-8 5v1h16v-1c0-3-4-5-8-5Z"/>
+      </svg>
+    </button>
+    <div id="acct-popup" class="acct-popup" role="dialog" aria-label="계정">
+      <div class="acct-popup-title">계정</div>
+      <div class="acct-fields">
+        <label id="favAccountLabel">ID
+          <input type="text" id="favAccount"
+                 placeholder="예: my-list" autocomplete="username">
+        </label>
+        <label id="favKeyLabel">PW
+          <input type="password" id="favKey"
+                 placeholder="비밀 키(4자 이상)" autocomplete="current-password">
+        </label>
+        <span id="favAccountInfo" style="display:none"></span>
+      </div>
+      <div class="acct-actions">
+        <button id="favLoginBtn" class="primary">로그인</button>
+        <button id="favRegisterBtn">계정 등록</button>
+        <button id="favResetBtn">비밀번호 리셋</button>
+        <button id="favChangePwBtn" style="display:none">비밀번호 변경</button>
+        <button id="favLogoutBtn" style="display:none">로그아웃</button>
+        <button id="favDeleteBtn" style="display:none">계정 삭제</button>
+      </div>
+      <div id="fav-login-status" class="acct-status"></div>
+    </div>
+  </div>
 </header>
 <main>
   <input type="hidden" id="proxy"
          value="https://investing-proxy.sw3855.workers.dev/?url=">
   <fieldset class="index-box">
-    <div id="indices" class="idx-grid">로딩중…</div>
-  </fieldset>
-
-  <fieldset class="fav-fieldset">
-    <legend>계정</legend>
-    <button id="acctCollapseBtn" class="fav-collapse-btn" type="button"
-            title="계정 접기/펴기">▲</button>
-    <div id="acct-body">
-    <div class="row">
-      <label id="favAccountLabel">ID:
-        <input type="text" id="favAccount" style="width:150px"
-               placeholder="예: my-list" autocomplete="username">
-      </label>
-      <label id="favKeyLabel">PW:
-        <input type="password" id="favKey" style="width:150px"
-               placeholder="비밀 키(4자 이상)" autocomplete="current-password">
-      </label>
-      <span id="favAccountInfo" style="display:none"></span>
-      <button id="favLoginBtn">로그인</button>
-      <button id="favRegisterBtn">계정 등록</button>
-      <button id="favResetBtn">비밀번호 리셋</button>
-      <button id="favChangePwBtn" style="display:none">비밀번호 변경</button>
-      <button id="favLogoutBtn" style="display:none">로그아웃</button>
-      <button id="favDeleteBtn" style="display:none">계정 삭제</button>
-      <span id="fav-login-status"></span>
-    </div>
+    <div id="indices" class="idx-grid">
+      <div class="idx-cell skeleton"><span class="sk nm"></span><span class="sk pv"></span><span class="sk chg"></span></div>
+      <div class="idx-cell skeleton"><span class="sk nm"></span><span class="sk pv"></span><span class="sk chg"></span></div>
+      <div class="idx-cell skeleton"><span class="sk nm"></span><span class="sk pv"></span><span class="sk chg"></span></div>
+      <div class="idx-cell skeleton"><span class="sk nm"></span><span class="sk pv"></span><span class="sk chg"></span></div>
+      <div class="idx-cell skeleton"><span class="sk nm"></span><span class="sk pv"></span><span class="sk chg"></span></div>
+      <div class="idx-cell skeleton"><span class="sk nm"></span><span class="sk pv"></span><span class="sk chg"></span></div>
+      <div class="idx-cell skeleton"><span class="sk nm"></span><span class="sk pv"></span><span class="sk chg"></span></div>
+      <div class="idx-cell skeleton"><span class="sk nm"></span><span class="sk pv"></span><span class="sk chg"></span></div>
+      <div class="idx-cell skeleton"><span class="sk nm"></span><span class="sk pv"></span><span class="sk chg"></span></div>
+      <div class="idx-cell skeleton"><span class="sk nm"></span><span class="sk pv"></span><span class="sk chg"></span></div>
+      <div class="idx-cell skeleton"><span class="sk nm"></span><span class="sk pv"></span><span class="sk chg"></span></div>
+      <div class="idx-cell skeleton"><span class="sk nm"></span><span class="sk pv"></span><span class="sk chg"></span></div>
     </div>
   </fieldset>
 
@@ -675,7 +820,19 @@
                 </span>
                 <span id="rrg-status"></span>
             </div>
-            <div class="hint">꼬리는 최근 12거래일의 이동 경로입니다.</div>
+            <div class="row" style="margin-top:10px">
+                <label>종목 추가:
+                    <input type="text" id="rrgCustomInput"
+                           placeholder="예: AAPL, QQQ, NVDA" style="width:150px">
+                </label>
+                <button id="rrgAddBtn">＋ 추가</button>
+                <label>폴더 추가:
+                    <select id="rrgFolderSel" style="width:150px"></select>
+                </label>
+                <button id="rrgFolderAddBtn">＋ 추가</button>
+            </div>
+            <div id="rrg-chips" class="rrg-custom-list"></div>
+            <div class="hint">꼬리는 최근 12거래일의 이동 경로입니다. 기본 테마 ETF에 추가한 종목·즐겨찾기 폴더가 함께 표시되며, 이 브라우저에 저장됩니다(미국 상장 티커 기준).</div>
             <div id="rrg-result"></div>
         </fieldset>
     </div>
@@ -763,15 +920,6 @@
   </div>
 
   <div class="tab-panel" id="tab-feargreed">
-    <fieldset>
-      <legend>공포·탐욕 지수 · 미국 증시(CNN) + 암호화폐(alternative.me)</legend>
-      <div class="row">
-        <button class="primary" id="fgBtn">조회 / 새로고침</button>
-        <span id="fg-status"></span>
-      </div>
-      <div class="hint">미국 증시 지수는 CNN Business(7개 지표 종합), 암호화폐 지수는 alternative.me 데이터를 사용합니다.</div>
-    </fieldset>
-
     <div id="fg-result"></div>
   </div>
 
@@ -802,15 +950,6 @@
   </div>
 
   <div class="tab-panel" id="tab-liquidity">
-    <fieldset>
-      <legend>연준 유동성 · 순유동성(Net Liquidity) 지표 (FRED)</legend>
-      <div class="row">
-        <span class="fin-quick">FRED API 키는 '경제지표' 탭에 입력한 키를 함께 사용합니다.</span>
-        <button class="primary" id="liqBtn">조회 / 새로고침</button>
-        <span id="liq-status"></span>
-      </div>
-    </fieldset>
-
     <div id="liq-result"></div>
   </div>
 
@@ -3420,8 +3559,29 @@ def _apply_fin_period(period):
     refresh_financials()
 
 
+# 로딩성 상태 메시지에는 회전 스피너를 붙여 표시한다.
+_STATUS_DONE_HINTS = ("완료", "오류", "실패", "없습니다", "필요", "입력",
+                      "취소됨", "삭제됨", "변경됨", "등록됨", "저장", "결과")
+
+
+def _status_html(msg):
+    text = "" if msg is None else str(msg)
+    if not text:
+        return ""
+    loading = ("..." in text) or ("…" in text) or text.rstrip().endswith("중")
+    if loading and not any(hint in text for hint in _STATUS_DONE_HINTS):
+        return '<span class="mini-spin" aria-hidden="true"></span>'
+    return ""
+
+
+def _apply_status(sel, msg):
+    el = document.querySelector(sel)
+    if el is not None:
+        el.innerHTML = _status_html(msg)
+
+
 def _set_status(msg):
-    document.querySelector("#status").textContent = msg
+    _apply_status("#status", msg)
 
 
 def _set_busy(busy):
@@ -3992,7 +4152,7 @@ async def _show_macro_chart(series, freq=None):
     is_db = ind.get("source") == "db"
     _highlight_macro_row(series)
     box.innerHTML = ('<div class="card"><div class="sec"><h3>%s</h3>'
-                     '<div class="hint">차트를 불러오는 중...</div></div></div>'
+                     '<div class="hint"><span class="mini-spin"></span></div></div></div>'
                      % _esc(ind["label"]))
     try:
         if is_db:
@@ -4102,7 +4262,7 @@ def _bind_macro_rows():
 
 
 def _set_macro_status(msg):
-    document.querySelector("#macro-status").textContent = msg
+    _apply_status("#macro-status", msg)
 
 
 def _macro_busy(busy):
@@ -4454,7 +4614,7 @@ def render_liquidity(rows):
 
 
 def _set_liq_status(msg):
-    document.querySelector("#liq-status").textContent = msg
+    _apply_status("#liq-status", msg)
 
 
 # ===================== 원/달러 환율 (헤더 상시 표시) =====================
@@ -4589,9 +4749,7 @@ _IDXCHART_HOVER = {"pts": [], "W": 0.0, "H": 0.0, "y1": 0.0, "y2": 0.0}
 
 
 def _set_idxchart_status(msg):
-    el = document.querySelector("#idxchart-status")
-    if el is not None:
-        el.textContent = msg
+    _apply_status("#idxchart-status", msg)
 
 
 def _populate_idxchart_select():
@@ -4759,7 +4917,7 @@ def _oscillator_svg(rows, title, series, levels, vmin, vmax, guide_id=None):
 
     parts = ['<div class="indicator-chart"><svg viewBox="0 0 %g %g" '
              'class="chart-svg oscillator-svg" preserveAspectRatio="xMidYMid meet">' % (W, H)]
-    parts.append('<text x="%g" y="16" style="fill:#1f2328;font-size:11px;font-weight:700">%s</text>'
+    parts.append('<text x="%g" y="16" style="fill:currentColor;font-size:11px;font-weight:700">%s</text>'
                  % (pad_l, _esc(title)))
     legend_x = pad_l + 155
     for label, color, values in series:
@@ -5009,7 +5167,7 @@ def _recovery_pressure_svg(rows, recov, corr, regime, prefix="idxchart"):
         i = j + 1
     parts.append('<rect x="%g" y="%g" width="%g" height="%g" fill="none" '
                  'stroke="#d0d5db" stroke-width="1"/>' % (pad_l, pad_t, plot_w, plot_h))
-    parts.append('<text x="%g" y="16" style="fill:#1f2328;font-size:11px;'
+    parts.append('<text x="%g" y="16" style="fill:currentColor;font-size:11px;'
                  'font-weight:700">회복 점수 · 조정 압력 (60, 5)</text>' % pad_l)
     parts.append('<g class="recov-help-btn" style="cursor:pointer">'
                  '<circle cx="232" cy="11" r="7" fill="#eef1f4" stroke="#9aa0a6"/>'
@@ -5433,11 +5591,196 @@ _RRG_SECTORS = [
 _RRG_STATE = {"range": "1mo"}
 _RRG_LOADED = {"done": False, "at": 0.0}
 
+# 사용자가 직접 추가한 커스텀 종목/폴더(브라우저 localStorage 에 저장).
+_RRG_CUSTOM = {"list": []}   # [{"ticker","name","color"}]
+_RRG_FOLDERS = {"list": []}  # ["폴더명", ...] — 즐겨찾기 폴더를 함께 표시
+_RRG_CUSTOM_PALETTE = ["#2962ff", "#e8663d", "#2e9e5b", "#b07aa1",
+                       "#f2b100", "#00a6d6", "#d6336c", "#7048e8"]
+_RRG_CUSTOM_KEY = "rrg_custom_tickers"
+_RRG_FOLDERS_KEY = "rrg_folders"
+
+
+def _rrg_load_custom():
+    """localStorage 에서 커스텀 종목 목록을 읽어온다(실패 시 빈 목록)."""
+    try:
+        raw = window.localStorage.getItem(_RRG_CUSTOM_KEY)
+        data = json.loads(raw) if raw else []
+    except Exception:
+        data = []
+    out = []
+    if isinstance(data, list):
+        for d in data:
+            if isinstance(d, dict) and d.get("ticker"):
+                out.append({"ticker": str(d["ticker"]).upper(),
+                            "name": d.get("name") or str(d["ticker"]).upper(),
+                            "color": d.get("color") or _RRG_CUSTOM_PALETTE[0]})
+    _RRG_CUSTOM["list"] = out
+    return out
+
+
+def _rrg_save_custom():
+    try:
+        window.localStorage.setItem(_RRG_CUSTOM_KEY, json.dumps(_RRG_CUSTOM["list"]))
+    except Exception:
+        pass
+
+
+def _rrg_load_folders():
+    """localStorage 에서 함께 표시할 즐겨찾기 폴더 목록을 읽어온다."""
+    try:
+        raw = window.localStorage.getItem(_RRG_FOLDERS_KEY)
+        data = json.loads(raw) if raw else []
+    except Exception:
+        data = []
+    _RRG_FOLDERS["list"] = [str(x) for x in data if x] if isinstance(data, list) else []
+    return _RRG_FOLDERS["list"]
+
+
+def _rrg_save_folders():
+    try:
+        window.localStorage.setItem(_RRG_FOLDERS_KEY, json.dumps(_RRG_FOLDERS["list"]))
+    except Exception:
+        pass
+
+
+def _rrg_all_sectors():
+    """기본 테마 ETF + 커스텀 종목 + 선택한 즐겨찾기 폴더의 종목을 모두 합친 목록."""
+    out = list(_RRG_SECTORS)
+    palette = _RRG_CUSTOM_PALETTE
+    for c in _RRG_CUSTOM["list"]:
+        out.append((c["ticker"], c["name"], c["color"]))
+    seen = {t.upper() for t, _n, _c in out}
+    i = 0
+    for f in (_FAV_LAST.get("list") or []):
+        fol = (f.get("folder") or "Default").strip() or "Default"
+        if fol not in _RRG_FOLDERS["list"]:
+            continue
+        full = f.get("symbol") or ""
+        cands = _yf_symbol_candidates(full)
+        if not cands:
+            continue
+        fetch = cands[0]
+        if fetch.upper() in seen:
+            continue
+        seen.add(fetch.upper())
+        display = full.split(":")[-1] or full
+        out.append((fetch, display, palette[i % len(palette)]))
+        i += 1
+    return out
+
+
+def _populate_rrg_folders():
+    """'폴더 추가' 드롭다운을 아직 추가되지 않은 즐겨찾기 폴더로 채운다."""
+    sel = document.querySelector("#rrgFolderSel")
+    if sel is None:
+        return
+    present = set()
+    for f in (_FAV_LAST.get("list") or []):
+        fol = (f.get("folder") or "Default").strip() or "Default"
+        present.add(fol)
+    ordered = (["Default"] if "Default" in present else [])
+    for n in _FAV_FOLDERS:
+        if n in present and n != "Default" and n not in ordered:
+            ordered.append(n)
+    for n in sorted(present, key=str.lower):
+        if n not in ordered:
+            ordered.append(n)
+    avail = [n for n in ordered if n not in _RRG_FOLDERS["list"]]
+    if not _fav_logged_in():
+        opts = ['<option value="">(로그인 후 폴더 선택)</option>']
+    elif not avail:
+        opts = ['<option value="">(추가할 폴더 없음)</option>']
+    else:
+        opts = ['<option value="">폴더 선택…</option>']
+        opts += ['<option value="%s">📁 %s</option>' % (_esc(n), _esc(n)) for n in avail]
+    sel.innerHTML = "".join(opts)
+
+
+def render_rrg_chips():
+    """추가된 커스텀 종목·폴더를 칩(삭제 버튼 포함)으로 표시한다."""
+    box = document.querySelector("#rrg-chips")
+    if box is None:
+        return
+    chips = []
+    for c in _RRG_CUSTOM["list"]:
+        chips.append(
+            '<span class="rrg-custom-chip">'
+            '<i style="background:%s"></i>%s'
+            '<button class="rrg-custom-del" data-ticker="%s" title="삭제">×</button>'
+            '</span>' % (c["color"], _esc(c["ticker"]), _esc(c["ticker"])))
+    for name in _RRG_FOLDERS["list"]:
+        chips.append(
+            '<span class="rrg-custom-chip rrg-folder-chip">📁 %s'
+            '<button class="rrg-folder-del" data-folder="%s" title="삭제">×</button>'
+            '</span>' % (_esc(name), _esc(name)))
+    box.innerHTML = "".join(chips)
+    dels = document.querySelectorAll("#rrg-chips .rrg-custom-del")
+    for i in range(dels.length):
+        el = dels.item(i)
+        _bind(el, "click", _make_rrg_custom_del_handler(el.getAttribute("data-ticker")))
+    fdels = document.querySelectorAll("#rrg-chips .rrg-folder-del")
+    for i in range(fdels.length):
+        el = fdels.item(i)
+        _bind(el, "click", _make_rrg_folder_del_handler(el.getAttribute("data-folder")))
+
+
+def _rrg_add_custom(ticker):
+    """커스텀 종목을 추가하고 저장 후 RRG 를 다시 그린다."""
+    tk = (ticker or "").strip().upper()
+    if not tk:
+        return
+    existing = {t.upper() for t, _n, _c in _rrg_all_sectors()}
+    if tk in existing:
+        window.alert("'%s' 는 이미 목록에 있습니다." % tk)
+        return
+    color = _RRG_CUSTOM_PALETTE[len(_RRG_CUSTOM["list"]) % len(_RRG_CUSTOM_PALETTE)]
+    _RRG_CUSTOM["list"].append({"ticker": tk, "name": tk, "color": color})
+    _rrg_save_custom()
+    render_rrg_chips()
+    asyncio.ensure_future(_run_rrg())
+
+
+def _make_rrg_custom_del_handler(ticker):
+    def handler(evt):
+        evt.preventDefault()
+        evt.stopPropagation()
+        _RRG_CUSTOM["list"] = [c for c in _RRG_CUSTOM["list"]
+                               if c["ticker"] != ticker]
+        _rrg_save_custom()
+        render_rrg_chips()
+        asyncio.ensure_future(_run_rrg())
+    return handler
+
+
+def _rrg_add_folder(name):
+    """즐겨찾기 폴더를 표시 목록에 추가하고 저장 후 RRG 를 다시 그린다."""
+    nm = (name or "").strip()
+    if not nm or nm in _RRG_FOLDERS["list"]:
+        return
+    _RRG_FOLDERS["list"].append(nm)
+    _rrg_save_folders()
+    _populate_rrg_folders()
+    render_rrg_chips()
+    asyncio.ensure_future(_run_rrg())
+
+
+def _make_rrg_folder_del_handler(name):
+    def handler(evt):
+        evt.preventDefault()
+        evt.stopPropagation()
+        _RRG_FOLDERS["list"] = [n for n in _RRG_FOLDERS["list"] if n != name]
+        _rrg_save_folders()
+        _populate_rrg_folders()
+        render_rrg_chips()
+        asyncio.ensure_future(_run_rrg())
+    return handler
+
+
+# 새로고침 시에는 항상 기본 테마 ETF만 표시한다(커스텀/폴더는 세션 중에만 유지).
+
 
 def _set_rrg_status(msg):
-    el = document.querySelector("#rrg-status")
-    if el is not None:
-        el.textContent = msg
+    _apply_status("#rrg-status", msg)
 
 
 def _rrg_series(rows, benchmark_by_ts):
@@ -5574,20 +5917,72 @@ def _rrg_svg(items):
 
 
 def _render_rrg(items):
+    _RRG_LAST_ITEMS["items"] = items or []
+    _rrg_render_body()
+
+
+# 표에서 눈 아이콘으로 숨긴 종목(ticker) 집합. 기본은 모두 표시(빈 집합).
+_RRG_HIDDEN = set()
+_RRG_LAST_ITEMS = {"items": []}
+_RRG_EYE_ON = ('<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" '
+               'd="M12 5C6.5 5 2.7 9.3 1.5 12c1.2 2.7 5 7 10.5 7s9.3-4.3 10.5-7C21.3 9.3 17.5 5 12 5Zm0 '
+               '11a4 4 0 1 1 0-8 4 4 0 0 1 0 8Zm0-6a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z"/></svg>')
+_RRG_EYE_OFF = ('<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" '
+                'd="M2 4.3 3.3 3 21 20.7 19.7 22l-3-3A11.7 11.7 0 0 1 12 19C6.5 19 2.7 14.7 1.5 12a15 '
+                '15 0 0 1 4-5L2 4.3Zm7.5 7.5 2.7 2.7A2 2 0 0 1 9.5 11.8ZM12 7a5 5 0 0 1 5 5c0 .5-.1 1-.2 '
+                '1.4l2.9 2.9c1-1 1.8-2.2 2.3-3.3-1.2-2.7-5-7-10.5-7-.9 0-1.7.1-2.5.4l2 2c.3 0 .6-.1 1-.1Z"/></svg>')
+
+
+def _rrg_render_body():
+    """저장된 items 로 RRG 차트+표를 그린다(눈 아이콘 표시/숨김 상태 반영)."""
     el = document.querySelector("#rrg-result")
     if el is None:
         return
+    items = _RRG_LAST_ITEMS["items"]
     if not items:
         el.innerHTML = '<div class="warn">RRG를 계산할 수 있는 섹터 데이터가 없습니다.</div>'
         return
+    visible = [it for it in items if it["ticker"] not in _RRG_HIDDEN]
     date = datetime.fromtimestamp(items[0]["tail"][-1][0], tz=timezone.utc).strftime("%Y-%m-%d")
-    legend = "".join('<span><i style="background:%s"></i>%s %s</span>' % (item["color"], _esc(item["ticker"]), _esc(item["name"])) for item in items)
+    legend = "".join('<span><i style="background:%s"></i>%s %s</span>'
+                     % (item["color"], _esc(item["ticker"]), _esc(item["name"]))
+                     for item in visible)
     rows = []
     for item in sorted(items, key=_rrg_sort_key):
         _ts, ratio, momentum = item["tail"][-1]
         qclass, qlabel = _rrg_quadrant(ratio, momentum)
-        rows.append('<tr><td><span style="color:%s;font-weight:700">%s</span> %s</td><td>%.2f</td><td>%.2f</td><td class="%s">%s</td></tr>' % (item["color"], _esc(item["ticker"]), _esc(item["name"]), ratio, momentum, qclass, qlabel))
-    el.innerHTML = ('<div class="rrg-pane"><div class="rrg-summary"><span><strong>기준:</strong> SPY</span><span><strong>기준일:</strong> %s</span><span>선택 기간 누적 상대성과 · 최근 5일 모멘텀</span></div><div class="rrg-chart-wrap">%s</div><div class="rrg-legend">%s</div><div class="table-wrap"><table class="rrg-table"><thead><tr><th>테마 ETF</th><th>RS Ratio</th><th>RS Momentum</th><th>사분면</th></tr></thead><tbody>%s</tbody></table></div>%s</div>') % (_esc(date), _rrg_svg(items), legend, "".join(rows), _rrg_help_html())
+        hidden = item["ticker"] in _RRG_HIDDEN
+        eye = ('<button class="rrg-eye%s" data-ticker="%s" title="차트 표시/숨김">%s</button>'
+               % (" off" if hidden else "", _esc(item["ticker"]),
+                  _RRG_EYE_OFF if hidden else _RRG_EYE_ON))
+        rows.append('<tr class="%s"><td class="rrg-eye-cell">%s</td>'
+                    '<td><span style="color:%s;font-weight:700">%s</span> %s</td>'
+                    '<td>%.2f</td><td>%.2f</td><td class="%s">%s</td></tr>'
+                    % ("rrg-row-hidden" if hidden else "", eye,
+                       item["color"], _esc(item["ticker"]), _esc(item["name"]),
+                       ratio, momentum, qclass, qlabel))
+    if visible:
+        chart = _rrg_svg(visible)
+    else:
+        chart = ('<div class="hint" style="padding:24px;text-align:center">'
+                 '표시할 종목이 없습니다. 아래 표의 눈 아이콘으로 켜세요.</div>')
+    el.innerHTML = ('<div class="rrg-pane"><div class="rrg-summary"><span><strong>기준:</strong> SPY</span><span><strong>기준일:</strong> %s</span><span>선택 기간 누적 상대성과 · 최근 5일 모멘텀</span></div><div class="rrg-chart-wrap">%s</div><div class="rrg-legend">%s</div><div class="table-wrap"><table class="rrg-table"><thead><tr><th class="rrg-eye-cell"></th><th>테마 ETF</th><th>RS Ratio</th><th>RS Momentum</th><th>사분면</th></tr></thead><tbody>%s</tbody></table></div>%s</div>') % (_esc(date), chart, legend, "".join(rows), _rrg_help_html())
+    eyes = document.querySelectorAll("#rrg-result .rrg-eye")
+    for i in range(eyes.length):
+        e = eyes.item(i)
+        _bind(e, "click", _make_rrg_eye_handler(e.getAttribute("data-ticker")))
+
+
+def _make_rrg_eye_handler(ticker):
+    def handler(evt):
+        evt.preventDefault()
+        evt.stopPropagation()
+        if ticker in _RRG_HIDDEN:
+            _RRG_HIDDEN.discard(ticker)
+        else:
+            _RRG_HIDDEN.add(ticker)
+        _rrg_render_body()
+    return handler
 
 
 async def _run_rrg():
@@ -5597,9 +5992,17 @@ async def _run_rrg():
         # Yahoo의 1mo 응답은 간헐적으로 429가 발생하므로 안정적인 3mo로
         # 조회한 뒤 최근 한 달의 거래일만 RRG 계산에 사용한다.
         fetch_range = "3mo" if selected_range == "1mo" else selected_range
+        sectors = _rrg_all_sectors()
+        if not sectors:
+            el = document.querySelector("#rrg-result")
+            if el is not None:
+                el.innerHTML = ('<div class="hint">선택한 즐겨찾기 폴더에 표시할 '
+                                '종목이 없습니다.</div>')
+            _set_rrg_status("")
+            return
         results = await asyncio.gather(
             _fetch_index_history("SPY", fetch_range),
-            *[_fetch_index_history(ticker, fetch_range) for ticker, _name, _color in _RRG_SECTORS],
+            *[_fetch_index_history(ticker, fetch_range) for ticker, _name, _color in sectors],
             return_exceptions=True)
         benchmark_rows = results[0]
         if isinstance(benchmark_rows, Exception):
@@ -5611,7 +6014,7 @@ async def _run_rrg():
                            for rows in sector_rows]
         benchmark_by_ts = {row[0]: row[4] for row in benchmark_rows}
         items = []
-        for (ticker, name, color), rows in zip(_RRG_SECTORS, sector_rows):
+        for (ticker, name, color), rows in zip(sectors, sector_rows):
             if isinstance(rows, Exception):
                 continue
             series = _rrg_series(rows, benchmark_by_ts)
@@ -6026,7 +6429,7 @@ async def load_stock_chart(full_symbol, name):
         _render_stock_chart(name or full_symbol, None)
         return
     box.innerHTML = ('<div class="card"><div class="sec"><h3>일봉 차트</h3>'
-                     '<div class="hint">차트를 불러오는 중...</div></div></div>')
+                     '<div class="hint"><span class="mini-spin"></span></div></div></div>')
     try:
         rows, win_sym = await _fetch_history_any(
             cands, _STOCKCHART_STATE["range"], _STOCKCHART_STATE["interval"])
@@ -6951,7 +7354,7 @@ async def show_guru(cik):
     _set_guru_status("%s 13F 조회 중..." % guru["ko"])
     document.querySelector("#guru-result").innerHTML = (
         '<div class="card"><div class="sec"><div class="hint">'
-        'SEC EDGAR 에서 최근 13F 공시를 불러오는 중...</div></div></div>')
+        '<span class="mini-spin"></span></div></div></div>')
     try:
         data = await fetch_13f_latest(cik)
     except Exception as exc:
@@ -6990,17 +7393,13 @@ def _bind_guru_items():
 
 
 def _set_guru_status(msg):
-    el = document.querySelector("#guru-status")
-    if el is not None:
-        el.textContent = msg
+    _apply_status("#guru-status", msg)
 
 
 # ── 대가 즐겨찾기 (즐겨찾기 계정의 KV 레코드에 함께 저장) ──
 
 def _set_guru_fav_status(msg):
-    el = document.querySelector("#guru-fav-status")
-    if el is not None:
-        el.textContent = msg or ""
+    _apply_status("#guru-fav-status", msg)
 
 
 async def _guru_fav_api(method, extra_query="", body=None):
@@ -7143,15 +7542,11 @@ def _fav_base():
 
 
 def _set_fav_status(msg):
-    el = document.querySelector("#fav-status")
-    if el is not None:
-        el.textContent = msg or ""
+    _apply_status("#fav-status", msg)
 
 
 def _set_fav_login_status(msg):
-    el = document.querySelector("#fav-login-status")
-    if el is not None:
-        el.textContent = msg or ""
+    _apply_status("#fav-login-status", msg)
 
 
 async def _fav_api(method, account, key, extra_query="", body=None):
@@ -7377,6 +7772,7 @@ def render_favorites(favs):
                "".join(chips), empty_hint))
     box.innerHTML = "".join(html)
     _bind_favorites()
+    _populate_rrg_folders()
     asyncio.ensure_future(_refresh_fav_prices())
 
 
@@ -7782,7 +8178,7 @@ def _update_fav_login_ui():
         if key_label is not None:
             key_label.style.display = "none"
         if acct_info is not None:
-            acct_info.style.display = "inline-block"
+            acct_info.style.display = "block"
             acct_info.innerHTML = "로그인 계정: <b>%s</b>" % _esc(acct)
         if login_btn is not None:
             login_btn.style.display = "none"
@@ -7791,27 +8187,27 @@ def _update_fav_login_ui():
         if reset_btn is not None:
             reset_btn.style.display = "none"
         if change_pw_btn is not None:
-            change_pw_btn.style.display = "inline-block"
+            change_pw_btn.style.display = "block"
         if logout_btn is not None:
-            logout_btn.style.display = "inline-block"
+            logout_btn.style.display = "block"
         if delete_btn is not None:
             # 관리자 계정은 계정 삭제를 미표시한다(관리자 여부는 비동기 확인).
-            delete_btn.style.display = "none" if _is_ai_admin() else "inline-block"
+            delete_btn.style.display = "none" if _is_ai_admin() else "block"
         _set_fav_login_status("")
     else:
         if acct_label is not None:
-            acct_label.style.display = "inline-block"
+            acct_label.style.display = "flex"
         if key_label is not None:
-            key_label.style.display = "inline-block"
+            key_label.style.display = "flex"
         if acct_info is not None:
             acct_info.style.display = "none"
             acct_info.innerHTML = ""
         if login_btn is not None:
-            login_btn.style.display = "inline-block"
+            login_btn.style.display = "block"
         if register_btn is not None:
-            register_btn.style.display = "inline-block"
+            register_btn.style.display = "block"
         if reset_btn is not None:
-            reset_btn.style.display = "inline-block"
+            reset_btn.style.display = "block"
         if change_pw_btn is not None:
             change_pw_btn.style.display = "none"
         if logout_btn is not None:
@@ -7819,6 +8215,9 @@ def _update_fav_login_ui():
         if delete_btn is not None:
             delete_btn.style.display = "none"
         _set_fav_login_status("")
+    acct_btn = document.querySelector("#acctBtn")
+    if acct_btn is not None:
+        acct_btn.classList.toggle("logged-in", _fav_logged_in())
     _update_fav_add_btn()
     _update_ai_admin_ui()
     asyncio.ensure_future(refresh_guru_favorites())
@@ -7923,9 +8322,7 @@ def _fg_num(v):
 
 
 def _set_fg_status(msg):
-    el = document.querySelector("#fg-status")
-    if el is not None:
-        el.textContent = msg or ""
+    _apply_status("#fg-status", msg)
 
 
 async def fetch_fear_greed():
@@ -8154,9 +8551,7 @@ def _multpl_label(slug):
 
 
 def _set_multpl_status(msg):
-    el = document.querySelector("#multpl-status")
-    if el is not None:
-        el.textContent = msg or ""
+    _apply_status("#multpl-status", msg)
 
 
 def _multpl_freq():
@@ -8567,9 +8962,7 @@ def _ai_access_base():
 
 
 def _set_ai_admin_status(msg):
-    el = document.querySelector("#ai-admin-status")
-    if el is not None:
-        el.textContent = msg or ""
+    _apply_status("#ai-admin-status", msg)
 
 
 async def _ai_access_api(method, extra_query="", body=None):
@@ -8756,9 +9149,7 @@ async def _refresh_ai_admin():
 
 
 def _set_ai_status(msg):
-    el = document.querySelector("#ai-status")
-    if el is not None:
-        el.textContent = msg or ""
+    _apply_status("#ai-status", msg)
 
 
 def _md_inline(text):
@@ -8866,8 +9257,7 @@ async def _run_ai_eval():
     _set_ai_status("Gemini 가 실시간으로 분석 중입니다… (최대 40초 소요)")
     box.innerHTML = ('<div class="ai-card">'
                      '<div class="ai-card-head">🤖 AI 기업 평가 · %s</div>'
-                     '<div class="ai-body"><p>Google 검색으로 최신 실적·공시를 '
-                     '수집하며 분석 중입니다…</p></div></div>' % _esc(company))
+                     '<div class="ai-body"><p><span class="mini-spin"></span></p></div></div>' % _esc(company))
     try:
         url = "%s?account=%s" % (base, js.encodeURIComponent(acct))
         headers = {"Content-Type": "application/json", "X-Fav-Key": key}
@@ -9105,7 +9495,7 @@ def on_tab(event):
     _sync_tab_group(name)
     # 공포·탐욕 탭을 처음 열면 자동으로 1회 조회한다.
     if name == "feargreed" and not _FG_LOADED["done"]:
-        document.querySelector("#fgBtn").click()
+        asyncio.ensure_future(_load_fear_greed())
     # 경제지표 탭을 처음 열면 자동으로 1회 조회한다.
     if name == "macro" and not _MACRO_LOADED["done"]:
         _MACRO_LOADED["done"] = True
@@ -9117,7 +9507,7 @@ def on_tab(event):
             document.querySelector("#multplBtn").click()
     # 유동성 탭을 처음 열면 자동으로 1회 조회한다.
     if name == "liquidity" and not _LIQ_LOADED["done"]:
-        document.querySelector("#liqBtn").click()
+        asyncio.ensure_future(_load_liquidity())
     # 지수 차트 탭: 선택 목록을 채우고 처음 열면 기본 지수를 1회 조회한다.
     if name == "idxchart":
         _populate_idxchart_select()
@@ -9125,7 +9515,12 @@ def on_tab(event):
             document.querySelector("#idxChartBtn").click()
     if name == "rrg" and (not _RRG_LOADED["done"] or
                            time.time() - _RRG_LOADED["at"] >= _YF_CACHE_TTL):
+        _populate_rrg_folders()
+        render_rrg_chips()
         asyncio.ensure_future(_run_rrg())
+    elif name == "rrg":
+        _populate_rrg_folders()
+        render_rrg_chips()
     # 거시경제 탭: 처음 열면 등록된 자료 목록을 불러온다.
     if name == "macrodoc":
         if not _MACRODOC_LOADED["done"]:
@@ -9434,22 +9829,56 @@ async def on_rrg_range(event):
     await _run_rrg()
 
 
-@when("click", "#fgBtn")
-async def on_fear_greed(event):
-    btn = document.querySelector("#fgBtn")
-    _set_fg_status("불러오는 중...")
-    btn.disabled = True
+@when("click", "#rrgAddBtn")
+def on_rrg_add(event):
+    inp = document.querySelector("#rrgCustomInput")
+    if inp is None:
+        return
+    _rrg_add_custom(inp.value)
+    inp.value = ""
+
+
+@when("change", "#rrgFolderSel")
+def on_rrg_folder_pick(event):
+    # 선택하면 바로 추가한다(별도 '추가' 버튼도 있음).
+    val = event.target.value or ""
+    if not val:
+        return
+    if not _fav_logged_in():
+        window.alert("즐겨찾기 폴더를 사용하려면 먼저 로그인하세요.")
+        event.target.value = ""
+        return
+    _rrg_add_folder(val)
+
+
+@when("click", "#rrgFolderAddBtn")
+def on_rrg_folder_add(event):
+    sel = document.querySelector("#rrgFolderSel")
+    if sel is None or not (sel.value or ""):
+        return
+    if not _fav_logged_in():
+        window.alert("즐겨찾기 폴더를 사용하려면 먼저 로그인하세요.")
+        return
+    _rrg_add_folder(sel.value)
+
+
+@when("keydown", "#rrgCustomInput")
+def on_rrg_add_enter(event):
+    if _is_enter(event):
+        document.querySelector("#rrgAddBtn").click()
+
+
+async def _load_fear_greed():
+    box = document.querySelector("#fg-result")
+    if box is not None:
+        box.innerHTML = '<div class="hint"><span class="mini-spin"></span></div>'
     try:
         await load_fear_greed()
         _FG_LOADED["done"] = True
-        _set_fg_status("완료")
     except Exception as exc:
-        _set_fg_status("오류")
         document.querySelector("#fg-result").innerHTML = (
             '<div class="warn">공포·탐욕 지수를 불러오지 못했습니다.<br>%s</div>'
             % _esc(str(exc)))
-    finally:
-        btn.disabled = False
 
 
 @when("click", "#multplBtn")
@@ -9593,32 +10022,24 @@ def on_macro_mode(event):
         render_macro(rows, mode)
 
 
-@when("click", "#liqBtn")
-async def on_liquidity(event):
+async def _load_liquidity():
     key = FRED_API_KEY
-    btn = document.querySelector("#liqBtn")
-    btn.disabled = True
-    _set_liq_status("불러오는 중...")
+    box = document.querySelector("#liq-result")
+    if box is not None:
+        box.innerHTML = '<div class="hint"><span class="mini-spin"></span></div>'
     try:
         rows = await load_liquidity(key)
         render_liquidity(rows)
         if rows:
             _LIQ_LOADED["done"] = True
-            _set_liq_status("완료 · %d주" % len(rows))
-        else:
-            _set_liq_status("실패 · 데이터 없음 (API 키/프록시 확인)")
     except InvestingApiError as exc:
-        _set_liq_status("오류")
         document.querySelector("#liq-result").innerHTML = (
             '<div class="warn">유동성 데이터를 불러오지 못했습니다.<br>%s</div>'
             % _esc(str(exc)))
     except Exception as exc:
-        _set_liq_status("오류")
         document.querySelector("#liq-result").innerHTML = (
             '<div class="warn">조회 중 오류가 발생했습니다.<br>%s</div>'
             % _esc(str(exc)))
-    finally:
-        btn.disabled = False
 
 
 @when("mousemove", "#liq-result")
@@ -9867,21 +10288,35 @@ def on_fav_collapse(event):
         btn.title = "즐겨찾기 펴기"
 
 
-@when("click", "#acctCollapseBtn")
-def on_acct_collapse(event):
-    """계정 영역 전체를 접거나 편다(제목·버튼만 남기고 최소화)."""
-    body = document.querySelector("#acct-body")
-    btn = document.querySelector("#acctCollapseBtn")
-    if body is None or btn is None:
+@when("click", "#acctBtn")
+def on_acct_btn(event):
+    """헤더 계정 아이콘 클릭 시 계정 팝업을 토글한다."""
+    event.stopPropagation()
+    pop = document.querySelector("#acct-popup")
+    btn = document.querySelector("#acctBtn")
+    if pop is None:
         return
-    if body.style.display == "none":
-        body.style.display = ""
-        btn.textContent = "▲"
-        btn.title = "계정 접기"
-    else:
-        body.style.display = "none"
-        btn.textContent = "▼"
-        btn.title = "계정 펴기"
+    is_open = pop.classList.toggle("open")
+    if btn is not None:
+        btn.setAttribute("aria-expanded", "true" if is_open else "false")
+
+
+def _on_doc_click_acct(event):
+    """팝업 바깥을 클릭하면 계정 팝업을 닫는다."""
+    pop = document.querySelector("#acct-popup")
+    if pop is None or not pop.classList.contains("open"):
+        return
+    target = event.target
+    if target is not None and target.closest is not None and \
+            target.closest(".hdr-acct") is not None:
+        return
+    pop.classList.remove("open")
+    btn = document.querySelector("#acctBtn")
+    if btn is not None:
+        btn.setAttribute("aria-expanded", "false")
+
+
+document.addEventListener("click", create_proxy(_on_doc_click_acct))
 
 
 @when("click", "#aiAdminCollapseBtn")
