@@ -55,6 +55,7 @@
  *    POST   https://<worker>/favorites?account=<id>&reorder=1 → 본문 {folder,order:[symbol,...]} 폴더 내 순서 변경
  *    POST   https://<worker>/favorites?account=<id>            → 본문 {symbol,name,folder} 추가/이동
  *    POST   https://<worker>/favorites?account=<id>&guru_op=add → 본문 {cik,ko,name,firm} 13F 대가 즐겨찾기 등록
+ *    POST   https://<worker>/favorites?account=<id>&pref_op=set → 본문 {earncal_folder} 사용자 설정 저장
  *    DELETE https://<worker>/favorites?account=<id>&guru=<cik>  → 13F 대가 즐겨찾기 삭제
  *    DELETE https://<worker>/favorites?account=<id>&symbol=..  → 해당 심볼 삭제
  *    DELETE https://<worker>/favorites?account=<id>&folder=..  → 폴더와 그 안의 종목 삭제
@@ -957,9 +958,18 @@ async function handleFavorites(request, env, reqUrl) {
     record && Array.isArray(record.folders) ? record.folders : [];
   // 13F 대가 즐겨찾기: [{cik, ko, name, firm}, ...]
   const gurus = record && Array.isArray(record.gurus) ? record.gurus : [];
+  // 사용자 설정: {earncal_folder}
+  const prefs =
+    record && record.prefs && typeof record.prefs === "object" ? record.prefs : {};
+  // 현재 레코드 필드를 모두 보존하며 일부만 덮어써 저장한다.
+  const save = (over = {}) =>
+    env.FAVORITES.put(
+      kvKey,
+      JSON.stringify({ keyHash: authHash, favorites, folders, gurus, prefs, ...over })
+    );
 
   if (request.method === "GET") {
-    return jsonResponse({ favorites, folders, gurus, exists: !!record });
+    return jsonResponse({ favorites, folders, gurus, prefs, exists: !!record });
   }
 
   if (request.method === "POST") {
@@ -994,11 +1004,17 @@ async function handleFavorites(request, env, reqUrl) {
         return jsonResponse({ error: "새 공유 키는 4자 이상이어야 합니다." }, 400);
       }
       const newHash = await sha256Hex(FAV_SALT + ":" + newKey);
-      await env.FAVORITES.put(
-        kvKey,
-        JSON.stringify({ keyHash: newHash, favorites, folders, gurus })
-      );
+      await save({ keyHash: newHash });
       return jsonResponse({ favorites, folders, changed: true });
+    }
+
+    // 사용자 설정 저장: ?pref_op=set, 본문 {earncal_folder}
+    if (reqUrl.searchParams.get("pref_op") === "set") {
+      if (payload && "earncal_folder" in payload) {
+        prefs.earncal_folder = cleanStr(payload.earncal_folder);
+      }
+      await save();
+      return jsonResponse({ prefs });
     }
 
     // 빈 폴더 생성 요청: ?folder_op=create, 본문 {folder}
@@ -1017,10 +1033,7 @@ async function handleFavorites(request, env, reqUrl) {
         );
       }
       folders.push(newFolder);
-      await env.FAVORITES.put(
-        kvKey,
-        JSON.stringify({ keyHash: authHash, favorites, folders, gurus })
-      );
+      await save();
       return jsonResponse({ favorites, folders });
     }
 
@@ -1055,10 +1068,8 @@ async function handleFavorites(request, env, reqUrl) {
       const idx = folders.indexOf(oldName);
       if (idx >= 0) folders[idx] = newName;
       else folders.push(newName);
-      await env.FAVORITES.put(
-        kvKey,
-        JSON.stringify({ keyHash: authHash, favorites, folders, gurus })
-      );
+      if (prefs.earncal_folder === oldName) prefs.earncal_folder = newName;
+      await save();
       return jsonResponse({ favorites, folders });
     }
 
@@ -1084,10 +1095,7 @@ async function handleFavorites(request, env, reqUrl) {
         if (!used.has(name)) reordered.push(name);
       }
       folders.splice(0, folders.length, ...reordered);
-      await env.FAVORITES.put(
-        kvKey,
-        JSON.stringify({ keyHash: authHash, favorites, folders, gurus })
-      );
+      await save();
       return jsonResponse({ favorites, folders });
     }
 
@@ -1126,10 +1134,7 @@ async function handleFavorites(request, env, reqUrl) {
       idxList.forEach((originalIdx, k) => {
         favorites[originalIdx] = newItems[k];
       });
-      await env.FAVORITES.put(
-        kvKey,
-        JSON.stringify({ keyHash: authHash, favorites, folders, gurus })
-      );
+      await save();
       return jsonResponse({ favorites, folders });
     }
 
@@ -1153,10 +1158,7 @@ async function handleFavorites(request, env, reqUrl) {
           firm: cleanStr(payload && payload.firm),
         });
       }
-      await env.FAVORITES.put(
-        kvKey,
-        JSON.stringify({ keyHash: authHash, favorites, folders, gurus })
-      );
+      await save();
       return jsonResponse({ gurus });
     }
 
@@ -1184,10 +1186,7 @@ async function handleFavorites(request, env, reqUrl) {
     if (folder && folder !== "Default" && !folders.includes(folder)) {
       folders.push(folder);
     }
-    await env.FAVORITES.put(
-      kvKey,
-      JSON.stringify({ keyHash: authHash, favorites, folders, gurus })
-    );
+    await save();
     return jsonResponse({ favorites, folders });
   }
 
@@ -1200,10 +1199,7 @@ async function handleFavorites(request, env, reqUrl) {
     if (guruCik) {
       if (!record) return jsonResponse({ gurus: [] });
       const keptGurus = gurus.filter((g) => g && g.cik !== guruCik);
-      await env.FAVORITES.put(
-        kvKey,
-        JSON.stringify({ keyHash: authHash, favorites, folders, gurus: keptGurus })
-      );
+      await save({ gurus: keptGurus });
       return jsonResponse({ gurus: keptGurus });
     }
 
@@ -1225,18 +1221,13 @@ async function handleFavorites(request, env, reqUrl) {
         (f) => (f.folder || "Default") !== folderToDelete
       );
       const keptFolders = folders.filter((n) => n !== folderToDelete);
-      await env.FAVORITES.put(
-        kvKey,
-        JSON.stringify({ keyHash: authHash, favorites: keptFavs, folders: keptFolders, gurus })
-      );
+      if (prefs.earncal_folder === folderToDelete) prefs.earncal_folder = "";
+      await save({ favorites: keptFavs, folders: keptFolders });
       return jsonResponse({ favorites: keptFavs, folders: keptFolders });
     }
 
     const next = favorites.filter((f) => f && f.symbol !== symbol);
-    await env.FAVORITES.put(
-      kvKey,
-      JSON.stringify({ keyHash: authHash, favorites: next, folders, gurus })
-    );
+    await save({ favorites: next });
     return jsonResponse({ favorites: next, folders });
   }
 
