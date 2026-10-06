@@ -149,6 +149,31 @@
   table.holdings td.num, table.holdings th.num { text-align:right; }
   table.holdings td.mono { font-family:Consolas,"Courier New",monospace; }
   table.holdings tbody tr:hover { background:#f6f8fa; }
+  table.mcap-table tbody tr { cursor:pointer; }
+  table.mcap-table tbody tr.sel td { background:rgba(41,98,255,.12); }
+  table.mcap-table td.rank { font-weight:700; color:var(--mut); }
+  table.mcap-table td .sub { color:var(--mut); font-size:12px; margin-left:6px; }
+  table.mcap-table .mcap-go { font-size:12px; padding:2px 8px; cursor:pointer; }
+  @media (max-width:600px) {
+    table.mcap-table { font-size:12px; }
+    table.mcap-table th, table.mcap-table td { padding:5px 4px; }
+    table.mcap-table .m-hide { display:none; }
+    table.mcap-table td .sub { display:block; margin-left:0; font-size:11px;
+      max-width:120px; overflow:hidden; text-overflow:ellipsis; }
+    table.mcap-table .mcap-go { font-size:11px; padding:2px 6px; }
+  }
+  #mcap-chart { margin-top:14px; }
+  #mcap-chart .mcap-chart-head { font-size:13px; color:var(--mut); margin-bottom:6px; }
+  .mcap-svg { width:100%; height:auto; display:block; }
+  .mcap-svg .grid line { stroke:var(--bd); stroke-width:1; }
+  .mcap-svg .axis text { fill:var(--mut); font-size:11px; }
+  .mcap-svg .mc-line { cursor:pointer; }
+  .mcap-svg .mc-line path { fill:none; stroke-width:2; stroke-linejoin:round; }
+  .mcap-svg .mc-line text { font-size:11px; font-weight:600; }
+  .mcap-svg.has-sel .mc-line { opacity:.15; }
+  .mcap-svg.has-sel .mc-line.sel, .mcap-svg .mc-line:hover { opacity:1; }
+  .mcap-svg .mc-line.sel path { stroke-width:4; }
+  .mcap-svg .mc-line.sel text { font-size:13px; }
   .table-wrap { overflow:auto; max-height:520px; border:1px solid var(--bd);
     border-radius:8px; }
   .fin-controls { display:flex; gap:16px; align-items:center; flex-wrap:wrap;
@@ -226,19 +251,22 @@
   .earn-chip.past { background:#eceff3; color:#6b7480; }
   .earn-chip.hl { background:#ff9800; color:#fff; }
   .earn-chip.hl.past { background:#ffd8a6; color:#8a4b00; }
+  .earn-chip.prelim { background:transparent; color:#6b7480; border:1px dashed #9aa4b0;
+    font-weight:500; }
+  .earn-chip.est { font-style:italic; outline:1px dashed currentColor; outline-offset:-1px; }
   .earncal-up tr.hl td { background:#fff4e5; font-weight:600; }
   .earncal-legend { font-size:12px; color:var(--mut); margin-top:6px; }
   .earncal-legend .earn-chip { display:inline-block; margin:0 4px 0 10px; }
-  .earncal-pop { display:none; position:fixed; inset:0; z-index:1000;
+  .modal-pop { display:none; position:fixed; inset:0; z-index:1000;
     background:rgba(0,0,0,.45); align-items:center; justify-content:center; padding:16px; }
-  .earncal-pop.open { display:flex; }
-  .earncal-pop-box { background:#fff; border-radius:10px; padding:14px 16px;
+  .modal-pop.open { display:flex; }
+  .modal-pop-box { background:#fff; border-radius:10px; padding:14px 16px;
     width:min(560px,100%); max-height:80vh; overflow:auto;
     box-shadow:0 8px 30px rgba(0,0,0,.3); }
-  .earncal-pop-head { display:flex; align-items:center; justify-content:space-between;
+  .modal-pop-head { display:flex; align-items:center; justify-content:space-between;
     margin-bottom:8px; }
-  .earncal-pop-head h4 { margin:0; font-size:15px; }
-  .earncal-pop-close { border:none; background:none; font-size:20px; cursor:pointer;
+  .modal-pop-head h4 { margin:0; font-size:15px; }
+  .modal-pop-close { border:none; background:none; font-size:20px; cursor:pointer;
     color:var(--mut); padding:0 4px; }
   .earncal-up table { width:100%; border-collapse:collapse; font-size:13px; }
   .earncal-up th, .earncal-up td { border-bottom:1px solid var(--bd); padding:5px 6px;
@@ -285,6 +313,9 @@
         background:transparent; color:var(--mut); cursor:pointer; font-size:14px;
         line-height:1; padding:0; }
     .rrg-custom-del:hover { background:#ffe9e9; color:var(--sell); }
+    .rrg-view { margin:0 4px 10px; }
+    .rrg-grp { font-size:11px; color:var(--mut); border:1px solid var(--bd);
+        border-radius:10px; padding:0 6px; margin-left:4px; }
     .rrg-eye-cell { width:34px; text-align:center; }
     .rrg-eye { border:none; background:transparent; cursor:pointer; padding:2px;
         line-height:0; color:var(--pri); display:inline-flex; }
@@ -429,6 +460,7 @@
     white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .ai-suggest-item:hover, .ai-suggest-item.active { background:#eef3ff; }
   .ai-suggest-empty { padding:6px 10px; font-size:12px; color:var(--mut); }
+  #ai-admin-pop .modal-pop-box { min-height:340px; }
 
   /* 공포·탐욕 지수 */
   .fg-score { font-size:56px; font-weight:800; line-height:1; text-align:center; }
@@ -536,11 +568,7 @@
 
   /* 즐겨찾기 */
   .fav-fieldset { position:relative; }
-  .fav-collapse-btn { position:absolute; top:-4px; right:3px; width:26px;
-    height:22px; padding:0; font-size:11px; line-height:1; border:1px solid var(--bd);
-    border-radius:5px; background:var(--bg); color:var(--mut); cursor:pointer; }
-  .fav-collapse-btn:hover { background:#eef3ff; border-color:var(--pri);
-    color:var(--pri); }
+  #fav-pop .modal-pop-box { width:min(900px,100%); min-height:300px; }
   .fav-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
   .fav-head .fav-title { font-weight:600; color:var(--mut); }
   #favAddBtn { height:30px; padding:0 12px; font-size:13px; }
@@ -672,7 +700,7 @@
     .fin-table tr.sel-metric td, .fin-table tr.sel-metric td:first-child,
     .ai-suggest-item:hover, .ai-suggest-item.active,
     table.holdings tbody tr.macro-sel, .guru-item:hover, .cmp-detail:hover,
-    .fav-collapse-btn:hover, .fav-folder.folder-drag-over,
+    .fav-folder.folder-drag-over,
     .fav-folder-items.drag-over-empty, .fav-cell:hover, .fav-cell.drag-over,
     .fav-folder .fav-folder-ren:hover { background:#18243c; }
     table.holdings tbody tr.macro-sel:hover { background:#1e2c48; }
@@ -690,7 +718,7 @@
     .fin-table thead th.cur-col { background:#3a3016; color:#e2c774; }
     .earn-chip { background:#1c2c52; color:#9dbcff; }
     .earn-chip.past { background:#232a33; color:#9aa4b0; }
-    .earncal-pop-box { background:#161c24; color:#e6e8eb; }
+    .modal-pop-box { background:#161c24; color:#e6e8eb; }
     .earn-chip.hl { background:#e08600; color:#fff; }
     .earn-chip.hl.past { background:#5a3a12; color:#ffcf8a; }
     .earncal-up tr.hl td { background:#3a2a12; }
@@ -732,6 +760,7 @@
         <button id="favRegisterBtn">계정 등록</button>
         <button id="favResetBtn">비밀번호 리셋</button>
         <button id="favChangePwBtn" style="display:none">비밀번호 변경</button>
+        <button id="aiAdminOpenBtn" style="display:none">AI 평가 접근 관리</button>
         <button id="favLogoutBtn" style="display:none">로그아웃</button>
         <button id="favDeleteBtn" style="display:none">계정 삭제</button>
       </div>
@@ -739,6 +768,28 @@
     </div>
   </div>
 </header>
+<div id="ai-admin-pop" class="modal-pop" role="dialog" aria-label="AI 평가 접근 관리">
+  <div class="modal-pop-box">
+    <div class="modal-pop-head">
+      <h4>AI 평가 접근 관리 (관리자 전용)</h4>
+      <button type="button" class="modal-pop-close" title="닫기">×</button>
+    </div>
+    <div class="row">
+      <span class="ai-grant-wrap">
+        <input type="text" id="aiGrantAccount" style="width:180px"
+               placeholder="허가할 계정 ID (검색)" autocomplete="off">
+        <div id="aiGrantSuggest" class="ai-suggest"></div>
+      </span>
+      <button id="aiGrantBtn">접근 허가</button>
+      <button id="aiAccessRefreshBtn" type="button">목록 새로고침</button>
+      <span id="ai-admin-status"></span>
+    </div>
+    <div class="hint">허가된 계정만 AI 평가를 사용할 수 있습니다.
+      관리자 계정은 항상 사용할 수 있습니다. 입력창을 클릭하거나 검색어를 입력하면
+      등록된 계정 목록이 아래에 필터링되어 표시됩니다.</div>
+    <div id="ai-access-list" class="fav-list"></div>
+  </div>
+</div>
 <main>
   <input type="hidden" id="proxy"
          value="https://investing-proxy.sw3855.workers.dev/?url=">
@@ -771,7 +822,9 @@
   <div class="tabs">
     <div class="tab-group active" data-group="analysis">
       <button class="tab-btn active" data-tab="stock">종목</button>
-      <button class="tab-btn" data-tab="ai">AI 평가</button>
+      <button class="tab-btn" data-tab="mcap">시총 순위</button>
+      <button class="tab-btn" data-tab="ai" id="aiTabBtn"
+              style="display:none">AI 평가</button>
       <button class="tab-btn" data-tab="guru">13F</button>
       <button class="tab-btn" data-tab="earncal" id="earnCalTabBtn"
               style="display:none">실적 달력</button>
@@ -799,21 +852,20 @@
         <input type="text" id="ticker" class="grow"
                placeholder="티커 (개별종목: AAPL, TSLA · ETF: QQQ, SPY, QQQA · 또는 NASDAQ:MSFT)">
         <button class="primary" id="lookupBtn" disabled>조회</button>
-        <button id="sp500MapBtn" type="button"
-                title="finviz S&amp;P 500 섹터 맵을 새 탭에서 엽니다">S&amp;P 500 Map</button>
+        <button id="favOpenBtn" type="button" title="즐겨찾기 열기">⭐ 즐겨찾기</button>
       </div>
       <div class="row">
         <span id="status"></span>
       </div>
     </fieldset>
 
-    <fieldset class="fav-fieldset">
-      <legend>즐겨찾기</legend>
-      <button id="favCollapseBtn" class="fav-collapse-btn" type="button"
-              title="즐겨찾기 접기/펴기">▲</button>
-      <div id="fav-body">
+    <div id="fav-pop" class="modal-pop" role="dialog" aria-label="즐겨찾기">
+      <div class="modal-pop-box">
+      <div class="modal-pop-head">
+        <h4>⭐ 내 즐겨찾기</h4>
+        <button type="button" class="modal-pop-close" title="닫기">×</button>
+      </div>
       <div class="fav-head">
-        <span class="fav-title">⭐ 내 즐겨찾기</span>
         <label>폴더:
           <select id="favFolder" style="width:160px"></select>
         </label>
@@ -823,7 +875,7 @@
       </div>
       <div id="favorites-list" class="fav-list"></div>
       </div>
-    </fieldset>
+    </div>
 
     <div id="compare-section"></div>
     <div id="result"></div>
@@ -939,6 +991,20 @@
     <div id="macro-result"></div>
   </div>
 
+  <div class="tab-panel" id="tab-mcap">
+    <fieldset>
+      <legend>미국 시가총액 순위 TOP 20</legend>
+      <div class="row">
+        <span id="mcap-status"></span>
+        <span id="mcap-updated" class="fin-quick"></span>
+        <button id="sp500MapBtn" type="button" style="margin-left:auto"
+                title="finviz S&amp;P 500 섹터 맵을 새 탭에서 엽니다">S&amp;P 500 Map</button>
+      </div>
+      <div id="mcap-result"></div>
+      <div id="mcap-chart"></div>
+    </fieldset>
+  </div>
+
   <div class="tab-panel" id="tab-earncal">
     <fieldset>
       <legend>즐겨찾기 종목 실적 발표 달력</legend>
@@ -956,11 +1022,11 @@
       </div>
       <div id="earncal-result"></div>
     </fieldset>
-    <div id="earncal-up-pop" class="earncal-pop">
-      <div class="earncal-pop-box">
-        <div class="earncal-pop-head">
+    <div id="earncal-up-pop" class="modal-pop">
+      <div class="modal-pop-box">
+        <div class="modal-pop-head">
           <h4>다가오는 실적 발표</h4>
-          <button type="button" class="earncal-pop-close" title="닫기">×</button>
+          <button type="button" class="modal-pop-close" title="닫기">×</button>
         </div>
         <div id="earncal-up-body"></div>
       </div>
@@ -1110,28 +1176,6 @@
         <button id="aiUseTickerBtn" type="button"
                 title="'종목' 탭에 입력한 티커를 가져옵니다">종목 탭 티커 가져오기</button>
         <span id="ai-status"></span>
-      </div>
-    </fieldset>
-
-    <fieldset id="ai-admin" class="fav-fieldset" style="display:none">
-      <legend>AI 평가 접근 관리 (관리자 전용)</legend>
-      <button id="aiAdminCollapseBtn" class="fav-collapse-btn" type="button"
-              title="접근 관리 펴기">▼</button>
-      <div id="ai-admin-body" style="display:none">
-      <div class="row">
-        <span class="ai-grant-wrap">
-          <input type="text" id="aiGrantAccount" style="width:180px"
-                 placeholder="허가할 계정 ID (검색)" autocomplete="off">
-          <div id="aiGrantSuggest" class="ai-suggest"></div>
-        </span>
-        <button id="aiGrantBtn">접근 허가</button>
-        <button id="aiAccessRefreshBtn" type="button">목록 새로고침</button>
-        <span id="ai-admin-status"></span>
-      </div>
-      <div class="hint">허가된 계정만 AI 평가를 사용할 수 있습니다.
-        관리자 계정은 항상 사용할 수 있습니다. 입력창을 클릭하거나 검색어를 입력하면
-        등록된 계정 목록이 아래에 필터링되어 표시됩니다.</div>
-      <div id="ai-access-list" class="fav-list"></div>
       </div>
     </fieldset>
 
@@ -1803,8 +1847,8 @@ async def lookup(ticker, exchange=None, lang="en"):
     is_etf = meta.get("type") == "fund" or "etf" in typespecs
 
     if is_etf:
-        holdings, report_ts = await fetch_holdings(full_symbol)
-        tech = await fetch_tech_rating(full_symbol)
+        (holdings, report_ts), tech = await asyncio.gather(
+            fetch_holdings(full_symbol), fetch_tech_rating(full_symbol))
         payload = {"meta": meta, "holdings": holdings, "report_ts": report_ts,
                    "tech": tech}
         return "etf", full_symbol, payload
@@ -1812,37 +1856,46 @@ async def lookup(ticker, exchange=None, lang="en"):
     data = await fetch_forecast(full_symbol)
     if data is None:
         return "nodata", full_symbol, None
-    valuation = await fetch_valuation(full_symbol)
-    financials = await fetch_financials(full_symbol)
-    consensus = await fetch_consensus(full_symbol)
-    await _ensure_rf_rate()   # WACC 계산용 실시간 무위험수익률 확보
-    await _ensure_erp()       # WACC 계산용 시장 내재 위험프리미엄 확보
 
     # 펀더멘털 지표(매출·EPS·목표주가 등)는 보고 통화로 제공되므로
     # 거래소 통화(주가 통화)와 다르면 환율로 환산해 통일한다.
     trade_ccy = data.get("currency")
     fund_ccy = data.get("fundamental_currency_code")
-    fx = None
-    if trade_ccy and fund_ccy and trade_ccy != fund_ccy:
-        rate = await fetch_fx_rate(fund_ccy, trade_ccy)
-        if rate:
-            _convert_fundamentals(data, financials, rate)
-            _convert_consensus(consensus, rate)
-            fx = {"from": fund_ccy, "to": trade_ccy, "rate": rate}
+    need_fx = bool(trade_ccy and fund_ccy and trade_ccy != fund_ccy)
 
-    # 지표 비교 차트에서 USD 로 통일 비교하기 위한 (거래통화 → USD) 환율을
-    # 조회 시점에 미리 확보해 둔다. (비동기 재렌더 타이밍 의존 제거)
-    if not trade_ccy:
-        usd_rate = None
-    elif trade_ccy == "USD":
-        usd_rate = 1.0
-    else:
-        usd_rate = await fetch_fx_rate(trade_ccy, "USD")
+    async def _usd_rate():
+        # 지표 비교 차트의 USD 통일 비교용 (거래통화 → USD) 환율
+        if not trade_ccy:
+            return None
+        if trade_ccy == "USD":
+            return 1.0
+        return await fetch_fx_rate(trade_ccy, "USD")
+
+    async def _none():
+        return None
+
+    (valuation, financials, consensus, _rf, _erp, rate, usd_rate,
+     sec_roic) = await asyncio.gather(
+        fetch_valuation(full_symbol),
+        fetch_financials(full_symbol),
+        fetch_consensus(full_symbol),
+        _ensure_rf_rate(),   # WACC 계산용 실시간 무위험수익률 확보
+        _ensure_erp(),       # WACC 계산용 시장 내재 위험프리미엄 확보
+        fetch_fx_rate(fund_ccy, trade_ccy) if need_fx else _none(),
+        _usd_rate(),
+        fetch_quarterly_roic(full_symbol),
+    )
+
+    fx = None
+    if rate:
+        _convert_fundamentals(data, financials, rate)
+        _convert_consensus(consensus, rate)
+        fx = {"from": fund_ccy, "to": trade_ccy, "rate": rate}
 
     payload = {
         "forecast": data, "valuation": valuation, "financials": financials,
         "consensus": consensus, "fx": fx, "usd_rate": usd_rate,
-        "sec_roic": await fetch_quarterly_roic(full_symbol),
+        "sec_roic": sec_roic,
     }
     return "stock", full_symbol, payload
 
@@ -3166,7 +3219,25 @@ def render_holdings(full_symbol, meta, holdings, report_ts, tech=None):
 _FIN_STATE = {}
 # 재무 지표 차트 호버 툴팁용 좌표/치수 캐시
 _FIN_CHART_HOVER = {"pts": None, "W": 0.0, "H": 0.0, "y1": 0.0, "y2": 0.0}
-_PROXIES = []
+_PROXIES = []          # [(element, proxy)]
+_PROXIES_STALE = []    # 직전 정리 때 DOM 에서 분리된 것 — 다음 정리 때 destroy
+_PROXY_PRUNE_AT = {"n": 300}
+
+
+def _prune_proxies():
+    """innerHTML 재렌더로 DOM 에서 사라진 요소의 프록시를 해제한다."""
+    # 실행 중인 핸들러를 파괴하지 않도록 한 주기 늦춰 destroy 한다.
+    for _el, p in _PROXIES_STALE:
+        try:
+            p.destroy()
+        except Exception:
+            pass
+    live, stale = [], []
+    for item in _PROXIES:
+        (live if item[0].isConnected else stale).append(item)
+    _PROXIES[:] = live
+    _PROXIES_STALE[:] = stale
+    _PROXY_PRUNE_AT["n"] = max(300, len(live) * 2)
 
 
 def _bind(el, event, handler):
@@ -3174,8 +3245,10 @@ def _bind(el, event, handler):
     if el is None:
         return
     proxy = create_proxy(handler)
-    _PROXIES.append(proxy)
     el.addEventListener(event, proxy)
+    _PROXIES.append((el, proxy))
+    if len(_PROXIES) >= _PROXY_PRUNE_AT["n"]:
+        _prune_proxies()
 
 
 def _quarter_labels(fin, n):
@@ -4696,21 +4769,12 @@ def _set_liq_status(msg):
 
 # ===================== 원/달러 환율 (헤더 상시 표시) =====================
 
-async def update_fxrate():
-    """USD/KRW 환율을 조회해 헤더에 표시(탭과 무관하게 상시)."""
+def _render_fxrate(d):
+    """USD/KRW 환율을 헤더에 표시. d 는 update_indices 의 FX_IDC:USDKRW 조회 결과."""
     el = document.querySelector("#fxrate")
     if el is None:
         return
-    params = {
-        "symbol": "FX_IDC:USDKRW",
-        "fields": "close,change,change_abs", "no_404": "true",
-    }
-    try:
-        d = await _get_json(SCANNER_SYMBOL_URL, params)
-    except InvestingApiError:
-        el.innerHTML = "USD/KRW —"
-        return
-    if not isinstance(d, dict) or not isinstance(d.get("close"), (int, float)):
+    if not d:
         el.innerHTML = "USD/KRW —"
         return
     close = d["close"]
@@ -4770,8 +4834,10 @@ async def update_indices():
         if sym == "TVC:US10Y" and d and isinstance(d.get("close"), (int, float)):
             _RF_RATE["rate"] = d["close"] / 100.0
         # 원/달러 실시간 환율(헤더·차트·계산기 공용)을 저장한다.
-        if sym == "FX_IDC:USDKRW" and d and isinstance(d.get("close"), (int, float)):
-            _FX_RATE["rate"] = round(d["close"], 2)
+        if sym == "FX_IDC:USDKRW":
+            if d:
+                _FX_RATE["rate"] = round(d["close"], 2)
+            _render_fxrate(d)
         charted = sym in INDEX_YF
         cell_cls = "idx-cell idx-link" if charted else "idx-cell"
         attr = ' data-idxsym="%s"' % _esc(sym) if charted else ""
@@ -5732,12 +5798,15 @@ def _rrg_save_folders():
 
 
 def _rrg_all_sectors():
-    """기본 테마 ETF + 커스텀 종목 + 선택한 즐겨찾기 폴더의 종목을 모두 합친 목록."""
-    out = list(_RRG_SECTORS)
+    """기본 테마 ETF + 커스텀 종목 + 선택한 즐겨찾기 폴더의 종목을 (ticker, name, color, group) 로 합친다.
+
+    group: "etf" | "custom" | "folder:<폴더명>"
+    """
+    out = [(t, n, c, "etf") for t, n, c in _RRG_SECTORS]
     palette = _RRG_CUSTOM_PALETTE
     for c in _RRG_CUSTOM["list"]:
-        out.append((c["ticker"], c["name"], c["color"]))
-    seen = {t.upper() for t, _n, _c in out}
+        out.append((c["ticker"], c["name"], c["color"], "custom"))
+    seen = {t.upper() for t, _n, _c, _g in out}
     i = 0
     for f in (_FAV_LAST.get("list") or []):
         fol = (f.get("folder") or "Default").strip() or "Default"
@@ -5752,7 +5821,7 @@ def _rrg_all_sectors():
             continue
         seen.add(fetch.upper())
         display = full.split(":")[-1] or full
-        out.append((fetch, display, palette[i % len(palette)]))
+        out.append((fetch, display, palette[i % len(palette)], "folder:" + fol))
         i += 1
     return out
 
@@ -5817,7 +5886,7 @@ def _rrg_add_custom(ticker):
     tk = (ticker or "").strip().upper()
     if not tk:
         return
-    existing = {t.upper() for t, _n, _c in _rrg_all_sectors()}
+    existing = {t.upper() for t, _n, _c, _g in _rrg_all_sectors()}
     if tk in existing:
         window.alert("'%s' 는 이미 목록에 있습니다." % tk)
         return
@@ -5988,7 +6057,14 @@ def _rrg_svg(items):
             parts.append('<circle cx="%g" cy="%g" r="2.6" fill="%s" fill-opacity=".38"/>' % (X(point[1]), Y(point[2]), color))
         parts.append('</g>')
         lx, ly = X(last[1]), Y(last[2])
-        parts.append('<circle class="rrg-point" data-rrg-ticker="%s" cx="%g" cy="%g" r="17" fill="%s" fill-opacity=".94" stroke="#fff" stroke-opacity=".3" stroke-width="1.2"/>' % (_esc(item["ticker"]), lx, ly, color))
+        mine = item.get("group", "etf") != "etf"
+        if mine:
+            ring = 'stroke="#fff" stroke-opacity=".95" stroke-width="2.5"'
+        else:
+            ring = 'stroke="#fff" stroke-opacity=".3" stroke-width="1.2"'
+        parts.append('<circle class="rrg-point" data-rrg-ticker="%s" cx="%g" cy="%g" r="17" fill="%s" fill-opacity=".94" %s/>' % (_esc(item["ticker"]), lx, ly, color, ring))
+        if item.get("group") == "custom":
+            parts.append('<text x="%g" y="%g" text-anchor="middle" style="fill:#fff;font-size:9px;font-weight:700;pointer-events:none">%s</text>' % (lx, ly + 3, _esc(item["name"][:5])))
         label_width = max(82.0, len(item["name"]) * 14.0 + 18.0)
         label_on_right = lx + 20.0 + label_width <= W - pad_r
         label_x = lx + 20.0 if label_on_right else lx - 20.0
@@ -6012,6 +6088,8 @@ def _render_rrg(items):
 # 표에서 눈 아이콘으로 숨긴 종목(ticker) 집합. 기본은 모두 표시(빈 집합).
 _RRG_HIDDEN = set()
 _RRG_LAST_ITEMS = {"items": []}
+# 표시 그룹 필터: "all" | "etf" | "custom" | "folder:<폴더명>"
+_RRG_VIEW = {"group": "all"}
 _RRG_EYE_ON = ('<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" '
                'd="M12 5C6.5 5 2.7 9.3 1.5 12c1.2 2.7 5 7 10.5 7s9.3-4.3 10.5-7C21.3 9.3 17.5 5 12 5Zm0 '
                '11a4 4 0 1 1 0-8 4 4 0 0 1 0 8Zm0-6a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z"/></svg>')
@@ -6021,15 +6099,46 @@ _RRG_EYE_OFF = ('<svg viewBox="0 0 24 24" width="16" height="16"><path fill="cur
                 '1.4l2.9 2.9c1-1 1.8-2.2 2.3-3.3-1.2-2.7-5-7-10.5-7-.9 0-1.7.1-2.5.4l2 2c.3 0 .6-.1 1-.1Z"/></svg>')
 
 
+def _rrg_group_label(group):
+    if group == "etf":
+        return "테마 ETF"
+    if group == "custom":
+        return "직접 추가"
+    return "📁 " + group[len("folder:"):]
+
+
+def _rrg_view_bar(items):
+    """그룹이 2개 이상일 때만 표시 필터 버튼을 만든다."""
+    groups = []
+    for it in items:
+        g = it.get("group", "etf")
+        if g not in groups:
+            groups.append(g)
+    if len(groups) < 2:
+        return ""
+    cur = _RRG_VIEW["group"]
+    btns = ['<button type="button" data-rrg-view="all" class="%s">전체</button>'
+            % ("on" if cur == "all" else "")]
+    for g in groups:
+        btns.append('<button type="button" data-rrg-view="%s" class="%s">%s</button>'
+                    % (_esc(g), "on" if cur == g else "", _esc(_rrg_group_label(g))))
+    return ('<div class="row rrg-view"><span class="fin-quick">표시:</span>'
+            '<span class="fin-period">%s</span></div>' % "".join(btns))
+
+
 def _rrg_render_body():
-    """저장된 items 로 RRG 차트+표를 그린다(눈 아이콘 표시/숨김 상태 반영)."""
+    """저장된 items 로 RRG 차트+표를 그린다(그룹 필터·눈 아이콘 표시/숨김 상태 반영)."""
     el = document.querySelector("#rrg-result")
     if el is None:
         return
-    items = _RRG_LAST_ITEMS["items"]
-    if not items:
+    all_items = _RRG_LAST_ITEMS["items"]
+    if not all_items:
         el.innerHTML = '<div class="warn">RRG를 계산할 수 있는 섹터 데이터가 없습니다.</div>'
         return
+    view = _RRG_VIEW["group"]
+    if view != "all" and not any(it.get("group") == view for it in all_items):
+        view = _RRG_VIEW["group"] = "all"
+    items = [it for it in all_items if view == "all" or it.get("group") == view]
     visible = [it for it in items if it["ticker"] not in _RRG_HIDDEN]
     date = datetime.fromtimestamp(items[0]["tail"][-1][0], tz=timezone.utc).strftime("%Y-%m-%d")
     legend = "".join('<span><i style="background:%s"></i>%s %s</span>'
@@ -6043,18 +6152,21 @@ def _rrg_render_body():
         eye = ('<button class="rrg-eye%s" data-ticker="%s" title="차트 표시/숨김">%s</button>'
                % (" off" if hidden else "", _esc(item["ticker"]),
                   _RRG_EYE_OFF if hidden else _RRG_EYE_ON))
+        grp = item.get("group", "etf")
+        badge = ('' if grp == "etf" else
+                 ' <span class="rrg-grp">%s</span>' % _esc(_rrg_group_label(grp)))
         rows.append('<tr class="%s"><td class="rrg-eye-cell">%s</td>'
-                    '<td><span style="color:%s;font-weight:700">%s</span> %s</td>'
+                    '<td><span style="color:%s;font-weight:700">%s</span> %s%s</td>'
                     '<td>%.2f</td><td>%.2f</td><td class="%s">%s</td></tr>'
                     % ("rrg-row-hidden" if hidden else "", eye,
-                       item["color"], _esc(item["ticker"]), _esc(item["name"]),
+                       item["color"], _esc(item["ticker"]), _esc(item["name"]), badge,
                        ratio, momentum, qclass, qlabel))
     if visible:
         chart = _rrg_svg(visible)
     else:
         chart = ('<div class="hint" style="padding:24px;text-align:center">'
                  '표시할 종목이 없습니다. 아래 표의 눈 아이콘으로 켜세요.</div>')
-    el.innerHTML = ('<div class="rrg-pane"><div class="rrg-summary"><span><strong>기준:</strong> SPY</span><span><strong>기준일:</strong> %s</span><span>선택 기간 누적 상대성과 · 최근 5일 모멘텀</span></div><div class="rrg-chart-wrap">%s</div><div class="rrg-legend">%s</div><div class="table-wrap"><table class="rrg-table"><thead><tr><th class="rrg-eye-cell"></th><th>테마 ETF</th><th>RS Ratio</th><th>RS Momentum</th><th>사분면</th></tr></thead><tbody>%s</tbody></table></div>%s</div>') % (_esc(date), chart, legend, "".join(rows), _rrg_help_html())
+    el.innerHTML = ('<div class="rrg-pane"><div class="rrg-summary"><span><strong>기준:</strong> SPY</span><span><strong>기준일:</strong> %s</span><span>선택 기간 누적 상대성과 · 최근 5일 모멘텀</span></div>%s<div class="rrg-chart-wrap">%s</div><div class="rrg-legend">%s</div><div class="table-wrap"><table class="rrg-table"><thead><tr><th class="rrg-eye-cell"></th><th>종목</th><th>RS Ratio</th><th>RS Momentum</th><th>사분면</th></tr></thead><tbody>%s</tbody></table></div>%s</div>') % (_esc(date), _rrg_view_bar(all_items), chart, legend, "".join(rows), _rrg_help_html())
     eyes = document.querySelectorAll("#rrg-result .rrg-eye")
     for i in range(eyes.length):
         e = eyes.item(i)
@@ -6090,7 +6202,7 @@ async def _run_rrg():
             return
         results = await asyncio.gather(
             _fetch_index_history("SPY", fetch_range),
-            *[_fetch_index_history(ticker, fetch_range) for ticker, _name, _color in sectors],
+            *[_fetch_index_history(ticker, fetch_range) for ticker, _name, _color, _grp in sectors],
             return_exceptions=True)
         benchmark_rows = results[0]
         if isinstance(benchmark_rows, Exception):
@@ -6102,12 +6214,13 @@ async def _run_rrg():
                            for rows in sector_rows]
         benchmark_by_ts = {row[0]: row[4] for row in benchmark_rows}
         items = []
-        for (ticker, name, color), rows in zip(sectors, sector_rows):
+        for (ticker, name, color, group), rows in zip(sectors, sector_rows):
             if isinstance(rows, Exception):
                 continue
             series = _rrg_series(rows, benchmark_by_ts)
             if len(series) >= 12:
-                items.append({"ticker": ticker, "name": name, "color": color, "tail": series[-12:]})
+                items.append({"ticker": ticker, "name": name, "color": color,
+                              "group": group, "tail": series[-12:]})
         _render_rrg(items)
         _RRG_LOADED["done"] = True
         _RRG_LOADED["at"] = time.time()
@@ -7978,6 +8091,7 @@ def _update_folder_datalist(favs):
 
 def _make_fav_load_handler(symbol):
     def handler(evt):
+        document.querySelector("#fav-pop").classList.remove("open")
         document.querySelector("#ticker").value = symbol
         document.querySelector("#lookupBtn").click()
     return handler
@@ -8354,7 +8468,7 @@ def _update_fav_login_ui():
         acct_btn.classList.toggle("logged-in", _fav_logged_in())
     _update_fav_add_btn()
     _update_ai_admin_ui()
-    _update_earncal_tab()
+    _update_login_tabs()
     asyncio.ensure_future(refresh_guru_favorites())
 
 
@@ -8377,6 +8491,11 @@ async def refresh_favorites():
 _EARNCAL_STATE = {"year": None, "month": None, "events": [], "key": None,
                   "folder": ""}
 _EARNCAL_LIMIT = 6
+# TradingView earnings_publication_type: 21=잠정(예: 테슬라 인도량·삼성 잠정실적), 22=확정 실적
+_EARN_PUB_PRELIM = 21
+_US_EXCHANGES = {"NASDAQ", "NYSE", "AMEX", "NYSE ARCA", "CBOE", "BATS"}
+_NASDAQ_EARN_URL = "https://api.nasdaq.com/api/analyst/%s/earnings-date"
+_EARN_KIND_LABEL = {"prelim": " (잠정·예비 발표)", "est": " (발표일 추정)"}
 
 
 def _earncal_sym_folders():
@@ -8438,19 +8557,23 @@ def _earncal_today():
     return datetime.now(timezone.utc).date()
 
 
-def _update_earncal_tab():
-    """로그인 상태일 때만 실적 달력 탭을 표시한다."""
-    btn = document.querySelector("#earnCalTabBtn")
-    if btn is None:
+def _update_login_tabs():
+    """로그인 상태일 때만 실적 달력·AI 평가 탭을 표시한다."""
+    logged_in = _fav_logged_in()
+    hidden_active = False
+    for sel in ("#earnCalTabBtn", "#aiTabBtn"):
+        btn = document.querySelector(sel)
+        if btn is None:
+            continue
+        btn.style.display = "" if logged_in else "none"
+        if not logged_in and btn.classList.contains("active"):
+            hidden_active = True
+    if logged_in:
         return
-    if _fav_logged_in():
-        btn.style.display = ""
-        return
-    btn.style.display = "none"
     _EARNCAL_STATE["events"] = []
     _EARNCAL_STATE["key"] = None
     _EARNCAL_STATE["folder"] = ""
-    if btn.classList.contains("active"):
+    if hidden_active:
         stock = document.querySelector('.tab-btn[data-tab="stock"]')
         if stock is not None:
             stock.click()
@@ -8463,13 +8586,35 @@ def _earncal_active():
 
 async def _fetch_earn_dates(sym, sem):
     params = {"symbol": sym, "no_404": "true",
-              "fields": "earnings_release_next_date,earnings_release_date"}
+              "fields": "earnings_release_next_date,earnings_release_date,"
+                        "earnings_publication_type_fq"}
     async with sem:
         try:
             d = await _get_json(SCANNER_SYMBOL_URL, params)
         except InvestingApiError:
             return None
     return d if isinstance(d, dict) else None
+
+
+async def _fetch_nasdaq_earn_date(sym, sem):
+    """Nasdaq(Zacks) 실적 발표 예정일. (date, 추정여부) 또는 None. 미국 종목만."""
+    ex, _, tkr = sym.partition(":")
+    if ex.upper() not in _US_EXCHANGES or not tkr:
+        return None
+    async with sem:
+        try:
+            data = await _get_json(_NASDAQ_EARN_URL % tkr, {})
+        except InvestingApiError:
+            return None
+    text = ((data or {}).get("data") or {}).get("reportText") or ""
+    m = re.search(r"(\d{1,2})/(\d{1,2})/(\d{4})", text)
+    if not m:
+        return None
+    try:
+        day = datetime(int(m.group(3)), int(m.group(1)), int(m.group(2))).date()
+    except ValueError:
+        return None
+    return day, "estimated" in text.lower()
 
 
 async def _load_earncal(force=False):
@@ -8493,9 +8638,13 @@ async def _load_earncal(force=False):
     sem = asyncio.Semaphore(_EARNCAL_LIMIT)
     results = await asyncio.gather(*[_fetch_earn_dates(s, sem) for s in syms])
     events = []
+    prelim_syms = []
     for sym, d in zip(syms, results):
         if not d:
             continue
+        prelim = d.get("earnings_publication_type_fq") == _EARN_PUB_PRELIM
+        if prelim:
+            prelim_syms.append(sym)
         seen = set()
         for field in ("earnings_release_next_date", "earnings_release_date"):
             ts = d.get(field)
@@ -8505,8 +8654,24 @@ async def _load_earncal(force=False):
             if day in seen:
                 continue
             seen.add(day)
+            kind = "prelim" if (prelim and field == "earnings_release_date") else ""
             events.append({"sym": sym, "tkr": sym.split(":", 1)[-1],
-                           "name": names.get(sym, ""), "date": day})
+                           "name": names.get(sym, ""), "date": day, "kind": kind})
+    # 잠정 발표만 나온 분기는 스캐너가 정식 실적일을 건너뛰므로 Nasdaq 예정일로 보완한다.
+    if prelim_syms:
+        nres = await asyncio.gather(*[_fetch_nasdaq_earn_date(s, sem) for s in prelim_syms])
+        for sym, r in zip(prelim_syms, nres):
+            if not r:
+                continue
+            day, estimated = r
+            mine = [ev["date"] for ev in events if ev["sym"] == sym]
+            prelim_day = max((ev["date"] for ev in events
+                              if ev["sym"] == sym and ev["kind"] == "prelim"), default=None)
+            if day in mine or (prelim_day and day <= prelim_day):
+                continue
+            events.append({"sym": sym, "tkr": sym.split(":", 1)[-1],
+                           "name": names.get(sym, ""), "date": day,
+                           "kind": "est" if estimated else ""})
     _EARNCAL_STATE["events"] = events
     _EARNCAL_STATE["key"] = key
     _apply_status("#earncal-status", "")
@@ -8547,10 +8712,12 @@ def _render_earncal():
             if day == today:
                 cls.append("today")
             chips = "".join(
-                '<span class="earn-chip%s %s" title="%s">%s</span>' % (
+                '<span class="earn-chip%s %s %s" title="%s">%s</span>' % (
                     " past" if ev["date"] < today else "",
-                    _earncal_mark(ev, sym_folders),
-                    _esc("%s %s" % (ev["sym"], ev["name"])), _esc(ev["tkr"]))
+                    _earncal_mark(ev, sym_folders), ev.get("kind", ""),
+                    _esc("%s %s%s" % (ev["sym"], ev["name"],
+                                      _EARN_KIND_LABEL.get(ev.get("kind", ""), ""))),
+                    _esc(ev["tkr"]))
                 for ev in sorted(by_day.get(day, []),
                                  key=lambda e: (_earncal_mark(e, sym_folders) != "hl",
                                                 e["tkr"])))
@@ -8562,6 +8729,8 @@ def _render_earncal():
             '<div class="earncal-legend">'
             '<span class="earn-chip">예정</span>발표 예정'
             '<span class="earn-chip past">발표</span>발표 완료'
+            '<span class="earn-chip prelim">잠정</span>잠정·예비 발표'
+            '<span class="earn-chip est">추정</span>발표일 추정(미확정)'
             + ('<span class="earn-chip hl">강조</span>%s 폴더'
                % _esc(_EARNCAL_STATE["folder"]) if _EARNCAL_STATE["folder"] else "")
             + ' · 날짜는 UTC 기준</div>']
@@ -8581,11 +8750,12 @@ def _render_earncal_upcoming():
         return
     sym_folders = _earncal_sym_folders()
     trs = "".join(
-        '<tr class="%s"><td>%s</td><td>%s</td><td><b>%s</b></td><td>%s</td></tr>' % (
+        '<tr class="%s"><td>%s</td><td>%s</td><td><b>%s</b></td><td>%s%s</td></tr>' % (
             _earncal_mark(ev, sym_folders),
             ev["date"].isoformat(),
             "D-DAY" if ev["date"] == today else "D-%d" % (ev["date"] - today).days,
-            _esc(ev["tkr"]), _esc(ev["name"]))
+            _esc(ev["tkr"]), _esc(ev["name"]),
+            _esc(_EARN_KIND_LABEL.get(ev.get("kind", ""), "")))
         for ev in upcoming)
     body.innerHTML = ('<div class="earncal-up"><table><thead><tr><th>날짜</th>'
                       '<th>D-day</th><th>티커</th><th>종목명</th></tr></thead>'
@@ -8627,7 +8797,7 @@ def on_earncal_up(event):
 def on_earncal_pop_click(event):
     # 배경(오버레이) 또는 닫기 버튼 클릭 시 닫는다.
     t = event.target
-    if t.id == "earncal-up-pop" or t.closest(".earncal-pop-close") is not None:
+    if t.id == "earncal-up-pop" or t.closest(".modal-pop-close") is not None:
         document.querySelector("#earncal-up-pop").classList.remove("open")
 
 
@@ -9512,12 +9682,13 @@ def _update_ai_admin_ui():
 
 
 async def _refresh_ai_admin():
-    panel = document.querySelector("#ai-admin")
-    if panel is None:
+    btn = document.querySelector("#aiAdminOpenBtn")
+    if btn is None:
         return
     if not _fav_logged_in():
         _AI_ADMIN["is"] = False
-        panel.style.display = "none"
+        btn.style.display = "none"
+        _close_ai_admin_pop()
         _update_macrodoc_admin_ui()
         return
     # 관리자 전용 엔드포인트를 호출해 성공하면 관리자, 403이면 일반 사용자.
@@ -9525,14 +9696,15 @@ async def _refresh_ai_admin():
     delete_btn = document.querySelector("#favDeleteBtn")
     if err:
         _AI_ADMIN["is"] = False
-        panel.style.display = "none"
+        btn.style.display = "none"
+        _close_ai_admin_pop()
         # 관리자가 아니면(그리고 로그인 상태면) 계정 삭제 버튼을 다시 노출한다.
         if delete_btn is not None and _fav_logged_in():
             delete_btn.style.display = "inline-block"
         _update_macrodoc_admin_ui()
         return
     _AI_ADMIN["is"] = True
-    panel.style.display = ""
+    btn.style.display = ""
     # 관리자 계정은 계정 삭제 버튼을 숨긴다.
     if delete_btn is not None:
         delete_btn.style.display = "none"
@@ -9867,6 +10039,271 @@ def on_group(event):
         target.click()
 
 
+# ===================== 미국 시가총액 순위 (워커 /mcap-top) =====================
+
+_MCAP_TOP_N = 20
+_MCAP_TTL = 60
+_MCAP_STATE = {"rows": None, "at": 0.0, "busy": False}
+_MCAP_CHART_N = 20
+_MCAP_HIST_TTL = 600
+_MCAP_HIST = {"weeks": None, "at": 0.0, "busy": False, "sel": None, "err": ""}
+_MCAP_COLORS = [
+    "#2962ff", "#f23645", "#089981", "#ff9800", "#9c27b0", "#00bcd4",
+    "#795548", "#e91e63", "#4caf50", "#3f51b5", "#cddc39", "#ff5722",
+    "#607d8b", "#009688", "#673ab7", "#ffc107", "#8bc34a", "#03a9f4",
+    "#b71c1c", "#1b5e20",
+]
+
+
+def _set_mcap_status(msg):
+    _apply_status("#mcap-status", msg)
+
+
+def _mcap_url(path):
+    prefix = document.querySelector("#proxy").value.strip()
+    base = prefix.split("?")[0].rstrip("/") if prefix else ""
+    if not base.startswith("http"):
+        return None
+    return base + path
+
+
+async def _mcap_get(path):
+    url = _mcap_url(path)
+    if not url:
+        raise InvestingApiError("Worker(프록시) 주소가 설정돼 있어야 합니다.")
+    try:
+        resp = await pyfetch(url, method="GET")
+        payload = json.loads(await resp.string())
+    except Exception as exc:
+        raise InvestingApiError("네트워크 오류: %s" % exc)
+    if resp.status >= 400:
+        raise InvestingApiError(payload.get("error") or ("HTTP %s" % resp.status))
+    return payload
+
+
+async def _fetch_mcap_top():
+    """워커에서 미국 시총 상위 종목을 받아 dict 리스트로 변환."""
+    payload = await _mcap_get("/mcap-top?n=%d" % _MCAP_TOP_N)
+    cols = payload.get("columns") or []
+    rows = []
+    for item in payload.get("data") or []:
+        d = item.get("d") or []
+        rec = {cols[i]: d[i] for i in range(min(len(cols), len(d)))}
+        rec["symbol"] = item.get("s") or ""
+        rows.append(rec)
+    return rows
+
+
+def _render_mcap_top():
+    box = document.querySelector("#mcap-result")
+    rows = _MCAP_STATE["rows"]
+    if box is None or rows is None:
+        return
+    if not rows:
+        box.innerHTML = '<div class="hint">데이터가 없습니다.</div>'
+        return
+    total = sum(r.get("market_cap_basic") or 0 for r in rows)
+    h = ['<div class="table-wrap"><table class="holdings mcap-table"><thead><tr>'
+         '<th class="num">순위</th><th>종목</th><th class="m-hide">섹터</th>'
+         '<th class="num">시가총액</th><th class="num m-hide">TOP20 내 비중</th>'
+         '<th class="num m-hide">주가</th><th class="num">등락률</th><th></th>'
+         '</tr></thead><tbody>']
+    sel = _MCAP_HIST["sel"]
+    for i, r in enumerate(rows):
+        mcap = r.get("market_cap_basic")
+        chg = r.get("change")
+        if isinstance(chg, (int, float)):
+            cls = "up" if chg >= 0 else "down"
+            chg_html = '<span class="%s">%+.2f%%</span>' % (cls, chg)
+        else:
+            chg_html = "-"
+        share = ("%.1f%%" % (mcap / total * 100)
+                 if isinstance(mcap, (int, float)) and total else "-")
+        close = r.get("close")
+        h.append(
+            '<tr data-symbol="%s"%s title="클릭하면 아래 그래프에서 강조합니다">'
+            '<td class="num rank">%d</td>'
+            '<td><b>%s</b><span class="sub">%s</span></td><td class="m-hide">%s</td>'
+            '<td class="num">%s</td><td class="num m-hide">%s</td>'
+            '<td class="num m-hide">%s</td><td class="num">%s</td>'
+            '<td><button type="button" class="mcap-go" data-go="%s">조회</button></td></tr>'
+            % (_esc(r["symbol"]), ' class="sel"' if r["symbol"] == sel else "",
+               i + 1, _esc(r.get("name") or ""),
+               _esc(r.get("description") or ""), _esc(r.get("sector") or "-"),
+               fmt_large(mcap if isinstance(mcap, (int, float)) else None, "USD"),
+               share,
+               fmt_num(close) if isinstance(close, (int, float)) else "-",
+               chg_html, _esc(r["symbol"])))
+    h.append("</tbody></table></div>")
+    box.innerHTML = "".join(h)
+
+
+def _mcap_weekly_ranks(weeks):
+    """주별 {symbol: (순위, 시총)} — TOP N 만."""
+    out = []
+    for w in weeks:
+        rows = [r for r in (w.get("r") or [])
+                if len(r) >= 2 and isinstance(r[1], (int, float)) and r[1] > 0]
+        rows.sort(key=lambda r: -r[1])
+        out.append({r[0]: (i + 1, r[1]) for i, r in enumerate(rows[:_MCAP_CHART_N])})
+    return out
+
+
+def _render_mcap_chart():
+    box = document.querySelector("#mcap-chart")
+    weeks = _MCAP_HIST["weeks"]
+    if box is None:
+        return
+    if _MCAP_HIST["err"]:
+        box.innerHTML = '<div class="hint">순위 추이 조회 실패: %s</div>' % _esc(_MCAP_HIST["err"])
+        return
+    if weeks is None:
+        return
+    if not weeks:
+        box.innerHTML = ('<div class="hint">아직 누적된 주간 스냅샷이 없습니다. '
+                         '매주 금요일 장마감 후 기록됩니다.</div>')
+        return
+
+    ranks = _mcap_weekly_ranks(weeks)
+    n_w = len(weeks)
+    n = _MCAP_CHART_N
+    W, H, L, R, T, B = 960, 440, 34, 70, 12, 30
+    pw, ph = W - L - R, H - T - B
+
+    def x(i):
+        return L + (pw * i / (n_w - 1) if n_w > 1 else pw / 2)
+
+    def y(rk):
+        return T + ph * (rk - 1) / (n - 1)
+
+    best = {}
+    for rk in ranks:
+        for s, (r, _mc) in rk.items():
+            best[s] = min(r, best.get(s, r))
+    last = ranks[-1]
+    order = sorted(best, key=lambda s: (last[s][0] if s in last else n + best[s], s))
+    color = {s: _MCAP_COLORS[i % len(_MCAP_COLORS)] for i, s in enumerate(order)}
+    sel = _MCAP_HIST["sel"] if _MCAP_HIST["sel"] in best else None
+    if sel:
+        order = [s for s in order if s != sel] + [sel]
+
+    p = ['<svg class="mcap-svg%s" viewBox="0 0 %d %d" xmlns="http://www.w3.org/2000/svg">'
+         % (" has-sel" if sel else "", W, H)]
+    p.append('<g class="grid axis">')
+    for rk in range(1, n + 1):
+        p.append('<line x1="%d" x2="%d" y1="%.1f" y2="%.1f"/>'
+                 '<text x="%d" y="%.1f" text-anchor="end" dy="4">%d</text>'
+                 % (L, W - R, y(rk), y(rk), L - 8, y(rk), rk))
+    step = max(1, -(-n_w // 8))
+    for i in range(0, n_w, step):
+        p.append('<text x="%.1f" y="%d" text-anchor="middle">%s</text>'
+                 % (x(i), H - 8, _esc(weeks[i]["d"][2:].replace("-", "."))))
+    p.append("</g>")
+
+    for s in order:
+        tk = _esc(s.split(":")[-1])
+        col = color[s]
+        segs, cur, dots = [], [], []
+        for i, rk in enumerate(ranks):
+            if s not in rk:
+                if cur:
+                    segs.append(cur)
+                cur = []
+                continue
+            r, mc = rk[s]
+            cur.append((x(i), y(r)))
+            dots.append('<circle cx="%.1f" cy="%.1f" r="3" fill="%s"><title>%s · %s · %d위 · %s</title></circle>'
+                        % (x(i), y(r), col, tk, _esc(weeks[i]["d"]), r,
+                           _esc(fmt_large(mc, "USD"))))
+        if cur:
+            segs.append(cur)
+        d = " ".join("M" + " L".join("%.1f,%.1f" % pt for pt in seg) for seg in segs if len(seg) > 1)
+        p.append('<g class="mc-line%s" data-sym="%s"><title>%s</title>'
+                 % (" sel" if s == sel else "", _esc(s), tk))
+        if d:
+            p.append('<path d="%s" stroke="%s"/>' % (d, col))
+        p.extend(dots)
+        if s in last:
+            p.append('<text x="%.1f" y="%.1f" dy="4" fill="%s">%s</text>'
+                     % (x(n_w - 1) + 8, y(last[s][0]), col, tk))
+        p.append("</g>")
+    p.append("</svg>")
+
+    head = "주간 순위 추이 (금요일 장마감 기준, %d주 누적 · %s~%s)" % (
+        n_w, weeks[0]["d"], weeks[-1]["d"])
+    box.innerHTML = '<div class="mcap-chart-head">%s</div>%s' % (_esc(head), "".join(p))
+
+
+async def _load_mcap_hist():
+    if _MCAP_HIST["busy"]:
+        return
+    _MCAP_HIST["busy"] = True
+    try:
+        payload = await _mcap_get("/mcap-history?weeks=520")
+        _MCAP_HIST["weeks"] = payload.get("weeks") or []
+        _MCAP_HIST["err"] = ""
+        _MCAP_HIST["at"] = time.time()
+    except InvestingApiError as exc:
+        _MCAP_HIST["err"] = str(exc)
+    finally:
+        _MCAP_HIST["busy"] = False
+    _render_mcap_chart()
+
+
+def _mcap_select(sym):
+    _MCAP_HIST["sel"] = None if _MCAP_HIST["sel"] == sym else sym
+    _render_mcap_top()
+    _render_mcap_chart()
+
+
+async def _load_mcap_top():
+    if _MCAP_STATE["busy"]:
+        return
+    _MCAP_STATE["busy"] = True
+    _set_mcap_status("조회 중...")
+    try:
+        _MCAP_STATE["rows"] = await _fetch_mcap_top()
+        _MCAP_STATE["at"] = time.time()
+        _render_mcap_top()
+        upd = document.querySelector("#mcap-updated")
+        if upd is not None:
+            upd.textContent = "기준: %s" % (
+                datetime.now().strftime("%Y-%m-%d %H:%M"))
+        _set_mcap_status("완료")
+    except InvestingApiError as exc:
+        _set_mcap_status("오류: %s" % exc)
+        box = document.querySelector("#mcap-result")
+        if box is not None:
+            box.innerHTML = '<div class="hint">조회 실패: %s</div>' % _esc(str(exc))
+    finally:
+        _MCAP_STATE["busy"] = False
+    if (_MCAP_HIST["weeks"] is None or _MCAP_HIST["err"]
+            or time.time() - _MCAP_HIST["at"] >= _MCAP_HIST_TTL):
+        await _load_mcap_hist()
+
+
+@when("click", "#mcap-result")
+def on_mcap_result_click(event):
+    go = event.target.closest("button[data-go]")
+    if go is not None:
+        document.querySelector("#ticker").value = go.getAttribute("data-go")
+        document.querySelector('.tab-btn[data-tab="stock"]').click()
+        document.querySelector("#lookupBtn").click()
+        return
+    tr = event.target.closest("tr[data-symbol]")
+    if tr is not None:
+        _mcap_select(tr.getAttribute("data-symbol"))
+
+
+@when("click", "#mcap-chart")
+def on_mcap_chart_click(event):
+    g = event.target.closest("[data-sym]")
+    if g is not None:
+        _mcap_select(g.getAttribute("data-sym"))
+    elif _MCAP_HIST["sel"]:
+        _mcap_select(_MCAP_HIST["sel"])
+
+
 @when("click", ".tab-btn")
 def on_tab(event):
     name = event.target.getAttribute("data-tab")
@@ -9927,6 +10364,9 @@ def on_tab(event):
     if name == "earncal":
         _render_earncal()
         asyncio.ensure_future(_load_earncal())
+    if name == "mcap" and (not _MCAP_STATE["at"] or
+                            time.time() - _MCAP_STATE["at"] >= _MCAP_TTL):
+        asyncio.ensure_future(_load_mcap_top())
 
 
 @when("mousemove", "#idxchart-result")
@@ -10116,6 +10556,15 @@ def on_rrg_point_hover(event):
 @when("mouseleave", "#rrg-result")
 def on_rrg_point_leave(event):
     _set_rrg_hover()
+
+
+@when("click", "#rrg-result")
+def on_rrg_view_click(event):
+    btn = event.target.closest("[data-rrg-view]")
+    if btn is None:
+        return
+    _RRG_VIEW["group"] = btn.getAttribute("data-rrg-view")
+    _rrg_render_body()
 
 
 @when("click", "#idxChartBtn")
@@ -10668,21 +11117,16 @@ async def on_fav_add(event):
         _set_fav_status("등록됨 · %s → %s" % (sym, folder))
 
 
-@when("click", "#favCollapseBtn")
-def on_fav_collapse(event):
-    """즐겨찾기 영역 전체를 접거나 편다(타이틀·버튼만 남기고 최소화)."""
-    body = document.querySelector("#fav-body")
-    btn = document.querySelector("#favCollapseBtn")
-    if body is None or btn is None:
-        return
-    if body.style.display == "none":
-        body.style.display = ""
-        btn.textContent = "▲"
-        btn.title = "즐겨찾기 접기"
-    else:
-        body.style.display = "none"
-        btn.textContent = "▼"
-        btn.title = "즐겨찾기 펴기"
+@when("click", "#favOpenBtn")
+def on_fav_open(event):
+    document.querySelector("#fav-pop").classList.add("open")
+
+
+@when("click", "#fav-pop")
+def on_fav_pop_click(event):
+    t = event.target
+    if t.id == "fav-pop" or t.closest(".modal-pop-close") is not None:
+        document.querySelector("#fav-pop").classList.remove("open")
 
 
 @when("click", "#acctBtn")
@@ -10716,21 +11160,29 @@ def _on_doc_click_acct(event):
 document.addEventListener("click", create_proxy(_on_doc_click_acct))
 
 
-@when("click", "#aiAdminCollapseBtn")
-def on_ai_admin_collapse(event):
-    """AI 평가 접근 관리 영역을 접거나 편다(제목·버튼만 남기고 최소화)."""
-    body = document.querySelector("#ai-admin-body")
-    btn = document.querySelector("#aiAdminCollapseBtn")
-    if body is None or btn is None:
+@when("click", "#aiAdminOpenBtn")
+async def on_ai_admin_open(event):
+    if not _is_ai_admin():
         return
-    if body.style.display == "none":
-        body.style.display = ""
-        btn.textContent = "▲"
-        btn.title = "접근 관리 접기"
-    else:
-        body.style.display = "none"
-        btn.textContent = "▼"
-        btn.title = "접근 관리 펴기"
+    document.querySelector("#acct-popup").classList.remove("open")
+    document.querySelector("#acctBtn").setAttribute("aria-expanded", "false")
+    document.querySelector("#ai-admin-pop").classList.add("open")
+    _set_ai_admin_status("불러오는 중...")
+    await _load_ai_access()
+
+
+def _close_ai_admin_pop():
+    pop = document.querySelector("#ai-admin-pop")
+    if pop is not None:
+        pop.classList.remove("open")
+    _hide_grant_suggest()
+
+
+@when("click", "#ai-admin-pop")
+def on_ai_admin_pop_click(event):
+    t = event.target
+    if t.id == "ai-admin-pop" or t.closest(".modal-pop-close") is not None:
+        _close_ai_admin_pop()
 
 
 @when("click", "#favNewFolderBtn")
@@ -11238,18 +11690,26 @@ _set_guru_status("이름 일부를 입력해 검색하세요(예: 버핏, Bridge
 _update_fav_login_ui()
 asyncio.ensure_future(_restore_fav_session())
 
-# 원/달러 환율 · 미국 지수: 초기 1회 조회 후 60초마다 갱신
-asyncio.ensure_future(update_fxrate())
+# 원/달러 환율 · 미국 지수: 초기 1회 조회 후 60초마다 갱신(탭이 숨겨진 동안은 생략)
+_HEADER_REFRESH = {"at": time.time()}
 asyncio.ensure_future(update_indices())
 
 
-def _refresh_header():
-    asyncio.ensure_future(update_fxrate())
+def _refresh_header(*_args):
+    if document.hidden:
+        return
+    _HEADER_REFRESH["at"] = time.time()
     asyncio.ensure_future(update_indices())
+
+
+def _on_header_visibility(*_args):
+    if not document.hidden and time.time() - _HEADER_REFRESH["at"] >= 60:
+        _refresh_header()
 
 
 _FX_TIMER = create_proxy(_refresh_header)
 window.setInterval(_FX_TIMER, 60000)
+document.addEventListener("visibilitychange", create_proxy(_on_header_visibility))
 </script>
 </body>
 </html>

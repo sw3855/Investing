@@ -101,6 +101,13 @@
  *    GET    /macro-doc?id=<id>                 → { id, title, html, updatedAt }
  *    POST   /macro-doc?account=<admin>  본문 {title,html} → 등록/갱신(같은 제목=갱신)
  *    DELETE /macro-doc?account=<admin>&id=<id> → 자료 삭제
+ *
+ *  미국 시가총액 순위:
+ *    GET    /mcap-top?n=20                     → { data:[{s, d:[...]}], columns:[...] }
+ *    GET    /mcap-history?weeks=520            → { weeks:[{d:'YYYY-MM-DD', r:[[symbol, mcap], ...]}] }
+ *  주간 스냅샷(TOP 50)은 FAVORITES KV 의 'mcaphist:<연도>' 키에 주(금요일 날짜) 단위로 쌓인다.
+ *    - Cron Trigger '0 22 * * 5'(금요일 장마감 후)를 등록하면 매주 확정 스냅샷을 기록한다.
+ *    - /mcap-top 조회 시 이번 주 스냅샷이 없거나 미확정이면 보충 기록한다.
  */
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -251,6 +258,8 @@ const ALLOWED_HOSTS = [
   // Yahoo Finance: 지수 일봉 OHLC 시계열(캔들 차트용, v8 chart API)
   "query1.finance.yahoo.com",
   "query2.finance.yahoo.com",
+  // Nasdaq: 실적 발표 예정일(잠정실적만 있는 종목 보완용)
+  "api.nasdaq.com",
 ];
 
 function isAllowed(hostname) {
@@ -258,7 +267,13 @@ function isAllowed(hostname) {
 }
 
 export default {
-  async fetch(request, env) {
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(
+      fetchMcapScan(MCAP_MAX_N).then((data) => recordMcapSnapshot(env, data, true))
+    );
+  },
+
+  async fetch(request, env, ctx) {
     // CORS preflight
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: CORS_HEADERS });
@@ -284,6 +299,14 @@ export default {
     // ── Gemini AI 기업 평가 ──
     if (reqUrl.pathname === "/gemini") {
       return handleGemini(request, env, reqUrl);
+    }
+
+    // ── 미국 시가총액 상위 종목 (TradingView 스캐너, 고정 쿼리) ──
+    if (reqUrl.pathname === "/mcap-top") {
+      return handleMcapTop(request, env, ctx, reqUrl);
+    }
+    if (reqUrl.pathname === "/mcap-history") {
+      return handleMcapHistory(request, env, reqUrl);
     }
 
     if (request.method !== "GET") {
@@ -353,6 +376,12 @@ export default {
       upstreamHeaders["Accept"] = "application/json, text/plain, */*";
       upstreamHeaders["Accept-Language"] = "en-US,en;q=0.9";
     }
+    if (targetUrl.hostname === "api.nasdaq.com") {
+      upstreamHeaders["Accept"] = "application/json, text/plain, */*";
+      upstreamHeaders["Accept-Language"] = "en-US,en;q=0.9";
+      upstreamHeaders["Origin"] = "https://www.nasdaq.com";
+      upstreamHeaders["Referer"] = "https://www.nasdaq.com/";
+    }
 
     let upstream;
     try {
@@ -387,6 +416,170 @@ function jsonResponse(obj, status = 200) {
   const headers = new Headers(CORS_HEADERS);
   headers.set("Content-Type", "application/json; charset=utf-8");
   return new Response(JSON.stringify(obj), { status, headers });
+}
+
+// ===================== 미국 시가총액 순위 =====================
+
+const MCAP_COLUMNS = [
+  "name", "description", "close", "change", "market_cap_basic",
+  "currency", "sector", "logoid",
+];
+const MCAP_MAX_N = 50;
+const MCAP_CACHE_TTL = 60; // 초
+
+const MCAP_HIST_PREFIX = "mcaphist:";
+const MCAP_HIST_MAX_WEEKS = 520;
+const MCAP_HIST_CACHE_TTL = 600; // 초
+// 같은 아이솔레이트에서 이미 기록/확인한 주("YYYY-MM-DD:final")
+let _mcapSnapChecked = "";
+
+// 스캐너 /scan 은 POST 전용이라 범용 프록시 대신 고정 본문만 보내는 엔드포인트로 둔다.
+async function fetchMcapScan(n) {
+  const body = {
+    // is_primary: 동일 기업의 복수 주식(GOOG/GOOGL, BRK.A/B)과 해외기업 ADR 을 제외
+    filter: [
+      { left: "type", operation: "in_range", right: ["stock", "dr"] },
+      { left: "is_primary", operation: "equal", right: true },
+    ],
+    markets: ["america"],
+    columns: MCAP_COLUMNS,
+    sort: { sortBy: "market_cap_basic", sortOrder: "desc" },
+    range: [0, n],
+  };
+  const upstream = await fetch("https://scanner.tradingview.com/america/scan", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      Origin: "https://www.tradingview.com",
+      Referer: "https://www.tradingview.com/",
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+        "(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!upstream.ok) throw new Error("upstream HTTP " + upstream.status);
+  const data = await upstream.json();
+  return Array.isArray(data.data) ? data.data : [];
+}
+
+// 스냅샷이 속한 주의 금요일 날짜와, 금요일 장마감(21:00 UTC) 이후인지(확정) 여부
+function mcapWeekInfo(now) {
+  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const dow = d.getUTCDay();
+  d.setUTCDate(d.getUTCDate() + (dow === 6 ? -1 : dow === 0 ? -2 : 5 - dow));
+  return {
+    fri: d.toISOString().slice(0, 10),
+    final: now.getTime() >= d.getTime() + 21 * 3600 * 1000,
+  };
+}
+
+// force=false 면 이번 주 스냅샷이 없거나, 미확정→확정으로 바뀔 때만 기록한다.
+async function recordMcapSnapshot(env, data, force) {
+  const kv = env && env.FAVORITES;
+  if (!kv || !Array.isArray(data) || !data.length) return false;
+  const now = new Date();
+  const { fri, final } = mcapWeekInfo(now);
+  const mark = fri + ":" + final;
+  if (!force && _mcapSnapChecked === mark) return false;
+  const key = MCAP_HIST_PREFIX + fri.slice(0, 4);
+  let bucket = {};
+  try {
+    bucket = JSON.parse((await kv.get(key)) || "{}") || {};
+  } catch {
+    bucket = {};
+  }
+  const prev = bucket[fri];
+  if (!force && prev && (prev.f || !final)) {
+    _mcapSnapChecked = mark;
+    return false;
+  }
+  const iMc = MCAP_COLUMNS.indexOf("market_cap_basic");
+  const rows = data
+    .map((it) => [it.s, Math.round(Number((it.d || [])[iMc]) || 0)])
+    .filter((r) => r[0] && r[1] > 0);
+  if (!rows.length) return false;
+  bucket[fri] = { t: now.getTime(), f: final, r: rows };
+  await kv.put(key, JSON.stringify(bucket));
+  _mcapSnapChecked = mark;
+  return true;
+}
+
+async function handleMcapTop(request, env, ctx, reqUrl) {
+  if (request.method !== "GET") {
+    return jsonResponse({ error: "method not allowed" }, 405);
+  }
+  let n = parseInt(reqUrl.searchParams.get("n") || "20", 10);
+  if (!Number.isFinite(n)) n = 20;
+  n = Math.max(1, Math.min(MCAP_MAX_N, n));
+
+  const cache = caches.default;
+  const cacheKey = new Request("https://cache.local/mcap-top?n=" + n);
+  const hit = await cache.match(cacheKey);
+  if (hit) return hit;
+
+  let data;
+  try {
+    data = await fetchMcapScan(MCAP_MAX_N);
+  } catch (err) {
+    return jsonResponse({ error: "upstream fetch failed: " + err }, 502);
+  }
+  if (ctx) {
+    ctx.waitUntil(recordMcapSnapshot(env, data, false).catch(() => false));
+  }
+  const resp = jsonResponse({
+    columns: MCAP_COLUMNS,
+    data: data.slice(0, n),
+    at: Date.now(),
+  });
+  resp.headers.set("Cache-Control", "public, max-age=" + MCAP_CACHE_TTL);
+  await cache.put(cacheKey, resp.clone());
+  return resp;
+}
+
+async function handleMcapHistory(request, env, reqUrl) {
+  if (request.method !== "GET") {
+    return jsonResponse({ error: "method not allowed" }, 405);
+  }
+  if (!env || !env.FAVORITES) {
+    return jsonResponse({ error: "KV 바인딩(FAVORITES)이 설정되지 않았습니다." }, 500);
+  }
+  let weeks = parseInt(reqUrl.searchParams.get("weeks") || String(MCAP_HIST_MAX_WEEKS), 10);
+  if (!Number.isFinite(weeks)) weeks = MCAP_HIST_MAX_WEEKS;
+  weeks = Math.max(1, Math.min(MCAP_HIST_MAX_WEEKS, weeks));
+
+  const cache = caches.default;
+  const cacheKey = new Request("https://cache.local/mcap-history?weeks=" + weeks);
+  const hit = await cache.match(cacheKey);
+  if (hit) return hit;
+
+  const lastYear = new Date().getUTCFullYear();
+  const years = [];
+  for (let y = lastYear - Math.ceil(weeks / 52); y <= lastYear; y++) years.push(y);
+  const raws = await Promise.all(
+    years.map((y) => env.FAVORITES.get(MCAP_HIST_PREFIX + y).catch(() => null))
+  );
+  const list = [];
+  for (const raw of raws) {
+    let bucket;
+    try {
+      bucket = JSON.parse(raw || "{}") || {};
+    } catch {
+      continue;
+    }
+    for (const [d, v] of Object.entries(bucket)) {
+      if (v && Array.isArray(v.r)) list.push({ d, f: !!v.f, r: v.r });
+    }
+  }
+  list.sort((a, b) => (a.d < b.d ? -1 : a.d > b.d ? 1 : 0));
+  const resp = jsonResponse({ weeks: list.slice(-weeks) });
+  // 첫 스냅샷 기록 직후 조회가 빈 결과로 캐시되지 않도록 데이터가 있을 때만 캐시
+  if (list.length) {
+    resp.headers.set("Cache-Control", "public, max-age=" + MCAP_HIST_CACHE_TTL);
+    await cache.put(cacheKey, resp.clone());
+  }
+  return resp;
 }
 
 // ===================== AI 평가 접근 제어 =====================
