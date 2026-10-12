@@ -481,7 +481,8 @@ async function recordMcapSnapshot(env, data, force) {
   if (!kv || !Array.isArray(data) || !data.length) return false;
   const now = new Date();
   const { fri, final } = mcapWeekInfo(now);
-  const mark = fri + ":" + final;
+  const today = now.toISOString().slice(0, 10);
+  const mark = fri + ":" + final + ":" + today;
   if (!force && _mcapSnapChecked === mark) return false;
   const key = MCAP_HIST_PREFIX + fri.slice(0, 4);
   let bucket = {};
@@ -491,7 +492,9 @@ async function recordMcapSnapshot(env, data, force) {
     bucket = {};
   }
   const prev = bucket[fri];
-  if (!force && prev && (prev.f || !final)) {
+  // 미확정 스냅샷은 하루 한 번 갱신해 표시 날짜(기록일)를 최신으로 유지
+  const prevDay = prev && prev.t ? new Date(prev.t).toISOString().slice(0, 10) : "";
+  if (!force && prev && (prev.f || (!final && prevDay === today))) {
     _mcapSnapChecked = mark;
     return false;
   }
@@ -550,7 +553,8 @@ async function handleMcapHistory(request, env, reqUrl) {
   weeks = Math.max(1, Math.min(MCAP_HIST_MAX_WEEKS, weeks));
 
   const cache = caches.default;
-  const cacheKey = new Request("https://cache.local/mcap-history?weeks=" + weeks);
+  // 응답 형식이 바뀔 때 v 를 올려 배포 전 캐시를 무효화
+  const cacheKey = new Request("https://cache.local/mcap-history?v=2&weeks=" + weeks);
   const hit = await cache.match(cacheKey);
   if (hit) return hit;
 
@@ -569,7 +573,14 @@ async function handleMcapHistory(request, env, reqUrl) {
       continue;
     }
     for (const [d, v] of Object.entries(bucket)) {
-      if (v && Array.isArray(v.r)) list.push({ d, f: !!v.f, r: v.r });
+      if (!v || !Array.isArray(v.r)) continue;
+      // 금요일 마감 전 스냅샷은 실제 기록일로 표시
+      let shown = d;
+      if (!v.f && v.t) {
+        const td = new Date(v.t).toISOString().slice(0, 10);
+        if (td < d) shown = td;
+      }
+      list.push({ d: shown, f: !!v.f, r: v.r });
     }
   }
   list.sort((a, b) => (a.d < b.d ? -1 : a.d > b.d ? 1 : 0));

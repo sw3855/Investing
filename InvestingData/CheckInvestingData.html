@@ -1553,6 +1553,29 @@ async def _naver_kr_code(name):
     return "KRX:%s" % code, (chosen.get("name") or name)
 
 
+_KR_NAME_CACHE = {}   # KRX 코드 -> 한글 회사명
+
+
+async def _naver_kr_name(code):
+    """KRX 종목코드로 네이버 증권의 한글 회사명을 조회. 실패 시 None."""
+    code = (code or "").upper()
+    if not code:
+        return None
+    if code in _KR_NAME_CACHE:
+        return _KR_NAME_CACHE[code]
+    name = None
+    try:
+        data = await _get_json(NAVER_AC_URL, {"q": code, "target": "stock"})
+        for it in (data.get("items") or []) if isinstance(data, dict) else []:
+            if (it.get("code") or "").upper() == code and it.get("nationCode") == "KOR":
+                name = it.get("name") or None
+                break
+    except InvestingApiError:
+        return None
+    _KR_NAME_CACHE[code] = name
+    return name
+
+
 async def search_symbol(ticker, lang="en"):
     """티커 또는 회사명으로 Investing 심볼 검색. (full_symbol, description) 반환.
 
@@ -7988,6 +8011,12 @@ def render_favorites(favs):
             sym = f.get("symbol") or ""
             name = f.get("name") or ""
             tkr = sym.split(":", 1)[-1] if sym else sym  # 표시는 거래소 접두어 제외
+            if sym.upper().startswith("KRX:"):
+                kr = _KR_NAME_CACHE.get(tkr.upper())
+                if kr:
+                    tkr = kr
+                elif _has_hangul(name):
+                    tkr = name
             chips.append(
                 '<div class="fav-cell fav-load" data-symbol="%s" '
                 'data-folder="%s" draggable="true" title="%s">'
@@ -8037,8 +8066,18 @@ async def _refresh_fav_prices():
         s = cells.item(i).getAttribute("data-symbol")
         if s and s not in syms:
             syms.append(s)
-    results = await asyncio.gather(*[_fetch_index(s) for s in syms])
+    kr_syms = [s for s in syms if s.upper().startswith("KRX:")]
+    results, kr_names = await asyncio.gather(
+        asyncio.gather(*[_fetch_index(s) for s in syms]),
+        asyncio.gather(*[_naver_kr_name(s.split(":", 1)[-1]) for s in kr_syms]))
     price_map = dict(zip(syms, results))
+    name_map = dict(zip(kr_syms, kr_names))
+    for i in range(n):
+        cell = cells.item(i)
+        kr = name_map.get(cell.getAttribute("data-symbol"))
+        nm = cell.querySelector(".nm")
+        if kr and nm is not None:
+            nm.textContent = kr
     for i in range(n):
         cell = cells.item(i)
         d = price_map.get(cell.getAttribute("data-symbol"))
@@ -8051,7 +8090,8 @@ async def _refresh_fav_prices():
                 chg_el.textContent = ""
             continue
         if pv is not None:
-            pv.textContent = fmt_num(d["close"], 2)
+            is_kr = (cell.getAttribute("data-symbol") or "").upper().startswith("KRX:")
+            pv.textContent = fmt_num(d["close"], 0 if is_kr else 2)
         chg = d.get("change")
         if chg_el is not None:
             if isinstance(chg, (int, float)):
@@ -8636,7 +8676,15 @@ async def _load_earncal(force=False):
         return
     _apply_status("#earncal-status", "실적 발표일 조회 중...")
     sem = asyncio.Semaphore(_EARNCAL_LIMIT)
-    results = await asyncio.gather(*[_fetch_earn_dates(s, sem) for s in syms])
+    kr_syms = [s for s in syms if s.upper().startswith("KRX:")]
+    results, kr_names = await asyncio.gather(
+        asyncio.gather(*[_fetch_earn_dates(s, sem) for s in syms]),
+        asyncio.gather(*[_naver_kr_name(s.split(":", 1)[-1]) for s in kr_syms]))
+    labels = {s: s.split(":", 1)[-1] for s in syms}
+    for s, kr in zip(kr_syms, kr_names):
+        if kr:
+            labels[s] = kr
+            names[s] = kr
     events = []
     prelim_syms = []
     for sym, d in zip(syms, results):
@@ -8655,7 +8703,7 @@ async def _load_earncal(force=False):
                 continue
             seen.add(day)
             kind = "prelim" if (prelim and field == "earnings_release_date") else ""
-            events.append({"sym": sym, "tkr": sym.split(":", 1)[-1],
+            events.append({"sym": sym, "tkr": labels[sym],
                            "name": names.get(sym, ""), "date": day, "kind": kind})
     # 잠정 발표만 나온 분기는 스캐너가 정식 실적일을 건너뛰므로 Nasdaq 예정일로 보완한다.
     if prelim_syms:
@@ -8669,7 +8717,7 @@ async def _load_earncal(force=False):
                               if ev["sym"] == sym and ev["kind"] == "prelim"), default=None)
             if day in mine or (prelim_day and day <= prelim_day):
                 continue
-            events.append({"sym": sym, "tkr": sym.split(":", 1)[-1],
+            events.append({"sym": sym, "tkr": labels[sym],
                            "name": names.get(sym, ""), "date": day,
                            "kind": "est" if estimated else ""})
     _EARNCAL_STATE["events"] = events
@@ -10239,7 +10287,7 @@ async def _load_mcap_hist():
         return
     _MCAP_HIST["busy"] = True
     try:
-        payload = await _mcap_get("/mcap-history?weeks=520")
+        payload = await _mcap_get("/mcap-history?weeks=520&v=2")
         _MCAP_HIST["weeks"] = payload.get("weeks") or []
         _MCAP_HIST["err"] = ""
         _MCAP_HIST["at"] = time.time()
