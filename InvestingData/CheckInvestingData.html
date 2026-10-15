@@ -357,6 +357,13 @@
   .multpl-tip .row .v { font-weight:700; margin-left:auto; }
     .candle-tooltip-host { position:relative; }
     .candle-tip-host { position:relative; }
+  .trend-tools { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:0 0 6px; }
+  .trend-tools .trend-btn { height:26px; padding:0 10px; font-size:12px; }
+  .trend-tools .trend-btn.on { background:var(--pri); color:#fff; border-color:var(--pri); }
+  .trend-tools .trend-hint { font-size:12px; color:var(--mut); }
+  .chart-svg.candle-svg { touch-action:pan-y; user-select:none; -webkit-user-select:none; }
+  .chart-svg.candle-svg.trend-on { cursor:crosshair; touch-action:none;
+    user-select:none; -webkit-user-select:none; }
     .multpl-tip.candle-tip { top:auto; bottom:8px; left:8px; right:8px;
         display:none; flex-direction:column; align-items:flex-start; gap:3px;
         width:auto; max-width:none; overflow:hidden; }
@@ -5066,6 +5073,470 @@ _OSC_HOVER = {}
 _CANDLE_VAL_LAST = {}
 
 
+# ── 캔들 차트 추세선 그리기 ──────────────────────────────────
+# 선은 (타임스탬프, 가격) 좌표로 저장해 기간/주기를 바꿔도 같은 위치에 그려진다.
+_TREND_LS_KEY = "candle_trendlines"
+_TRENDLINES = {}        # trend_key -> [[ts1, p1, ts2, p2], ...]
+_TREND_MODE = {}        # prefix -> 그리기 모드 on/off
+_TREND_GEOM = {}        # prefix -> 마지막 렌더된 캔들 좌표계
+_TREND_DRAG = {}        # prefix -> 드래그 시작점 (ts, price, sx, sy)
+_TREND_EDIT = {}        # prefix -> 끌고 있는 끝점 (선 인덱스, 0|1)
+_TREND_ROOT = {"idxchart": "#idxchart-result", "stockchart": "#stock-chart"}
+_TREND_COLOR = "#e91e63"
+
+
+def _trend_load():
+    try:
+        raw = window.localStorage.getItem(_TREND_LS_KEY)
+        data = json.loads(raw) if raw else {}
+        if isinstance(data, dict):
+            _TRENDLINES.update(data)
+    except Exception:
+        pass
+
+
+def _trend_save(key=None):
+    try:
+        window.localStorage.setItem(_TREND_LS_KEY, json.dumps(_TRENDLINES))
+    except Exception:
+        pass
+    if key and _trend_server_ok(key):
+        _TREND_PUSH["pending"].add(key)
+        if not _TREND_PUSH["busy"]:
+            asyncio.ensure_future(_trend_flush())
+
+
+# 로그인 시 지수차트 + 즐겨찾기 종목의 추세선은 워커(계정 레코드)에도 저장한다.
+_TREND_PUSH = {"pending": set(), "busy": False}
+
+
+def _trend_server_ok(key, fav_syms=None):
+    if not _fav_logged_in():
+        return False
+    if key.startswith("idx|"):
+        return True
+    if not key.startswith("stk|"):
+        return False
+    if fav_syms is None:
+        fav_syms = {f.get("symbol") for f in (_FAV_LAST.get("list") or [])
+                    if isinstance(f, dict)}
+    return key[4:] in fav_syms
+
+
+async def _trend_flush():
+    """변경된 키를 모아 순차 전송(동시 요청으로 워커 레코드가 덮어쓰이지 않도록)."""
+    _TREND_PUSH["busy"] = True
+    try:
+        while _TREND_PUSH["pending"]:
+            keys = list(_TREND_PUSH["pending"])
+            _TREND_PUSH["pending"].clear()
+            acct, k = _fav_creds()
+            if not (acct and k):
+                return
+            body = {"trends": {key: _TRENDLINES.get(key, []) for key in keys}}
+            _, err, _ = await _fav_api("POST", acct, k, extra_query="&trend_op=set",
+                                       body=json.dumps(body))
+            if err:
+                js.console.warn("추세선 서버 저장 실패: %s" % err)
+    finally:
+        _TREND_PUSH["busy"] = False
+
+
+def _apply_fav_trends(data):
+    """로그인 응답의 추세선을 반영(서버 우선)하고, 서버에 없는 로컬 대상 선은 업로드."""
+    if not isinstance(data, dict):
+        return
+    server = data.get("trends")
+    server = server if isinstance(server, dict) else {}
+    for key, lines in server.items():
+        if isinstance(lines, list) and lines:
+            _TRENDLINES[key] = lines
+    fav_syms = {f.get("symbol") for f in (data.get("favorites") or [])
+                if isinstance(f, dict)}
+    for key in list(_TRENDLINES):
+        if key not in server and _TRENDLINES[key] and _trend_server_ok(key, fav_syms):
+            _TREND_PUSH["pending"].add(key)
+    _trend_save()
+    if _TREND_PUSH["pending"] and not _TREND_PUSH["busy"]:
+        asyncio.ensure_future(_trend_flush())
+    for prefix in _TREND_ROOT:
+        if prefix in _TREND_GEOM:
+            _trend_refresh(prefix)
+
+
+_trend_load()
+
+
+def _trend_ts_to_fi(g, ts):
+    """타임스탬프 → 봉 인덱스(실수). 범위 밖은 평균 봉 간격으로 외삽."""
+    tss = g["ts"]
+    n = len(tss)
+    if n == 1:
+        return 0.0
+    if ts <= tss[0]:
+        return (ts - tss[0]) / g["step"]
+    if ts >= tss[-1]:
+        return n - 1 + (ts - tss[-1]) / g["step"]
+    lo, hi = 0, n - 1
+    while hi - lo > 1:
+        mid = (lo + hi) // 2
+        if tss[mid] <= ts:
+            lo = mid
+        else:
+            hi = mid
+    return lo + (ts - tss[lo]) / ((tss[hi] - tss[lo]) or 1)
+
+
+def _trend_fi_to_ts(g, fi):
+    tss = g["ts"]
+    n = len(tss)
+    if n == 1:
+        return tss[0]
+    if fi <= 0:
+        return tss[0] + fi * g["step"]
+    if fi >= n - 1:
+        return tss[-1] + (fi - (n - 1)) * g["step"]
+    j = int(fi)
+    return tss[j] + (fi - j) * (tss[j + 1] - tss[j])
+
+
+def _trend_xy(g, ts, price):
+    fi = _trend_ts_to_fi(g, ts)
+    x = g["padL"] + g["plot_w"] * (fi + 0.5) / g["n"]
+    y = g["padT"] + (g["vmax"] - price) / (g["vmax"] - g["vmin"]) * g["plot_h"]
+    return x, y
+
+
+def _trend_layer_markup(prefix):
+    g = _TREND_GEOM.get(prefix)
+    if not g or not g.get("key"):
+        return ""
+    right = g["padL"] + g["plot_w"]
+    out = []
+    for ln in _TRENDLINES.get(g["key"], []):
+        x1, y1 = _trend_xy(g, ln[0], ln[1])
+        x2, y2 = _trend_xy(g, ln[2], ln[3])
+        if x2 < x1:
+            x1, y1, x2, y2 = x2, y2, x1, y1
+        out.append('<line x1="%g" y1="%g" x2="%g" y2="%g" stroke="%s" '
+                   'stroke-width="1.6"/>' % (x1, y1, x2, y2, _TREND_COLOR))
+        # 오른쪽 끝까지 점선으로 연장(향후 지지/저항 확인용)
+        if x2 - x1 > 0.5 and x2 < right:
+            ye = y2 + (y2 - y1) / (x2 - x1) * (right - x2)
+            out.append('<line x1="%g" y1="%g" x2="%g" y2="%g" stroke="%s" '
+                       'stroke-width="1.2" stroke-dasharray="5 4" '
+                       'stroke-opacity="0.6"/>' % (x2, y2, right, ye, _TREND_COLOR))
+        for cx, cy in ((x1, y1), (x2, y2)):
+            out.append('<circle cx="%g" cy="%g" r="4" fill="#fff" stroke="%s" '
+                       'stroke-width="1.6"/>' % (cx, cy, _TREND_COLOR))
+    return "".join(out)
+
+
+def _trend_toolbar_html(prefix, key):
+    if not key:
+        return ""
+    on = bool(_TREND_MODE.get(prefix))
+    has = bool(_TRENDLINES.get(key))
+    dis = "" if has else " disabled"
+    hint = "시작점과 끝점을 차례로 클릭하고, 끝점을 끌어 수정하세요" if on else ""
+    return ('<div class="trend-tools" data-prefix="%s">'
+            '<button type="button" class="trend-btn%s" data-trend="draw">'
+            '추세선 그리기</button>'
+            '<button type="button" class="trend-btn" data-trend="undo"%s>'
+            '마지막 삭제</button>'
+            '<button type="button" class="trend-btn" data-trend="clear"%s>'
+            '모두 지우기</button>'
+            '<span class="trend-hint">%s</span></div>'
+            % (prefix, " on" if on else "", dis, dis, hint))
+
+
+def _trend_refresh(prefix):
+    """차트 재렌더 없이 추세선 레이어와 툴바만 갱신."""
+    g = _TREND_GEOM.get(prefix) or {}
+    layer = document.querySelector("#%s-trend-layer" % prefix)
+    if layer is not None:
+        layer.innerHTML = _trend_layer_markup(prefix)
+    bar = document.querySelector('.trend-tools[data-prefix="%s"]' % prefix)
+    if bar is not None:
+        bar.outerHTML = _trend_toolbar_html(prefix, g.get("key"))
+    svg = document.querySelector(_TREND_ROOT[prefix] + " svg.candle-svg")
+    if svg is not None:
+        if _TREND_MODE.get(prefix):
+            svg.classList.add("trend-on")
+        else:
+            svg.classList.remove("trend-on")
+
+
+def _trend_svg_xy(event, prefix):
+    """포인터 → SVG 좌표 (sx, sy, 화면px당 SVG단위)."""
+    g = _TREND_GEOM.get(prefix)
+    if not g or not g.get("key"):
+        return None
+    svg = document.querySelector(_TREND_ROOT[prefix] + " svg.candle-svg")
+    if svg is None:
+        return None
+    rect = svg.getBoundingClientRect()
+    if not rect.width or not rect.height:
+        return None
+    return ((event.clientX - rect.left) / rect.width * g["W"],
+            (event.clientY - rect.top) / rect.height * g["H"],
+            g["W"] / rect.width)
+
+
+def _trend_point(event, prefix, clamp=False):
+    """포인터 위치 → (ts, price, sx, sy). 캔들 영역 밖이면 None(clamp 시 경계로 고정)."""
+    xy = _trend_svg_xy(event, prefix)
+    if xy is None:
+        return None
+    g = _TREND_GEOM[prefix]
+    sx, sy = xy[0], xy[1]
+    x0, x1 = g["padL"], g["padL"] + g["plot_w"]
+    y0, y1 = g["padT"], g["padT"] + g["plot_h"]
+    if clamp:
+        sx = min(max(sx, x0), x1)
+        sy = min(max(sy, y0), y1)
+    elif sx < x0 or sx > x1 or sy < y0 or sy > y1:
+        return None
+    fi = (sx - x0) / g["plot_w"] * g["n"] - 0.5
+    price = g["vmax"] - (sy - y0) / g["plot_h"] * (g["vmax"] - g["vmin"])
+    return (_trend_fi_to_ts(g, fi), price, sx, sy)
+
+
+def _trend_hit(event, prefix):
+    """포인터 근처(화면 10px)의 추세선 끝점 → (선 인덱스, 0|1) 또는 None."""
+    g = _TREND_GEOM.get(prefix)
+    if not g or not _TRENDLINES.get(g.get("key")):
+        return None
+    xy = _trend_svg_xy(event, prefix)
+    if xy is None:
+        return None
+    best, bd = None, 10.0 * xy[2]
+    for li, ln in enumerate(_TRENDLINES[g["key"]]):
+        for end in (0, 1):
+            x, y = _trend_xy(g, ln[end * 2], ln[end * 2 + 1])
+            d = ((x - xy[0]) ** 2 + (y - xy[1]) ** 2) ** 0.5
+            if d <= bd:
+                best, bd = (li, end), d
+    return best
+
+
+def _trend_set_cursor(prefix, cursor):
+    svg = document.querySelector(_TREND_ROOT[prefix] + " svg.candle-svg")
+    if svg is not None:
+        svg.style.cursor = cursor
+
+
+def _trend_pointer_down(event, prefix):
+    st = _TREND_DRAG.get(prefix)
+    hit = None if st else _trend_hit(event, prefix)
+    if hit is not None:
+        event.preventDefault()
+        _TREND_EDIT[prefix] = hit
+        _trend_set_cursor(prefix, "grabbing")
+        return
+    if not _TREND_MODE.get(prefix):
+        _pan_start(event, prefix)
+        return
+    pt = _trend_point(event, prefix)
+    if pt is None:
+        return
+    event.preventDefault()
+    if st:
+        # 두 번째 클릭 = 끝점. 시작점과 거의 같은 위치면 무시.
+        x1, y1 = _trend_xy(_TREND_GEOM[prefix], st[0], st[1])
+        if abs(pt[2] - x1) + abs(pt[3] - y1) < 6:
+            return
+        _trend_cancel(prefix, clear_draw=True)
+        key = _TREND_GEOM[prefix]["key"]
+        _TRENDLINES.setdefault(key, []).append([st[0], st[1], pt[0], pt[1]])
+        _trend_save(key)
+        _trend_refresh(prefix)
+        return
+    _TREND_DRAG[prefix] = pt
+    tmp = document.querySelector("#%s-trend-temp" % prefix)
+    if tmp is not None:
+        for a, v in (("x1", pt[2]), ("y1", pt[3]), ("x2", pt[2]), ("y2", pt[3])):
+            tmp.setAttribute(a, "%g" % v)
+        tmp.style.display = "block"
+
+
+def _trend_pointer_move(event, prefix):
+    if _pan_move(event, prefix):
+        return
+    ed = _TREND_EDIT.get(prefix)
+    if ed is not None:
+        pt = _trend_point(event, prefix, clamp=True)
+        lines = _TRENDLINES.get(_TREND_GEOM[prefix]["key"]) or []
+        if pt is None or ed[0] >= len(lines):
+            return
+        lines[ed[0]][ed[1] * 2] = pt[0]
+        lines[ed[0]][ed[1] * 2 + 1] = pt[1]
+        layer = document.querySelector("#%s-trend-layer" % prefix)
+        if layer is not None:
+            layer.innerHTML = _trend_layer_markup(prefix)
+        return
+    if not _TREND_DRAG.get(prefix):
+        _trend_set_cursor(
+            prefix, "grab" if _trend_hit(event, prefix) is not None else "")
+        return
+    pt = _trend_point(event, prefix, clamp=True)
+    tmp = document.querySelector("#%s-trend-temp" % prefix)
+    if pt is None or tmp is None:
+        return
+    st = _TREND_DRAG[prefix]
+    x1, y1 = _trend_xy(_TREND_GEOM[prefix], st[0], st[1])
+    for a, v in (("x1", x1), ("y1", y1), ("x2", pt[2]), ("y2", pt[3])):
+        tmp.setAttribute(a, "%g" % v)
+    tmp.style.display = "block"
+
+
+def _trend_cancel(prefix, clear_draw=False):
+    """드래그(팬·끝점 수정)를 종료. clear_draw 일 때만 클릭해 둔 시작점도 취소."""
+    pan = _PAN_DRAG.pop(prefix, None)
+    if pan is not None:
+        if pan["pending"]:
+            _pan_render(prefix)
+        _trend_set_cursor(prefix, "")
+    if _TREND_EDIT.pop(prefix, None) is not None:
+        _trend_save((_TREND_GEOM.get(prefix) or {}).get("key"))
+        _trend_set_cursor(prefix, "")
+    if not clear_draw:
+        return
+    _TREND_DRAG.pop(prefix, None)
+    tmp = document.querySelector("#%s-trend-temp" % prefix)
+    if tmp is not None:
+        tmp.style.display = "none"
+
+
+def _trend_pointer_up(event, prefix):
+    _trend_cancel(prefix)
+
+
+def _handle_trend_click(event):
+    btn = event.target.closest(".trend-btn")
+    if btn is None or btn.disabled:
+        return
+    bar = btn.closest(".trend-tools")
+    prefix = bar.getAttribute("data-prefix") if bar is not None else None
+    if prefix not in _TREND_ROOT:
+        return
+    key = (_TREND_GEOM.get(prefix) or {}).get("key")
+    act = btn.getAttribute("data-trend")
+    if act == "draw":
+        _TREND_MODE[prefix] = not _TREND_MODE.get(prefix)
+        _trend_cancel(prefix, clear_draw=True)
+    elif act == "undo" and key and _TRENDLINES.get(key):
+        _TRENDLINES[key].pop()
+        if not _TRENDLINES[key]:
+            del _TRENDLINES[key]
+        _trend_save(key)
+    elif act == "clear" and key and _TRENDLINES.get(key):
+        if not window.confirm("이 차트의 추세선을 모두 지울까요?"):
+            return
+        del _TRENDLINES[key]
+        _trend_save(key)
+    _trend_refresh(prefix)
+
+
+# ── 캔들 차트 좌우 이동(팬) ──────────────────────────────────
+# 선택 기간보다 긴 이력을 받아 두고, 보이는 창(count 봉)의 끝 위치를 드래그로 옮긴다.
+_PAN_FETCH_RANGE = {"1mo": "1y", "3mo": "2y", "6mo": "2y", "1y": "5y",
+                    "5y": "10y", "10y": "max"}
+_PAN_SPAN_DAYS = {"1mo": 30, "3mo": 91, "6mo": 182, "1y": 365, "5y": 1826,
+                  "10y": 3652}
+_PAN_WARMUP = 260       # 창 앞쪽 지표(MA200·회복점수 등) 계산용 선행 봉 수
+_PAN_VIEW = {}          # prefix -> {"n": 전체 봉 수, "count": 보이는 봉 수, "end": 끝 인덱스}
+_PAN_DRAG = {}          # prefix -> {"x": 시작 clientX, "end": 시작 end, "bw": 봉당 화면px, "pending"}
+_PAN_BODY = {}          # prefix -> 차트 본문(.candle-tooltip-host 내부) HTML 생성 함수
+_PAN_THROTTLE = 0.03
+
+
+def _pan_init(prefix, rows, rng):
+    n = len(rows)
+    count = n
+    span = _PAN_SPAN_DAYS.get(rng)
+    if span and n:
+        cut = rows[-1][0] - span * 86400
+        count = min(n, max(2, sum(1 for r in rows if r[0] > cut)))
+    _PAN_VIEW[prefix] = {"n": n, "count": count, "end": n,
+                         "blank": max(5, count // 2)}   # 최신 봉 오른쪽 빈 칸 최대 수
+
+
+def _pan_window(prefix, n):
+    """(s0, lead, e, extra): rows[s0:e] 를 렌더하며 앞의 lead 봉은 지표 예열에만 쓰고,
+    뒤에 extra 칸을 비워 둔다."""
+    v = _PAN_VIEW.get(prefix)
+    if not v or v["n"] != n:
+        return 0, 0, n, 0
+    s = v["end"] - v["count"]
+    s0 = max(0, s - _PAN_WARMUP)
+    e = min(v["end"], n)
+    return s0, s - s0, e, v["end"] - e
+
+
+def _candle_body_html(prefix, rows, dec, hover, trend_key, bench=None, vol=None,
+                      overlay_fn=None):
+    s0, lead, e, extra = _pan_window(prefix, len(rows))
+    w = rows[s0:e]
+
+    def cut(a):
+        return a[s0:e] if a else a
+
+    overlay = overlay_fn(w[lead:]) if overlay_fn else None
+    return ('<div class="candle-tip-host">%s</div>%s%s'
+            % (_candle_svg(w, dec, prefix, hover, overlay, trend_key, lead, extra),
+               _recovery_pressure_html(w, cut(bench), prefix, cut(vol), lead, extra),
+               _daily_indicators_html(w, prefix, lead, extra)))
+
+
+def _pan_start(event, prefix):
+    v = _PAN_VIEW.get(prefix)
+    if not v or prefix not in _PAN_BODY:
+        return
+    if _trend_point(event, prefix) is None:
+        return
+    g = _TREND_GEOM[prefix]
+    svg = document.querySelector(_TREND_ROOT[prefix] + " svg.candle-svg")
+    bw = svg.getBoundingClientRect().width * g["plot_w"] / g["W"] / v["count"]
+    if bw <= 0:
+        return
+    event.preventDefault()
+    _PAN_DRAG[prefix] = {"x": event.clientX, "end": v["end"], "bw": bw,
+                         "pending": False, "at": 0.0}
+    _trend_set_cursor(prefix, "grabbing")
+
+
+def _pan_render(prefix):
+    st = _PAN_DRAG.get(prefix)
+    if st is not None and not st["pending"]:
+        return
+    host = document.querySelector(_TREND_ROOT[prefix] + " .candle-tooltip-host")
+    fn = _PAN_BODY.get(prefix)
+    if host is None or fn is None:
+        return
+    host.innerHTML = fn()
+    if st is not None:
+        st["pending"] = False
+        st["at"] = time.time()
+        _trend_set_cursor(prefix, "grabbing")
+
+
+def _pan_move(event, prefix):
+    st = _PAN_DRAG.get(prefix)
+    v = _PAN_VIEW.get(prefix)
+    if st is None or v is None:
+        return False
+    end = int(round(st["end"] - (event.clientX - st["x"]) / st["bw"]))
+    end = min(max(end, v["count"]), v["n"] + v["blank"])
+    if end != v["end"]:
+        v["end"] = end
+        st["pending"] = True
+    # 렌더가 느린 경우 밀린 이벤트는 건너뛰고, 마지막 위치는 놓을 때 반영한다.
+    if st["pending"] and time.time() - st["at"] >= _PAN_THROTTLE:
+        _pan_render(prefix)
+    return True
+
+
 def _osc_value_markup(series_data, idx):
     """오실레이터 패널 우측 상단 값 표시용 tspan 마크업(라벨+값)."""
     spans = []
@@ -5077,7 +5548,7 @@ def _osc_value_markup(series_data, idx):
     return "".join(spans)
 
 
-def _oscillator_svg(rows, title, series, levels, vmin, vmax, guide_id=None):
+def _oscillator_svg(rows, title, series, levels, vmin, vmax, guide_id=None, extra=0):
     """고정 범위 오실레이터 보조 패널을 SVG로 렌더링한다."""
     W, H = 820.0, 150.0
     pad_l, pad_r, pad_t, pad_b = 48.0, 14.0, 25.0, 25.0
@@ -5085,9 +5556,10 @@ def _oscillator_svg(rows, title, series, levels, vmin, vmax, guide_id=None):
     n = len(rows)
     if not n:
         return ""
+    slots = n + extra
 
     def X(i):
-        return pad_l + plot_w * ((i + 0.5) / n)
+        return pad_l + plot_w * ((i + 0.5) / slots)
 
     def Y(value):
         return pad_t + (vmax - value) / (vmax - vmin) * plot_h
@@ -5128,21 +5600,23 @@ def _oscillator_svg(rows, title, series, levels, vmin, vmax, guide_id=None):
     return "".join(parts)
 
 
-def _daily_indicators_html(rows, prefix):
+def _daily_indicators_html(rows, prefix, lead=0, extra=0):
     """일봉용 Williams %R 및 Stochastic Slow 보조지표 패널 HTML."""
     wr = _williams_r(rows, 10)
     wr_signal = _sma_nullable(wr, 9)
     slow_k, slow_d = _stochastic_slow(rows, 15, 5, 5)
+    rows, wr, wr_signal, slow_k, slow_d = (
+        a[lead:] for a in (rows, wr, wr_signal, slow_k, slow_d))
     return ('<div class="daily-indicators">%s%s</div>' % (
         _oscillator_svg(rows, "Williams %R (10, 9)",
                         [("%R", "#2962ff", wr), ("Signal", "#ff9800", wr_signal)],
                         [(-20, "-20"), (-80, "-80")], -100.0, 0.0,
-                        prefix + "-wr-guide"),
+                        prefix + "-wr-guide", extra),
         _oscillator_svg(rows, "Stochastic Slow (15, 5, 5)",
                         [("SlowK", "#2962ff", slow_k),
                          ("SlowD", "#ff9800", slow_d)],
                         [(20, "20"), (80, "80")], 0.0, 100.0,
-                        prefix + "-stoch-guide")))
+                        prefix + "-stoch-guide", extra)))
 
 
 # ===== 회복 점수 · 조정 압력 모델 =====
@@ -5311,7 +5785,7 @@ def _recovery_pressure_series(rows, bench_closes, vol_aligned=None):
     return recov, corr, regime
 
 
-def _recovery_pressure_svg(rows, recov, corr, regime, prefix="idxchart"):
+def _recovery_pressure_svg(rows, recov, corr, regime, prefix="idxchart", extra=0):
     """회복 점수·조정 압력 패널(레짐 배경 포함)을 SVG로 렌더링한다."""
     W, H = 820.0, 172.0
     pad_l, pad_r, pad_t, pad_b = 48.0, 14.0, 30.0, 24.0
@@ -5319,12 +5793,13 @@ def _recovery_pressure_svg(rows, recov, corr, regime, prefix="idxchart"):
     n = len(rows)
     if not n:
         return ""
+    slots = n + extra
 
     def Xe(i):
-        return pad_l + plot_w * (i / n)
+        return pad_l + plot_w * (i / slots)
 
     def X(i):
-        return pad_l + plot_w * ((i + 0.5) / n)
+        return pad_l + plot_w * ((i + 0.5) / slots)
 
     def Y(v):
         return pad_t + (100.0 - v) / 100.0 * plot_h
@@ -5380,18 +5855,20 @@ def _recovery_pressure_svg(rows, recov, corr, regime, prefix="idxchart"):
     return "".join(parts)
 
 
-def _recovery_pressure_html(rows, bench_closes, prefix="idxchart", vol_aligned=None):
+def _recovery_pressure_html(rows, bench_closes, prefix="idxchart", vol_aligned=None,
+                            lead=0, extra=0):
     """회복 점수·조정 압력 패널 HTML. 조건 미충족 시 빈 문자열."""
     if not bench_closes or len(rows) < _RECOV_WIN:
         return ""
     recov, corr, regime = _recovery_pressure_series(rows, bench_closes, vol_aligned)
+    rows, recov, corr, regime = (a[lead:] for a in (rows, recov, corr, regime))
     if not any(v is not None for v in recov):
         return ""
     _RECOV_HOVER[prefix] = {"recov": recov, "corr": corr,
                            "last_recov": _last_num(recov),
                            "last_corr": _last_num(corr)}
     return ('<div class="daily-indicators"><div class="recov-wrap">%s%s</div></div>'
-            % (_recovery_pressure_svg(rows, recov, corr, regime, prefix),
+            % (_recovery_pressure_svg(rows, recov, corr, regime, prefix, extra),
                _recov_help_popup()))
 
 
@@ -5418,13 +5895,16 @@ def _recov_help_popup():
         '</div>')
 
 
-def _candle_svg(rows, dec=2, prefix="idxchart", hover=None, overlay=None):
+def _candle_svg(rows, dec=2, prefix="idxchart", hover=None, overlay=None,
+                trend_key=None, lead=0, extra=0):
     """일봉 OHLC 를 캔들스틱 SVG 로 렌더링. rows=[(ts,o,h,l,c)].
 
     prefix 로 가이드 요소 id 를, hover 로 호버 좌표 캐시 dict 를 지정한다.
     overlay={"label","kind","color","points":[(idx,value,라벨)]} 이면 오른쪽 보조축에 표시."""
     if hover is None:
         hover = _IDXCHART_HOVER
+    full = rows                 # 앞의 lead 봉은 지표 예열용(표시 안 함)
+    rows = rows[lead:]
     if not rows:
         return '<div class="hint">차트를 표시할 데이터가 없습니다.</div>'
     highs = [r[2] for r in rows]
@@ -5447,10 +5927,11 @@ def _candle_svg(rows, dec=2, prefix="idxchart", hover=None, overlay=None):
     H = padT + plot_h + sub_gap + sub_h + padB
     plot_w = W - padL - padR
     n = len(rows)
+    slots = n + extra                    # 오른쪽 extra 칸은 빈 영역
     sub_top = padT + plot_h + sub_gap
 
     def X(i):
-        return padL + plot_w * ((i + 0.5) / n)
+        return padL + plot_w * ((i + 0.5) / slots)
 
     def Y(v):
         return padT + (vmax - v) / (vmax - vmin) * plot_h
@@ -5477,15 +5958,16 @@ def _candle_svg(rows, dec=2, prefix="idxchart", hover=None, overlay=None):
         return sub_top + (smax - v) / (smax - smin) * sub_h
 
     # 이동평균선(5/20/60/120/200) 계산 — 데이터가 있는 기간만 사용
-    closes = [r[4] for r in rows]
+    closes = [r[4] for r in full]
     ma_series = []
     for period, color in _MA_DEFS:
-        vals = _sma(closes, period)
+        vals = _sma(closes, period)[lead:]
         if any(v is not None for v in vals):
             ma_series.append((period, color, vals))
 
-    parts = ['<svg viewBox="0 0 %g %g" class="chart-svg candle-svg" '
-             'preserveAspectRatio="xMidYMid meet">' % (W, H)]
+    trend_cls = " trend-on" if (trend_key and _TREND_MODE.get(prefix)) else ""
+    parts = ['<svg viewBox="0 0 %g %g" class="chart-svg candle-svg%s" '
+             'preserveAspectRatio="xMidYMid meet">' % (W, H, trend_cls)]
 
     # 우측 상단 값 표시(가격 + 이동평균), 호버 시 갱신
     def _price_markup(i):
@@ -5525,7 +6007,7 @@ def _candle_svg(rows, dec=2, prefix="idxchart", hover=None, overlay=None):
         parts.append('<text x="%g" y="%g" class="ax-y">%s</text>'
                      % (padL - 8, gy + 4, _esc(axfmt(gv))))
 
-    cw = plot_w / n
+    cw = plot_w / slots
     body_w = max(min(cw * 0.62, 14.0), 1.0)
     for i, (ts, o, h, lo, c) in enumerate(rows):
         cx = X(i)
@@ -5546,6 +6028,25 @@ def _candle_svg(rows, dec=2, prefix="idxchart", hover=None, overlay=None):
             parts.append('<polyline points="%s" fill="none" stroke="%s" '
                          'stroke-width="1.3" stroke-linejoin="round" '
                          'stroke-linecap="round"/>' % (" ".join(ma_pts), color))
+
+    # 사용자 추세선(캔들 영역으로 클리핑)
+    tss = [r[0] for r in rows]
+    _TREND_GEOM[prefix] = {
+        "key": trend_key, "ts": tss, "n": slots, "W": W, "H": H,
+        "padL": padL, "padT": padT, "plot_w": plot_w, "plot_h": plot_h,
+        "vmax": vmax, "vmin": vmin, "dec": dec,
+        "step": ((tss[-1] - tss[0]) / (n - 1)) if n > 1 and tss[-1] > tss[0] else 86400.0}
+    if trend_key:
+        parts.append('<clipPath id="%s-trend-clip"><rect x="%g" y="%g" '
+                     'width="%g" height="%g"/></clipPath>'
+                     % (prefix, padL, padT, plot_w, plot_h))
+        parts.append('<g id="%s-trend-layer" clip-path="url(#%s-trend-clip)" '
+                     'pointer-events="none">%s</g>'
+                     % (prefix, prefix, _trend_layer_markup(prefix)))
+        parts.append('<line id="%s-trend-temp" x1="0" y1="0" x2="0" y2="0" '
+                     'stroke="%s" stroke-width="1.6" stroke-dasharray="4 3" '
+                     'pointer-events="none" style="display:none"/>'
+                     % (prefix, _TREND_COLOR))
 
     # 분기 지표 하위 패널(캔들과 동일 x축, 막대+값)
     if ov:
@@ -5591,6 +6092,14 @@ def _candle_svg(rows, dec=2, prefix="idxchart", hover=None, overlay=None):
                  'x2="0" y2="%g" style="display:none"/>' % (prefix, padT, H - padB))
     parts.append('<circle id="%s-guide-dot" class="guide-dot" r="4" '
                  'cx="0" cy="0" style="display:none"/>' % prefix)
+    # 마우스 y 위치의 가격(가로 점선 + 왼쪽 축 라벨)
+    parts.append('<g id="%s-ycur" pointer-events="none" style="display:none">'
+                 '<line class="guide-line" x1="%g" y1="0" x2="%g" y2="0"/>'
+                 '<rect x="2" y="-8" width="%g" height="16" rx="3" '
+                 'fill="#2962ff"/>'
+                 '<text id="%s-ycur-val" x="%g" y="4" text-anchor="end" '
+                 'style="fill:#fff;font-size:10px;font-weight:600"></text></g>'
+                 % (prefix, padL, W - padR, padL - 6, prefix, padL - 7))
     parts.append('</svg>')
 
     def _ma_tip(idx):
@@ -5603,9 +6112,11 @@ def _candle_svg(rows, dec=2, prefix="idxchart", hover=None, overlay=None):
         return "".join(out)
 
     # 보조지표 패널과 동일한 설정으로 날짜별 값을 미리 계산해 호버 툴팁에 사용한다.
-    wr = _williams_r(rows, 10)
-    wr_signal = _sma_nullable(wr, 9)
-    slow_k, slow_d = _stochastic_slow(rows, 15, 5, 5)
+    wr = _williams_r(full, 10)
+    wr_signal = _sma_nullable(wr, 9)[lead:]
+    wr = wr[lead:]
+    slow_k, slow_d = _stochastic_slow(full, 15, 5, 5)
+    slow_k, slow_d = slow_k[lead:], slow_d[lead:]
 
     def _osc_tip(idx):
         values = [
@@ -5628,6 +6139,7 @@ def _candle_svg(rows, dec=2, prefix="idxchart", hover=None, overlay=None):
         for idx, (ts, o, h, lo, c) in enumerate(rows)]
     hover["W"] = W
     hover["H"] = H
+    hover["slots"] = slots
     hover["y1"] = padT
     hover["y2"] = H - padB
     return "".join(parts)
@@ -5693,17 +6205,18 @@ def _render_idxchart(name, rows, bench_closes=None, vol_aligned=None):
             '<span class="pv">%s</span>'
             '<span class="%s">%s%+.2f (%+.2f%%)</span>'
             '<span class="dt">%s 기준 · 최근 %d일</span></div>') % (
-        _esc(name), fmt_num(disp_c, dec), cls, arrow, chg, pct, d, len(rows))
+        _esc(name), fmt_num(disp_c, dec), cls, arrow, chg, pct, d,
+        (_PAN_VIEW.get("idxchart") or {}).get("count", len(rows)))
     fx_html = ""
     if is_fx:
         fx_html = _fx_converter_html(disp_c)
-    el.innerHTML = ('<div class="fin-chart">%s%s<div class="candle-tooltip-host">'
-                    '<div class="candle-tip-host">%s</div>%s%s</div></div>'
-                    % (head, fx_html,
-                       _candle_svg(rows, dec, "idxchart", _IDXCHART_HOVER),
-                       _recovery_pressure_html(rows, bench_closes, "idxchart",
-                                               vol_aligned),
-                       _daily_indicators_html(rows, "idxchart")))
+    trend_key = "idx|" + sel.value if sel is not None and sel.value else None
+    _PAN_BODY["idxchart"] = lambda: _candle_body_html(
+        "idxchart", rows, dec, _IDXCHART_HOVER, trend_key, bench_closes, vol_aligned)
+    el.innerHTML = ('<div class="fin-chart">%s%s%s<div class="candle-tooltip-host">'
+                    '%s</div></div>'
+                    % (head, fx_html, _trend_toolbar_html("idxchart", trend_key),
+                       _PAN_BODY["idxchart"]()))
 
 
 async def _run_idxchart():
@@ -5720,21 +6233,27 @@ async def _run_idxchart():
     if btn is not None:
         btn.disabled = True
     try:
-        rows = await _fetch_index_history(
-            yf_sym, _IDXCHART_STATE["range"], _IDXCHART_STATE["interval"])
+        rng = _IDXCHART_STATE["range"]
+        interval = _IDXCHART_STATE["interval"]
+        fetch_rng = _PAN_FETCH_RANGE.get(rng, rng)
+        try:
+            rows = await _fetch_index_history(yf_sym, fetch_rng, interval)
+        except Exception:
+            fetch_rng = rng
+            rows = await _fetch_index_history(yf_sym, rng, interval)
         bench_closes = None
         vol_aligned = None
         if sym in _RECOV_ELIGIBLE:
             bench_yf = _RECOV_BENCH.get(sym, _RECOV_DEFAULT_BENCH)
             try:
                 bench_rows = await _fetch_index_history(
-                    bench_yf, _IDXCHART_STATE["range"], _IDXCHART_STATE["interval"])
+                    bench_yf, fetch_rng, interval)
                 bench_closes = _align_bench_closes(rows, bench_rows)
             except Exception:
                 bench_closes = None
             vol_aligned = await _recov_volume_aligned(
-                rows, _RECOV_PROXY_ETF.get(sym),
-                _IDXCHART_STATE["range"], _IDXCHART_STATE["interval"])
+                rows, _RECOV_PROXY_ETF.get(sym), fetch_rng, interval)
+        _pan_init("idxchart", rows, rng)
         _render_idxchart(name, rows, bench_closes, vol_aligned)
         _IDXCHART_STATE["sym"] = sym
         _IDXCHART_LOADED["done"] = True
@@ -6275,6 +6794,8 @@ def _candle_hover(event, root_sel, hover, tip_id, guide_id, dot_id):
     H = hover["H"]
     sx = (event.clientX - rect.left) / rect.width * W
     best = min(pts, key=lambda p: abs(p["x"] - sx))
+    _price_cursor(guide_id.rsplit("-guide", 1)[0],
+                  (event.clientY - rect.top) / rect.height * H)
 
     guide = document.querySelector("#" + guide_id)
     dot = document.querySelector("#" + dot_id)
@@ -6287,7 +6808,8 @@ def _candle_hover(event, root_sel, hover, tip_id, guide_id, dot_id):
     # 보조지표 SVG는 같은 날짜 인덱스를 자체 좌표계로 변환해 세로선을 표시한다.
     prefix = guide_id.rsplit("-guide", 1)[0]
     bi = pts.index(best)
-    indicator_x = 48.0 + (820.0 - 48.0 - 14.0) * ((bi + 0.5) / len(pts))
+    indicator_x = 48.0 + (820.0 - 48.0 - 14.0) * (
+        (bi + 0.5) / hover.get("slots", len(pts)))
     for indicator_id in (prefix + "-wr-guide", prefix + "-stoch-guide",
                          prefix + "-recov-guide"):
         indicator_guide = document.querySelector("#" + indicator_id)
@@ -6322,9 +6844,27 @@ def _candle_hover(event, root_sel, hover, tip_id, guide_id, dot_id):
         ma_el.innerHTML = best.get("masvg", "")
 
 
+def _price_cursor(prefix, sy):
+    """캔들 영역 안의 SVG y좌표를 가격으로 환산해 가로 점선과 축 라벨에 표시."""
+    g = _TREND_GEOM.get(prefix)
+    grp = document.querySelector("#%s-ycur" % prefix)
+    if not g or grp is None:
+        return
+    y0 = g["padT"]
+    if sy < y0 or sy > y0 + g["plot_h"]:
+        grp.style.display = "none"
+        return
+    price = g["vmax"] - (sy - y0) / g["plot_h"] * (g["vmax"] - g["vmin"])
+    grp.setAttribute("transform", "translate(0,%g)" % sy)
+    txt = document.querySelector("#%s-ycur-val" % prefix)
+    if txt is not None:
+        txt.textContent = "{:,.{d}f}".format(price, d=g.get("dec", 2))
+    grp.style.display = ""
+
+
 def _candle_hide(tip_id, guide_id, dot_id):
     prefix = guide_id.rsplit("-guide", 1)[0]
-    for sel in ("#" + tip_id, "#" + guide_id, "#" + dot_id,
+    for sel in ("#" + tip_id, "#" + guide_id, "#" + dot_id, "#" + prefix + "-ycur",
                 "#" + prefix + "-wr-guide", "#" + prefix + "-stoch-guide",
                 "#" + prefix + "-recov-guide"):
         el = document.querySelector(sel)
@@ -6562,24 +7102,26 @@ def _render_stock_chart(name, rows):
             '<span class="pv">%s</span>'
             '<span class="%s">%s%+.2f (%+.2f%%)</span>'
             '<span class="dt">%s 기준 · 최근 %d일</span></div>') % (
-        _esc(name), fmt_num(last_c, dec), cls, arrow, chg, pct, d, len(rows))
-    overlay = None
+        _esc(name), fmt_num(last_c, dec), cls, arrow, chg, pct, d,
+        (_PAN_VIEW.get("stockchart") or {}).get("count", len(rows)))
+    overlay_fn = None
     if fin and _STOCKCHART_STATE.get("overlay"):
         annual = _STOCKCHART_STATE.get("range") == "10y"
-        overlay = _build_stock_overlay(
-            rows, fin, _STOCKCHART_STATE.get("overlay_metric", "revenue"),
-            annual)
+        metric = _STOCKCHART_STATE.get("overlay_metric", "revenue")
+
+        def overlay_fn(vis):
+            return _build_stock_overlay(vis, fin, metric, annual)
+    sym = _STOCKCHART_STATE.get("symbol")
+    trend_key = "stk|" + sym if sym else None
+    _PAN_BODY["stockchart"] = lambda: _candle_body_html(
+        "stockchart", rows, dec, _STOCKCHART_HOVER, trend_key,
+        _STOCKCHART_STATE.get("bench"), _STOCKCHART_STATE.get("vol"), overlay_fn)
     box.innerHTML = ('<div class="card"><div class="sec">%s%s%s'
-                     '<div class="fin-chart"><div class="candle-tooltip-host">'
-                     '<div class="candle-tip-host">%s</div>%s%s</div></div>'
-                     '</div></div>'
+                     '<div class="fin-chart">%s<div class="candle-tooltip-host">'
+                     '%s</div></div></div></div>'
                      % (top, controls, head,
-                        _candle_svg(rows, dec, "stockchart", _STOCKCHART_HOVER,
-                                    overlay),
-                        _recovery_pressure_html(
-                            rows, _STOCKCHART_STATE.get("bench"), "stockchart",
-                            _STOCKCHART_STATE.get("vol")),
-                        _daily_indicators_html(rows, "stockchart")))
+                        _trend_toolbar_html("stockchart", trend_key),
+                        _PAN_BODY["stockchart"]()))
     _bind_stockchart_controls()
 
 
@@ -6654,27 +7196,32 @@ async def load_stock_chart(full_symbol, name):
         return
     box.innerHTML = ('<div class="card"><div class="sec"><h3>일봉 차트</h3>'
                      '<div class="hint"><span class="mini-spin"></span></div></div></div>')
+    rng = _STOCKCHART_STATE["range"]
+    interval = _STOCKCHART_STATE["interval"]
+    fetch_rng = _PAN_FETCH_RANGE.get(rng, rng)
     try:
-        rows, win_sym = await _fetch_history_any(
-            cands, _STOCKCHART_STATE["range"], _STOCKCHART_STATE["interval"])
+        rows, win_sym = await _fetch_history_any(cands, fetch_rng, interval)
     except Exception:
-        rows, win_sym = None, None
+        fetch_rng = rng
+        try:
+            rows, win_sym = await _fetch_history_any(cands, rng, interval)
+        except Exception:
+            rows, win_sym = None, None
     # 회복 점수용 벤치마크(기본 ^NDX) 상대강도 + 종목 거래량을 함께 받는다.
     bench = None
     vol = None
     if rows and len(rows) >= _RECOV_WIN:
         try:
             bench_rows = await _fetch_index_history(
-                _RECOV_DEFAULT_BENCH, _STOCKCHART_STATE["range"],
-                _STOCKCHART_STATE["interval"])
+                _RECOV_DEFAULT_BENCH, fetch_rng, interval)
             bench = _align_bench_closes(rows, bench_rows)
         except Exception:
             bench = None
-        vol = await _recov_volume_aligned(
-            rows, win_sym, _STOCKCHART_STATE["range"],
-            _STOCKCHART_STATE["interval"])
+        vol = await _recov_volume_aligned(rows, win_sym, fetch_rng, interval)
     _STOCKCHART_STATE["bench"] = bench
     _STOCKCHART_STATE["vol"] = vol
+    if rows:
+        _pan_init("stockchart", rows, rng)
     _render_stock_chart(name or full_symbol, rows)
 
 
@@ -8581,6 +9128,7 @@ def _apply_fav_prefs(data):
     prefs = (data or {}).get("prefs") if isinstance(data, dict) else None
     prefs = prefs if isinstance(prefs, dict) else {}
     _EARNCAL_STATE["folder"] = prefs.get("earncal_folder") or ""
+    _apply_fav_trends(data)
 
 
 async def _save_earncal_folder(folder):
@@ -10426,12 +10974,34 @@ def on_idxchart_hover(event):
 @when("mouseleave", "#idxchart-result")
 def on_idxchart_leave(event):
     _candle_hide("idxchart-tip", "idxchart-guide", "idxchart-guide-dot")
+    _trend_cancel("idxchart")
 
 
 @when("click", "#idxchart-result")
 def on_idxchart_click(event):
     """회복/조정 패널의 도움말 버튼 클릭 시 설명 팝업을 토글한다."""
     _handle_recov_help_click(event)
+    _handle_trend_click(event)
+
+
+@when("pointerdown", "#idxchart-result")
+def on_idxchart_trend_down(event):
+    _trend_pointer_down(event, "idxchart")
+
+
+@when("pointermove", "#idxchart-result")
+def on_idxchart_trend_move(event):
+    _trend_pointer_move(event, "idxchart")
+
+
+@when("pointerup", "#idxchart-result")
+def on_idxchart_trend_up(event):
+    _trend_pointer_up(event, "idxchart")
+
+
+@when("pointercancel", "#idxchart-result")
+def on_idxchart_trend_cancel(event):
+    _trend_cancel("idxchart")
 
 
 @when("input", "#idxchart-result")
@@ -11103,12 +11673,34 @@ def on_stockchart_hover(event):
 @when("mouseleave", "#result")
 def on_stockchart_leave(event):
     _candle_hide("stockchart-tip", "stockchart-guide", "stockchart-guide-dot")
+    _trend_cancel("stockchart")
 
 
 @when("click", "#result")
 def on_result_recov_help(event):
     """종목 탭 회복/조정 패널의 도움말 팝업 토글."""
     _handle_recov_help_click(event)
+    _handle_trend_click(event)
+
+
+@when("pointerdown", "#result")
+def on_stockchart_trend_down(event):
+    _trend_pointer_down(event, "stockchart")
+
+
+@when("pointermove", "#result")
+def on_stockchart_trend_move(event):
+    _trend_pointer_move(event, "stockchart")
+
+
+@when("pointerup", "#result")
+def on_stockchart_trend_up(event):
+    _trend_pointer_up(event, "stockchart")
+
+
+@when("pointercancel", "#result")
+def on_stockchart_trend_cancel(event):
+    _trend_cancel("stockchart")
 
 
 @when("input", "#guru-search")

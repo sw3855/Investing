@@ -56,6 +56,7 @@
  *    POST   https://<worker>/favorites?account=<id>            → 본문 {symbol,name,folder} 추가/이동
  *    POST   https://<worker>/favorites?account=<id>&guru_op=add → 본문 {cik,ko,name,firm} 13F 대가 즐겨찾기 등록
  *    POST   https://<worker>/favorites?account=<id>&pref_op=set → 본문 {earncal_folder} 사용자 설정 저장
+ *    POST   https://<worker>/favorites?account=<id>&trend_op=set → 본문 {trends:{key:[[ts1,p1,ts2,p2],...]}} 차트 추세선 저장(빈 배열=삭제)
  *    DELETE https://<worker>/favorites?account=<id>&guru=<cik>  → 13F 대가 즐겨찾기 삭제
  *    DELETE https://<worker>/favorites?account=<id>&symbol=..  → 해당 심볼 삭제
  *    DELETE https://<worker>/favorites?account=<id>&folder=..  → 폴더와 그 안의 종목 삭제
@@ -1070,6 +1071,21 @@ function cleanStr(v) {
   return (v == null ? "" : String(v)).trim().slice(0, FAV_MAX_LEN);
 }
 
+// 차트 추세선: 키 "idx|<지수>" 또는 "stk|<즐겨찾기 심볼>", 선 = [ts1, p1, ts2, p2]
+const TREND_MAX_KEYS = 100;
+const TREND_MAX_LINES = 50;
+
+function cleanTrendLines(v) {
+  if (!Array.isArray(v)) return null;
+  const out = [];
+  for (const ln of v.slice(0, TREND_MAX_LINES)) {
+    if (!Array.isArray(ln) || ln.length !== 4) continue;
+    const nums = ln.map(Number);
+    if (nums.every(Number.isFinite)) out.push(nums);
+  }
+  return out;
+}
+
 // 공유 키를 솔트와 함께 SHA-256 해시(16진수)로 변환한다.
 async function sha256Hex(text) {
   const data = new TextEncoder().encode(text);
@@ -1165,15 +1181,19 @@ async function handleFavorites(request, env, reqUrl) {
   // 사용자 설정: {earncal_folder}
   const prefs =
     record && record.prefs && typeof record.prefs === "object" ? record.prefs : {};
+  const trends =
+    record && record.trends && typeof record.trends === "object" && !Array.isArray(record.trends)
+      ? record.trends
+      : {};
   // 현재 레코드 필드를 모두 보존하며 일부만 덮어써 저장한다.
   const save = (over = {}) =>
     env.FAVORITES.put(
       kvKey,
-      JSON.stringify({ keyHash: authHash, favorites, folders, gurus, prefs, ...over })
+      JSON.stringify({ keyHash: authHash, favorites, folders, gurus, prefs, trends, ...over })
     );
 
   if (request.method === "GET") {
-    return jsonResponse({ favorites, folders, gurus, prefs, exists: !!record });
+    return jsonResponse({ favorites, folders, gurus, prefs, trends, exists: !!record });
   }
 
   if (request.method === "POST") {
@@ -1219,6 +1239,28 @@ async function handleFavorites(request, env, reqUrl) {
       }
       await save();
       return jsonResponse({ prefs });
+    }
+
+    // 차트 추세선 저장: ?trend_op=set, 본문 {trends:{key: lines}}. 종목은 즐겨찾기에 있어야 함.
+    if (reqUrl.searchParams.get("trend_op") === "set") {
+      const items =
+        payload && payload.trends && typeof payload.trends === "object" ? payload.trends : {};
+      const favSyms = new Set(favorites.map((f) => f && f.symbol));
+      for (const [k, v] of Object.entries(items)) {
+        if (typeof k !== "string" || k.length > 80) continue;
+        const m = /^(idx|stk)\|(.+)$/.exec(k);
+        if (!m || (m[1] === "stk" && !favSyms.has(m[2]))) continue;
+        const lines = cleanTrendLines(v);
+        if (!lines) continue;
+        if (!lines.length) {
+          delete trends[k];
+          continue;
+        }
+        if (!(k in trends) && Object.keys(trends).length >= TREND_MAX_KEYS) continue;
+        trends[k] = lines;
+      }
+      await save();
+      return jsonResponse({ trends });
     }
 
     // 빈 폴더 생성 요청: ?folder_op=create, 본문 {folder}
@@ -1426,11 +1468,15 @@ async function handleFavorites(request, env, reqUrl) {
       );
       const keptFolders = folders.filter((n) => n !== folderToDelete);
       if (prefs.earncal_folder === folderToDelete) prefs.earncal_folder = "";
+      for (const f of favorites) {
+        if (f && (f.folder || "Default") === folderToDelete) delete trends["stk|" + f.symbol];
+      }
       await save({ favorites: keptFavs, folders: keptFolders });
       return jsonResponse({ favorites: keptFavs, folders: keptFolders });
     }
 
     const next = favorites.filter((f) => f && f.symbol !== symbol);
+    delete trends["stk|" + symbol];
     await save({ favorites: next });
     return jsonResponse({ favorites: next, folders });
   }
