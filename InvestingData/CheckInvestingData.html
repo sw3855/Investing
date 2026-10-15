@@ -194,6 +194,10 @@
     margin-bottom:12px; background:#fff; }
   .chart-svg { width:100%; height:auto; display:block; }
   .chart-svg .bar-rect { fill:var(--pri); fill-opacity:.16; }
+  .chart-svg .bar-rect.neg { fill:var(--sell); fill-opacity:.22; }
+  .chart-svg .ax-x.yoy { font-size:10px; font-weight:600; }
+  .chart-svg .ax-x.yoy.up { fill:var(--buy); }
+  .chart-svg .ax-x.yoy.down { fill:var(--sell); }
   .chart-svg .line-path { stroke:var(--pri); stroke-width:2;
     stroke-linejoin:round; stroke-linecap:round; }
   .chart-svg .line-dot { fill:var(--pri); }
@@ -282,8 +286,8 @@
   .cmp-stat .cl { font-size:12px; color:var(--mut); }
   .cmp-stat .vl { font-size:18px; font-weight:700; color:#131722; }
   .cmp-stat .vl small { font-size:12px; font-weight:600; color:var(--mut); }
-  .cmp-stat.profit { background:#fef6f5; border-color:#f4c9c2; }
-  .cmp-stat.profit .vl { color:#f23645; }
+  .cmp-stat.profit { background:#eefaf6; border-color:#b5e3d6; }
+  .cmp-stat.profit .vl { color:var(--buy); }
   .cmp-stat.final { background:#eef7ff; border-color:#bfdcf5; }
   .cmp-stat.final .vl { color:#1e64c8; }
   .cmp-table { width:100%; border-collapse:collapse; font-size:13px; }
@@ -291,7 +295,7 @@
     text-align:left; }
   .cmp-table th { background:#f5f7fa; color:var(--mut); font-weight:600; }
   .cmp-table td.num, .cmp-table th.num { text-align:right; font-variant-numeric:tabular-nums; }
-  .cmp-table td.up { color:#f23645; }
+  .cmp-table td.up { color:var(--buy); }
     .rrg-summary { display:flex; flex-wrap:wrap; gap:8px 18px; margin:2px 4px 12px;
         color:var(--mut); font-size:12px; }
     .rrg-summary strong { color:#1f2328; }
@@ -719,7 +723,7 @@
     .fav-chip .fav-del:hover, .ai-error { background:#3a1f22; }
 
     /* 특수 강조 카드 */
-    .cmp-stat.profit { background:#2a1a1a; border-color:#5a2e2e; }
+    .cmp-stat.profit { background:#12261f; border-color:#1f5244; }
     .cmp-stat.final { background:#152238; border-color:#284b74; }
     .fin-table th.cur-col, .fin-table td.cur-col { background:#2e2716; }
     .fin-table thead th.cur-col { background:#3a3016; color:#e2c774; }
@@ -736,6 +740,18 @@
     .chart-svg .pt-val { fill:#e6e8eb; }
     .chart-svg .guide-line { stroke:#8b95a1; }
     .chart-svg .guide-dot { fill:#8b95a1; }
+    /* 차트 SVG(속성으로 고정된 밝은 색) — CSS 가 SVG 표현 속성보다 우선한다 */
+    .chart-svg line[stroke="#eaecef"] { stroke:#262d36; }
+    .chart-svg rect[stroke="#eaecef"] { stroke:#2b323b; }
+    .chart-svg rect[fill="#fafbfc"] { fill:#1a2029; }
+    .chart-svg rect[stroke="#d0d5db"] { stroke:#3a434e; }
+    .chart-svg rect[fill="#e3f5e8"] { fill:#14291c; }
+    .chart-svg rect[fill="#eef1f4"] { fill:#1c222a; }
+    .chart-svg rect[fill="#fdecea"] { fill:#2e1a1c; }
+    .chart-svg tspan[fill="#57606a"] { fill:#9aa4b0; }
+    .recov-help-btn circle { fill:#222a33; stroke:#5c6672; }
+    .recov-help-btn text { fill:#c9d1d9 !important; }
+    .recov-help-btn:hover circle { fill:#2b3540; }
   }
 </style>
 </head>
@@ -3524,7 +3540,38 @@ def _fin_chart_svg(metric, sel_years, cur):
 
     y0 = Y(0.0)
     bar_w = plot_w / n * 0.55
-    # 막대그래프
+
+    # 전년(분기는 전년 동기) 대비 증감. 비율 지표는 %p 차이, 그 외는 증감률(%).
+    quarterly = _FIN_STATE.get("period") == "quarterly"
+    lag = 4 if quarterly else 1
+    yidx = {y: i for i, y in enumerate(years)}
+    all_vals = metric["values"]
+
+    def _yoy(yr, v):
+        if v is None:
+            return None
+        if yr == "현재":
+            prev = all_vals[-1] if all_vals else None
+        else:
+            j = yidx.get(yr)
+            prev = all_vals[j - lag] if j is not None and j - lag >= 0 else None
+        if prev is None:
+            return None
+        if kind == "pct":
+            return v - prev, "%+.1f%%p" % (v - prev)
+        if prev == 0:
+            return None
+        g = (v - prev) / abs(prev) * 100.0
+        return g, "%+.1f%%" % g
+
+    yoys = [_yoy(yr, v) for yr, v in data]
+    # 항목이 많으면 값·축 라벨이 겹치므로 일정 간격으로만 표시(마지막은 항상 표시).
+    lbl_step = 1 if n <= 12 else -(-n // 12)
+
+    def _show_lbl(i):
+        return i % lbl_step == 0 or i == n - 1
+
+    # 막대그래프(음수는 하락색)
     for i, (yr, v) in enumerate(data):
         if v is None:
             continue
@@ -3533,7 +3580,8 @@ def _fin_chart_svg(metric, sel_years, cur):
         by = min(top, y0)
         bh = abs(top - y0)
         parts.append('<rect x="%g" y="%g" width="%g" height="%g" rx="3" '
-                     'class="bar-rect"/>' % (cx - bar_w / 2, by, bar_w, max(bh, 0.5)))
+                     'class="bar-rect%s"/>' % (cx - bar_w / 2, by, bar_w,
+                                               max(bh, 0.5), " neg" if v < 0 else ""))
 
     # 꺾은선그래프 (동일 값 위에 겹침)
     pts = ["%g,%g" % (X(i), Y(v)) for i, (yr, v) in enumerate(data) if v is not None]
@@ -3545,13 +3593,20 @@ def _fin_chart_svg(metric, sel_years, cur):
             continue
         parts.append('<circle cx="%g" cy="%g" r="3.5" class="line-dot"/>'
                      % (X(i), Y(v)))
-        parts.append('<text x="%g" y="%g" class="pt-val">%s</text>'
-                     % (X(i), Y(v) - 8, _esc(_metric_axis_fmt(kind, v))))
+        if _show_lbl(i):
+            parts.append('<text x="%g" y="%g" class="pt-val">%s</text>'
+                         % (X(i), Y(v) - 8, _esc(_metric_axis_fmt(kind, v))))
 
-    # x축 연도 라벨
+    # x축 연도 라벨 + 전년 대비 증감(색상: 상승=초록, 하락=빨강)
     for i, (yr, v) in enumerate(data):
+        if not _show_lbl(i):
+            continue
         parts.append('<text x="%g" y="%g" class="ax-x">%s</text>'
-                     % (X(i), H - padB + 22, _esc(str(yr))))
+                     % (X(i), H - padB + 20, _esc(str(yr))))
+        if yoys[i] is not None:
+            parts.append('<text x="%g" y="%g" class="ax-x yoy %s">%s</text>'
+                         % (X(i), H - padB + 33, "up" if yoys[i][0] >= 0 else "down",
+                            _esc(yoys[i][1])))
 
     # 마우스 호버 가이드(세로선 + 점) — JS 에서 위치를 갱신한다.
     parts.append('<line id="fin-guide" class="guide-line" x1="0" y1="%g" '
@@ -3563,7 +3618,10 @@ def _fin_chart_svg(metric, sel_years, cur):
     # 호버 툴팁용 좌표/치수 캐시 갱신(값이 있는 점만)
     _FIN_CHART_HOVER["pts"] = [
         {"x": X(i), "y": Y(v), "date": str(yr),
-         "val": _metric_axis_fmt(kind, v)}
+         "val": _metric_axis_fmt(kind, v),
+         "yoy": yoys[i][1] if yoys[i] else "",
+         "yoy_up": bool(yoys[i] and yoys[i][0] >= 0),
+         "yoy_lbl": "vs 직전 FY" if yr == "현재" else "YoY"}
         for i, (yr, v) in enumerate(data) if v is not None]
     _FIN_CHART_HOVER["W"] = W
     _FIN_CHART_HOVER["H"] = H
@@ -5653,6 +5711,11 @@ def _last_num(seq):
     return None
 
 
+def _bar_unit(interval):
+    """봉 주기에 맞는 기간 단위(일봉=일, 주봉=주)."""
+    return "주" if interval == "1wk" else "일"
+
+
 def _recov_value_markup(rv, cv):
     """회복/조정 현재값 표시용 tspan 마크업."""
     r = ('회복 %.0f' % rv) if isinstance(rv, (int, float)) else '회복 -'
@@ -5880,16 +5943,16 @@ def _recov_help_popup():
         '<h4>회복 점수 · 조정 압력 계산 방식</h4>'
         '<p><b>입력</b><br>· 회복 점수 = 상대강도(지수 ÷ 벤치마크)<br>'
         '· 조정 압력 = 절대가격(종가)</p>'
-        '<p><b>핵심 · 60일 스토캐스틱 위치</b><br>'
-        '최근 60일 저점~고점 대비 현재 위치를 0~100으로 환산<br>'
-        'pos = 100 × (현재 − 60일저점) ÷ (60일고점 − 60일저점)</p>'
-        '<p>· 회복 점수 = 상대강도 pos <i>(100 = 60일 고점 회복)</i><br>'
-        '· 조정 압력 = 100 − 절대가격 pos <i>(100 = 60일 저점, 조정 심함)</i></p>'
-        '<p><b>평활</b> 두 값 모두 5일 이동평균으로 완만화</p>'
+        '<p><b>핵심 · 60봉 스토캐스틱 위치</b><br>'
+        '최근 60봉(일봉 60일 · 주봉 60주) 저점~고점 대비 현재 위치를 0~100으로 환산<br>'
+        'pos = 100 × (현재 − 60봉 저점) ÷ (60봉 고점 − 60봉 저점)</p>'
+        '<p>· 회복 점수 = 상대강도 pos <i>(100 = 60봉 고점 회복)</i><br>'
+        '· 조정 압력 = 100 − 절대가격 pos <i>(100 = 60봉 저점, 조정 심함)</i></p>'
+        '<p><b>평활</b> 두 값 모두 5봉 이동평균으로 완만화</p>'
         '<p><b>벤치마크</b> 기본 나스닥100(^NDX), 나스닥100은 S&amp;P500. '
         'UTC 날짜로 정렬하고 주말 등 공백은 직전값으로 채움(ffill)</p>'
-        '<p><b>확인(거래량·변동성)</b> 변동성(20일 σ)이 자기 평균을 넘거나 '
-        '대표 ETF 거래량이 20일 평균 대비 튀는 날에만 중립(50) 대비 편차를 '
+        '<p><b>확인(거래량·변동성)</b> 변동성(20봉 σ)이 자기 평균을 넘거나 '
+        '대표 ETF 거래량이 20봉 평균 대비 튀는 날에만 중립(50) 대비 편차를 '
         '증폭(최대 1.8배). 평소엔 원본과 거의 동일</p>'
         '<p><b>배경 레짐</b> 회복 점수 기준 ≥66 회복 · 34~65 중립 · ≤33 약세</p>'
         '</div>')
@@ -6020,7 +6083,12 @@ def _candle_svg(rows, dec=2, prefix="idxchart", hover=None, overlay=None,
         parts.append('<rect x="%g" y="%g" width="%g" height="%g" fill="%s"/>'
                      % (cx - body_w / 2, top, body_w, bh, col))
 
-    # 이동평균선(캔들 위에 격침)
+    # 이동평균선(캔들 위에 겹침). 가격 축은 고가·저가 기준이라 장기 MA 가 범위를
+    # 벗어날 수 있으므로 캔들 영역으로 클리핑해 축 라벨·하위 패널과 겹치지 않게 한다.
+    parts.append('<clipPath id="%s-plot-clip"><rect x="%g" y="%g" '
+                 'width="%g" height="%g"/></clipPath>'
+                 % (prefix, padL, padT, plot_w, plot_h))
+    parts.append('<g clip-path="url(#%s-plot-clip)">' % prefix)
     for period, color, vals in ma_series:
         ma_pts = ["%g,%g" % (X(i), Y(v))
                   for i, v in enumerate(vals) if v is not None]
@@ -6028,6 +6096,7 @@ def _candle_svg(rows, dec=2, prefix="idxchart", hover=None, overlay=None,
             parts.append('<polyline points="%s" fill="none" stroke="%s" '
                          'stroke-width="1.3" stroke-linejoin="round" '
                          'stroke-linecap="round"/>' % (" ".join(ma_pts), color))
+    parts.append('</g>')
 
     # 사용자 추세선(캔들 영역으로 클리핑)
     tss = [r[0] for r in rows]
@@ -6204,9 +6273,10 @@ def _render_idxchart(name, rows, bench_closes=None, vol_aligned=None):
     head = ('<div class="idx-chart-head"><span class="nm">%s</span>'
             '<span class="pv">%s</span>'
             '<span class="%s">%s%+.2f (%+.2f%%)</span>'
-            '<span class="dt">%s 기준 · 최근 %d일</span></div>') % (
+            '<span class="dt">%s 기준 · 최근 %d%s</span></div>') % (
         _esc(name), fmt_num(disp_c, dec), cls, arrow, chg, pct, d,
-        (_PAN_VIEW.get("idxchart") or {}).get("count", len(rows)))
+        (_PAN_VIEW.get("idxchart") or {}).get("count", len(rows)),
+        _bar_unit(_IDXCHART_STATE.get("interval")))
     fx_html = ""
     if is_fx:
         fx_html = _fx_converter_html(disp_c)
@@ -7101,9 +7171,10 @@ def _render_stock_chart(name, rows):
     head = ('<div class="idx-chart-head"><span class="nm">%s</span>'
             '<span class="pv">%s</span>'
             '<span class="%s">%s%+.2f (%+.2f%%)</span>'
-            '<span class="dt">%s 기준 · 최근 %d일</span></div>') % (
+            '<span class="dt">%s 기준 · 최근 %d%s</span></div>') % (
         _esc(name), fmt_num(last_c, dec), cls, arrow, chg, pct, d,
-        (_PAN_VIEW.get("stockchart") or {}).get("count", len(rows)))
+        (_PAN_VIEW.get("stockchart") or {}).get("count", len(rows)),
+        _bar_unit(_STOCKCHART_STATE.get("interval")))
     overlay_fn = None
     if fin and _STOCKCHART_STATE.get("overlay"):
         annual = _STOCKCHART_STATE.get("range") == "10y"
@@ -11651,8 +11722,13 @@ def on_fin_hover(event):
         dot.setAttribute("cy", "%g" % best["y"])
         dot.style.display = "block"
 
-    tip.innerHTML = ('<span class="d">%s</span><span class="v">%s</span>'
-                     % (_esc(best["date"]), _esc(best["val"])))
+    yoy_html = ""
+    if best.get("yoy"):
+        yoy_html = (' <span class="%s">(%s %s)</span>'
+                    % ("up" if best.get("yoy_up") else "down",
+                       _esc(best.get("yoy_lbl", "YoY")), _esc(best["yoy"])))
+    tip.innerHTML = ('<span class="d">%s</span><span class="v">%s</span>%s'
+                     % (_esc(best["date"]), _esc(best["val"]), yoy_html))
     _place_tip_clamped(tip, svg, best["x"], best["y"], W, H)
 
 
