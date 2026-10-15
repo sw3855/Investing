@@ -460,7 +460,7 @@
   .ai-error { color:var(--sell); background:#fff0f0; border:1px solid #f5c2c7;
     border-radius:8px; padding:12px 14px; margin-top:16px; font-size:14px; }
 
-  /* AI 평가 접근 관리: 계정 검색 자동완성 드롭다운 */
+  /* 계정 관리: 계정 검색 자동완성 드롭다운 */
   .ai-grant-wrap { position:relative; display:inline-block; }
   .ai-suggest { position:absolute; top:100%; left:0; right:0; z-index:30;
     background:#fff; border:1px solid var(--bd); border-radius:6px; margin-top:2px;
@@ -783,7 +783,7 @@
         <button id="favRegisterBtn">계정 등록</button>
         <button id="favResetBtn">비밀번호 리셋</button>
         <button id="favChangePwBtn" style="display:none">비밀번호 변경</button>
-        <button id="aiAdminOpenBtn" style="display:none">AI 평가 접근 관리</button>
+        <button id="aiAdminOpenBtn" style="display:none">계정 관리</button>
         <button id="favLogoutBtn" style="display:none">로그아웃</button>
         <button id="favDeleteBtn" style="display:none">계정 삭제</button>
       </div>
@@ -791,10 +791,10 @@
     </div>
   </div>
 </header>
-<div id="ai-admin-pop" class="modal-pop" role="dialog" aria-label="AI 평가 접근 관리">
+<div id="ai-admin-pop" class="modal-pop" role="dialog" aria-label="계정 관리">
   <div class="modal-pop-box">
     <div class="modal-pop-head">
-      <h4>AI 평가 접근 관리 (관리자 전용)</h4>
+      <h4>계정 관리 (관리자 전용)</h4>
       <button type="button" class="modal-pop-close" title="닫기" aria-label="닫기">×</button>
     </div>
     <div class="row">
@@ -811,6 +811,9 @@
       관리자 계정은 항상 사용할 수 있습니다. 입력창을 클릭하거나 검색어를 입력하면
       등록된 계정 목록이 아래에 필터링되어 표시됩니다.</div>
     <div id="ai-access-list" class="fav-list"></div>
+    <div class="hint" style="margin-top:14px"><b>비밀번호 리셋 요청</b> ·
+      리셋하면 해당 계정의 공유 키가 0000 으로 초기화됩니다.</div>
+    <div id="pw-reset-list" class="fav-list"></div>
   </div>
 </div>
 <main>
@@ -834,6 +837,53 @@
       <div class="idx-cell skeleton"><span class="sk nm"></span><span class="sk pv"></span><span class="sk chg"></span></div>
     </div>
   </fieldset>
+  <script>
+  // Pyodide 부팅(수 초)을 기다리지 않도록 지수바는 순수 JS 로 먼저 그린다. 이후 갱신은 Python update_indices 담당.
+  window.IDX_LIST = [
+    ["나스닥100", "NASDAQ:NDX"], ["S&P500", "SP:SPX"], ["다우", "DJ:DJI"],
+    ["러셀2000", "TVC:RUT"], ["반도체(SOX)", "NASDAQ:SOX"], ["미국채10Y", "TVC:US10Y"],
+    ["미국채30Y", "TVC:US30Y"], ["WTI", "NYMEX:CL1!"], ["금", "TVC:GOLD"],
+    ["비트코인", "BITSTAMP:BTCUSD"], ["달러인덱스", "TVC:DXY"], ["원/달러", "FX_IDC:USDKRW"],
+    ["VIX", "TVC:VIX"], ["MOVE", "TVC:MOVE"],
+  ];
+  (function () {
+    const CACHE_KEY = "idx_cache_v1";
+    const box = document.getElementById("indices");
+    const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    const num = (v) => v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const paint = (qm) => {
+      if (window.__idxPyReady) return;
+      box.innerHTML = window.IDX_LIST.map(([name, sym]) => {
+        const d = qm[sym];
+        const head = `<div class="idx-cell idx-link" data-idxsym="${esc(sym)}"><span class="nm">${esc(name)}</span>`;
+        if (!d || typeof d.close !== "number") return head + '<span class="pv">-</span></div>';
+        let chg = "";
+        if (typeof d.change === "number") {
+          const up = d.change >= 0;
+          chg = `<span class="chg ${up ? "up" : "down"}">${up ? "▲" : "▼"}${up ? "+" : ""}${d.change.toFixed(2)}%</span>`;
+        }
+        return head + `<span class="pv">${num(d.close)}</span>${chg}</div>`;
+      }).join("");
+    };
+    try {
+      const cached = JSON.parse(localStorage.getItem(CACHE_KEY) || "null");
+      if (cached && cached.quotes) paint(cached.quotes);
+    } catch (e) {}
+    const base = (document.getElementById("proxy").value || "").split("?")[0].replace(/\/+$/, "");
+    if (!base.startsWith("http")) return;
+    const syms = window.IDX_LIST.map((x) => x[1].toUpperCase()).join(",");
+    fetch(`${base}/quotes?symbols=${encodeURIComponent(syms)}`, { signal: AbortSignal.timeout(15000) })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (!j || !j.quotes) return;
+        const qm = {};
+        for (const [, sym] of window.IDX_LIST) if (j.quotes[sym.toUpperCase()]) qm[sym] = j.quotes[sym.toUpperCase()];
+        paint(qm);
+        try { localStorage.setItem(CACHE_KEY, JSON.stringify({ at: Date.now(), quotes: qm })); } catch (e) {}
+      })
+      .catch(() => {});
+  })();
+  </script>
 
   <div class="tab-groups">
     <button class="group-btn active" data-group="analysis">종목 분석</button>
@@ -1225,10 +1275,22 @@ from datetime import datetime, timezone
 from urllib.parse import urlencode
 from html import unescape as _html_unescape
 
-from pyodide.http import pyfetch
+from pyodide.http import pyfetch as _pyfetch_raw
 from pyscript import document, window, when
 from pyscript.ffi import create_proxy
 import js
+
+_FETCH_TIMEOUT_MS = 25000
+
+
+async def pyfetch(url, timeout_ms=_FETCH_TIMEOUT_MS, **kwargs):
+    """pyodide pyfetch 에 시간 제한(AbortSignal.timeout)을 붙인다. 본문 수신 지연도 포함."""
+    if timeout_ms and "signal" not in kwargs:
+        try:
+            kwargs["signal"] = js.AbortSignal.timeout(timeout_ms)
+        except Exception:  # AbortSignal.timeout 미지원 브라우저
+            pass
+    return await _pyfetch_raw(url, **kwargs)
 
 
 # ===================== 원본 CheckInvestingData.py 이식부 =====================
@@ -4875,23 +4937,8 @@ def _render_fxrate(d):
 
 # ===================== 미국 주요 지수 (헤더 상시 표시) =====================
 
-# (표시명, TradingView 심볼)
-INDEX_LIST = [
-    ("나스닥100", "NASDAQ:NDX"),
-    ("S&P500", "SP:SPX"),
-    ("다우", "DJ:DJI"),
-    ("러셀2000", "TVC:RUT"),
-    ("반도체(SOX)", "NASDAQ:SOX"),
-    ("미국채10Y", "TVC:US10Y"),
-    ("미국채30Y", "TVC:US30Y"),
-    ("WTI", "NYMEX:CL1!"),
-    ("금", "TVC:GOLD"),
-    ("비트코인", "BITSTAMP:BTCUSD"),
-    ("달러인덱스", "TVC:DXY"),
-    ("원/달러", "FX_IDC:USDKRW"),
-    ("VIX", "TVC:VIX"),
-    ("MOVE", "TVC:MOVE"),
-]
+# (표시명, TradingView 심볼) — 목록은 #indices 아래 인라인 JS(window.IDX_LIST)가 원본.
+INDEX_LIST = [tuple(p) for p in window.IDX_LIST.to_py()]
 
 
 async def _fetch_index(sym):
@@ -4906,12 +4953,55 @@ async def _fetch_index(sym):
     return d
 
 
+_QUOTE_LIMIT = asyncio.Semaphore(6)
+
+
+async def _fetch_index_limited(sym):
+    async with _QUOTE_LIMIT:
+        return await _fetch_index(sym)
+
+
+async def _fetch_quotes(syms):
+    """워커 /quotes 로 여러 심볼 시세를 한 번에 조회. 빠진 심볼은 개별 조회로 보완.
+
+    반환: {원래 심볼: {close, change, change_abs}} (실패한 심볼은 키 없음)
+    """
+    out = {}
+    if not syms:
+        return out
+    by_upper = {}
+    for s in syms:
+        by_upper.setdefault(s.upper(), []).append(s)
+    url = _mcap_url("/quotes?symbols=" + str(js.encodeURIComponent(",".join(by_upper))))
+    if url:
+        try:
+            resp = await pyfetch(url, method="GET")
+            if resp.status < 400:
+                quotes = json.loads(await resp.string()).get("quotes") or {}
+                for u, d in quotes.items():
+                    if isinstance(d, dict) and isinstance(d.get("close"), (int, float)):
+                        for s in by_upper.get(u, []):
+                            out[s] = d
+            else:
+                _warn("quotes", "HTTP %s" % resp.status)
+        except Exception as exc:
+            _warn("quotes", exc)
+    missing = [s for s in syms if s not in out]
+    if missing:
+        results = await asyncio.gather(*[_fetch_index_limited(s) for s in missing])
+        for s, d in zip(missing, results):
+            if d:
+                out[s] = d
+    return out
+
+
 async def update_indices():
     """나스닥100·S&P500·다우·러셀2000 지수값과 변동률을 헤더에 그리드 카드로 표시."""
     el = document.querySelector("#indices")
     if el is None:
         return
-    results = await asyncio.gather(*[_fetch_index(s) for _, s in INDEX_LIST])
+    qm = await _fetch_quotes([s for _, s in INDEX_LIST])
+    results = [qm.get(s) for _, s in INDEX_LIST]
     cells = []
     for (name, sym), d in zip(INDEX_LIST, results):
         # 미 10년물 금리를 실시간 무위험수익률(WACC용)로 저장한다.
@@ -4939,7 +5029,14 @@ async def update_indices():
         cells.append('<div class="%s"%s><span class="nm">%s</span>'
                     '<span class="pv">%s</span>%s</div>'
                     % (cell_cls, attr, _esc(name), fmt_num(d["close"], 2), chg_html))
+    window.__idxPyReady = True
     el.innerHTML = "".join(cells)
+    if qm:
+        try:
+            window.localStorage.setItem("idx_cache_v1", json.dumps(
+                {"at": int(time.time() * 1000), "quotes": qm}))
+        except Exception:
+            pass
 
 
 # ===================== 지수 일봉 캔들 차트 (Yahoo Finance) =====================
@@ -8341,7 +8438,7 @@ async def _restore_fav_session():
     data, err, status = await _fav_api("GET", acct, key)
     if err or not isinstance(data, dict) or not data.get("exists"):
         # 인증 실패(403 등)면 저장된 세션을 폐기하고, 네트워크 오류면 다음 새로고침을 위해 남긴다.
-        if status in (401, 403, 404) or (isinstance(data, dict) and data.get("exists") is False):
+        if status in (401, 403, 404, 423) or (isinstance(data, dict) and data.get("exists") is False):
             _fav_set_creds(None, None)
         return
     _fav_set_creds(acct, data.get("token") or key)
@@ -8452,18 +8549,15 @@ async def fav_delete_account():
 
 
 async def fav_reset_password(account):
-    """로그아웃 상태에서 계정 ID만으로 공유 키를 '0000'으로 초기화한다.
-
-    등록된 계정에서만 동작한다. 반환: (성공 bool, error 문자열 또는 None).
-    """
-    # 리셋은 키 검증을 거치지 않으므로 임의의 자리표시 키를 보낸다.
+    """계정 ID로 관리자에게 비밀번호 리셋을 요청한다. 반환: (성공, error, HTTP status)."""
+    # 요청은 키 검증을 거치지 않으므로 임의의 자리표시 키를 보낸다.
     data, err, status = await _fav_api(
         "POST", account, "0000", extra_query="&pw_op=reset", body=json.dumps({}))
     if status == 404:
-        return False, "등록되지 않은 계정입니다."
+        return False, "등록되지 않은 계정입니다.", status
     if err:
-        return False, err
-    return True, None
+        return False, err, status
+    return True, None, status
 
 
 async def fav_change_password(new_key):
@@ -8608,8 +8702,30 @@ def render_favorites(favs):
     asyncio.ensure_future(_refresh_fav_prices())
 
 
+_FAV_PRICE_CACHE = {}      # symbol -> (조회 시각, 데이터 또는 None)
+_FAV_PRICE_TTL = 45        # 초. 재렌더(드래그·폴더 조작) 시 재조회 방지
+_FAV_PRICE_INFLIGHT = {}   # symbol -> 진행 중 일괄 조회 Task (연속 렌더 시 중복 요청 방지)
+
+
+async def _fetch_fav_batch(syms):
+    try:
+        qm = await _fetch_quotes(syms)
+        now = time.time()
+        for s in syms:
+            _FAV_PRICE_CACHE[s] = (now, qm.get(s))
+        return qm
+    finally:
+        for s in syms:
+            _FAV_PRICE_INFLIGHT.pop(s, None)
+
+
+async def _fetch_fav_kr_name(sym):
+    async with _QUOTE_LIMIT:
+        return await _naver_kr_name(sym.split(":", 1)[-1])
+
+
 async def _refresh_fav_prices():
-    """즐겨찾기 그리드 카드의 가격·변동률을 조회해 채운다."""
+    """즐겨찾기 그리드 카드의 가격·변동률을 채운다(캐시 우선, 만료분만 일괄 조회)."""
     box = document.querySelector("#favorites-list")
     if box is None:
         return
@@ -8622,21 +8738,52 @@ async def _refresh_fav_prices():
         s = cells.item(i).getAttribute("data-symbol")
         if s and s not in syms:
             syms.append(s)
-    kr_syms = [s for s in syms if s.upper().startswith("KRX:")]
-    results, kr_names = await asyncio.gather(
-        asyncio.gather(*[_fetch_index(s) for s in syms]),
-        asyncio.gather(*[_naver_kr_name(s.split(":", 1)[-1]) for s in kr_syms]))
-    price_map = dict(zip(syms, results))
-    name_map = dict(zip(kr_syms, kr_names))
-    for i in range(n):
+    now = time.time()
+    # 만료된 값이라도 먼저 칠해 재렌더 시 깜빡임을 없앤다.
+    _paint_fav_prices({s: _FAV_PRICE_CACHE[s][1] for s in syms if s in _FAV_PRICE_CACHE})
+    stale = [s for s in syms if s not in _FAV_PRICE_CACHE
+             or now - _FAV_PRICE_CACHE[s][0] >= _FAV_PRICE_TTL]
+    kr_syms = [s for s in syms if s.upper().startswith("KRX:")
+               and s.split(":", 1)[-1].upper() not in _KR_NAME_CACHE]
+    if not stale and not kr_syms:
+        return
+    pending = [s for s in stale if s not in _FAV_PRICE_INFLIGHT]
+    if pending:
+        task = asyncio.ensure_future(_fetch_fav_batch(pending))
+        for s in pending:
+            _FAV_PRICE_INFLIGHT[s] = task
+    tasks = list({id(t): t for t in (_FAV_PRICE_INFLIGHT[s] for s in stale)}.values())
+    batches, kr_names = await asyncio.gather(
+        asyncio.gather(*tasks),
+        asyncio.gather(*[_fetch_fav_kr_name(s) for s in kr_syms]))
+    price_map = {}
+    for qm in batches:
+        price_map.update(qm)
+    _paint_fav_names(dict(zip(kr_syms, kr_names)))
+    _paint_fav_prices({s: price_map.get(s) for s in stale})
+
+
+def _paint_fav_names(name_map):
+    cells = document.querySelectorAll("#favorites-list .fav-cell")
+    for i in range(cells.length):
         cell = cells.item(i)
         kr = name_map.get(cell.getAttribute("data-symbol"))
         nm = cell.querySelector(".nm")
         if kr and nm is not None:
             nm.textContent = kr
-    for i in range(n):
+
+
+def _paint_fav_prices(price_map):
+    """현재 DOM 의 즐겨찾기 카드 중 price_map 에 있는 심볼만 가격·변동률을 갱신한다."""
+    if not price_map:
+        return
+    cells = document.querySelectorAll("#favorites-list .fav-cell")
+    for i in range(cells.length):
         cell = cells.item(i)
-        d = price_map.get(cell.getAttribute("data-symbol"))
+        sym = cell.getAttribute("data-symbol")
+        if sym not in price_map:
+            continue
+        d = price_map[sym]
         pv = cell.querySelector(".pv")
         chg_el = cell.querySelector(".chg")
         if not d or not isinstance(d.get("close"), (int, float)):
@@ -10203,6 +10350,64 @@ def render_ai_access(allowed):
         _bind(el, "click", _make_ai_revoke_handler(el.getAttribute("data-account")))
 
 
+def _make_pw_reset_handler(target, approve):
+    async def _do():
+        _set_ai_admin_status("처리 중...")
+        if approve:
+            data, err = await _ai_access_api(
+                "POST", extra_query="&op=reset_pw", body=json.dumps({"target": target}))
+        else:
+            data, err = await _ai_access_api(
+                "DELETE", extra_query="&reset_req=%s" % js.encodeURIComponent(target))
+        if data is not None:
+            render_pw_reset_requests(data.get("resetRequests") or [])
+        if err:
+            _set_ai_admin_status("실패: %s" % err)
+            window.alert("처리 실패: %s" % err)
+            return
+        _set_ai_admin_status(("리셋됨 · %s (0000)" if approve else "거절됨 · %s") % target)
+
+    def handler(evt):
+        evt.preventDefault()
+        evt.stopPropagation()
+        msg = ("'%s' 계정의 공유 키를 0000 으로 리셋할까요?" if approve
+               else "'%s' 계정의 리셋 요청을 거절할까요?") % target
+        if window.confirm(msg):
+            asyncio.ensure_future(_do())
+    return handler
+
+
+def render_pw_reset_requests(reqs):
+    """비밀번호 리셋 요청 목록을 리셋/거절 버튼과 함께 렌더링한다(관리자 계정 제외)."""
+    box = document.querySelector("#pw-reset-list")
+    if box is None:
+        return
+    admin_acct, _ = _fav_creds()
+    rows = []
+    for r in reqs or []:
+        a = r.get("account") or ""
+        if not a or a == admin_acct:
+            continue
+        when_txt = ""
+        if isinstance(r.get("at"), (int, float)):
+            when_txt = str(js.Date.new(r["at"]).toLocaleString("ko-KR"))
+        rows.append(
+            '<div class="pw-reset-row" style="display:flex;gap:8px;align-items:center;margin-top:6px">'
+            '<b>%s</b><span class="hint">%s</span>'
+            '<button type="button" class="pw-reset-ok" data-account="%s">리셋</button>'
+            '<button type="button" class="pw-reset-no" data-account="%s">거절</button></div>'
+            % (_esc(a), _esc(when_txt), _esc(a), _esc(a)))
+    if not rows:
+        box.innerHTML = '<div class="hint" style="margin-top:6px">대기 중인 요청이 없습니다.</div>'
+        return
+    box.innerHTML = "".join(rows)
+    for cls, approve in (("pw-reset-ok", True), ("pw-reset-no", False)):
+        els = document.querySelectorAll("#pw-reset-list ." + cls)
+        for i in range(els.length):
+            el = els.item(i)
+            _bind(el, "click", _make_pw_reset_handler(el.getAttribute("data-account"), approve))
+
+
 def _render_grant_suggest():
     """입력한 검색어에 부합하는 계정만 드롭다운으로 표시한다.
 
@@ -10276,6 +10481,7 @@ async def _load_ai_access():
         return
     _AI_ACCOUNTS["list"] = data.get("accounts") or []
     render_ai_access(data.get("allowed") or [])
+    render_pw_reset_requests(data.get("resetRequests") or [])
     _set_ai_admin_status("")
 
 
@@ -10313,6 +10519,7 @@ async def _refresh_ai_admin():
         delete_btn.style.display = "none"
     _AI_ACCOUNTS["list"] = data.get("accounts") or []
     render_ai_access(data.get("allowed") or [])
+    render_pw_reset_requests(data.get("resetRequests") or [])
     _set_ai_admin_status("")
     _update_macrodoc_admin_ui()
 
@@ -10431,7 +10638,8 @@ async def _run_ai_eval():
         url = "%s?account=%s" % (base, js.encodeURIComponent(acct))
         headers = {"Content-Type": "application/json", "X-Fav-Key": key}
         body = json.dumps({"company": company})
-        resp = await pyfetch(url, method="POST", headers=headers, body=body)
+        resp = await pyfetch(url, method="POST", headers=headers, body=body,
+                             timeout_ms=90000)
         data = json.loads(await resp.string())
     except Exception as exc:
         box.innerHTML = ('<div class="ai-error">요청에 실패했습니다: %s</div>'
@@ -11770,6 +11978,7 @@ async def on_fav_add(event):
 @when("click", "#favOpenBtn")
 def on_fav_open(event):
     document.querySelector("#fav-pop").classList.add("open")
+    asyncio.ensure_future(_refresh_fav_prices())
 
 
 @when("click", "#fav-pop")
@@ -11868,7 +12077,11 @@ async def on_fav_login(event):
     data, err, status = await _fav_api("GET", acct, key)
     if status == 403:
         _set_fav_login_status("")
-        window.alert("계정 ID 또는 공유 키가 일치하지 않습니다.")
+        window.alert(err or "계정 ID 또는 공유 키가 일치하지 않습니다.")
+        return
+    if status == 423:
+        _set_fav_login_status("")
+        window.alert(err)
         return
     if err:
         _set_fav_login_status("")
@@ -11922,24 +12135,21 @@ async def on_fav_register(event):
 async def on_fav_reset_password(event):
     acct = document.querySelector("#favAccount").value.strip()
     if not acct:
-        window.alert("비밀번호를 리셋할 계정 ID를 입력하세요.")
+        window.alert("비밀번호 리셋을 요청할 계정 ID를 입력하세요.")
         return
-    if not window.confirm(
-            "'%s' 계정의 공유 키를 '0000'으로 초기화합니다.\n"
-            "초기화 후 공유 키 0000 으로 로그인한 뒤 비밀번호를 변경하세요.\n"
-            "계속할까요?" % acct):
+    _set_fav_login_status("리셋 요청 중...")
+    ok, err, status = await fav_reset_password(acct)
+    _set_fav_login_status("")
+    # 관리자 계정(403)은 아무 동작도 하지 않는다.
+    if status == 403:
         return
-    _set_fav_login_status("비밀번호 리셋 중...")
-    ok, err = await fav_reset_password(acct)
     if not ok:
-        _set_fav_login_status("")
-        window.alert("비밀번호 리셋 실패: %s" % err)
+        window.alert("비밀번호 리셋 요청 실패: %s" % err)
         return
-    document.querySelector("#favKey").value = "0000"
-    _set_fav_login_status("비밀번호가 0000 으로 초기화됨 · 로그인하세요")
     window.alert(
-        "'%s' 계정의 공유 키가 0000 으로 초기화되었습니다.\n"
-        "이제 0000 으로 로그인한 뒤 비밀번호를 변경하세요." % acct)
+        "'%s' 계정의 비밀번호 리셋을 관리자에게 요청했습니다.\n"
+        "관리자가 승인하면 공유 키가 0000 으로 초기화됩니다.\n"
+        "초기화 후 0000 으로 로그인해 비밀번호를 변경하세요." % acct)
 
 
 @when("click", "#favChangePwBtn")

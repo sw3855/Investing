@@ -49,7 +49,7 @@
  *    같은 계정 ID + 키를 입력하면 어느 기기에서든 같은 목록을 공유한다.
  *    GET    https://<worker>/favorites?account=<id>            → {favorites:[...], folders:[...], gurus:[...], exists}
  *    POST   https://<worker>/favorites?account=<id>&register=1  → 계정 등록(중복 시 409)
- *    POST   https://<worker>/favorites?account=<id>&pw_op=reset  → 키 검증 없이 공유 키를 "0000"으로 초기화(미등록 시 404)
+ *    POST   https://<worker>/favorites?account=<id>&pw_op=reset  → 관리자에게 비밀번호 리셋 요청 등록(미등록 404, 관리자 계정 403)
  *    POST   https://<worker>/favorites?account=<id>&pw_op=change → 본문 {newKey} 로그인 상태에서 공유 키 변경
  *    POST   https://<worker>/favorites?account=<id>&folder_op=create → 본문 {folder} 빈 폴더 생성
  *    POST   https://<worker>/favorites?account=<id>&folder_op=rename → 본문 {folder,newFolder} 폴더 이름 변경
@@ -93,9 +93,11 @@
  *      관리자를 바꾸려면 KV 의 'ai_admin' 값을 수정한다.
  *    - 허용 계정 목록은 FAVORITES KV 의 'ai_access' 키(JSON 배열)에 저장된다.
  *    - 관리자 전용 관리 API:
- *        GET    /ai-access?account=<admin>            → { admin, allowed:[...] }
+ *        GET    /ai-access?account=<admin>            → { admin, allowed:[...], accounts:[...], resetRequests:[{account,at}] }
  *        POST   /ai-access?account=<admin>  본문 {target} → 계정 접근 허가
+ *        POST   /ai-access?account=<admin>&op=reset_pw 본문 {target} → 해당 계정 공유 키를 "0000"으로 리셋
  *        DELETE /ai-access?account=<admin>&target=..   → 계정 접근 취소
+ *        DELETE /ai-access?account=<admin>&reset_req=.. → 비밀번호 리셋 요청 거절
  *
  * ── 거시경제 자료실 (/macro-doc) ────────────────────────────
  *  관리자(ai_admin) 계정만 HTML 리포트를 등록/삭제할 수 있고, 열람은 누구나 가능하다.
@@ -104,6 +106,10 @@
  *    GET    /macro-doc?id=<id>                 → { id, title, html, updatedAt }
  *    POST   /macro-doc?account=<admin>  본문 {title,html} → 등록/갱신(같은 제목=갱신)
  *    DELETE /macro-doc?account=<admin>&id=<id> → 자료 삭제
+ *
+ *  시세 일괄 조회(헤더 지수·즐겨찾기 가격):
+ *    GET    /quotes?symbols=NASDAQ:AAPL,KRX:005930  → { quotes:{SYMBOL:{close,change,change_abs}}, at }
+ *    (최대 300개, 대문자로 정규화. 없는 심볼은 결과에서 빠짐)
  *
  *  미국 시가총액 순위:
  *    GET    /mcap-top?n=20                     → { data:[{s, d:[...]}], columns:[...] }
@@ -235,6 +241,11 @@ const SESSION_TTL_MS = 24 * 3600 * 1000;
 const AI_ADMIN_KEY = "ai_admin";
 const AI_ADMIN_DEFAULT = "이성원";
 const AI_ACCESS_KEY = "ai_access";
+// 비밀번호 리셋 요청 목록(JSON 배열 [{account, at}]). 관리자가 승인해야 리셋된다.
+const PW_RESET_REQ_KEY = "pw_reset_requests";
+const PW_RESET_REQ_MAX = 200;
+const PW_RESET_DEFAULT = "0000";
+const PW_FAIL_MAX = 10;
 // 거시경제 자료실: 관리자가 등록한 HTML 리포트를 FAVORITES KV 에 저장한다.
 //  - macrodoc_index : 자료 목록(JSON 배열 [{id,title,updatedAt}])
 //  - macrodoc:<id>  : 개별 자료({id,title,html,updatedAt})
@@ -305,6 +316,11 @@ export default {
     // ── Gemini AI 기업 평가 ──
     if (reqUrl.pathname === "/gemini") {
       return handleGemini(request, env, reqUrl);
+    }
+
+    // ── 시세 일괄 조회 (TradingView 스캐너 global/scan) ──
+    if (reqUrl.pathname === "/quotes") {
+      return handleQuotes(request, ctx, reqUrl);
     }
 
     // ── 미국 시가총액 상위 종목 (TradingView 스캐너, 고정 쿼리) ──
@@ -439,6 +455,16 @@ const MCAP_HIST_CACHE_TTL = 600; // 초
 // 같은 아이솔레이트에서 이미 기록/확인한 주("YYYY-MM-DD:final")
 let _mcapSnapChecked = "";
 
+const TV_SCAN_HEADERS = {
+  "Content-Type": "application/json",
+  Accept: "application/json",
+  Origin: "https://www.tradingview.com",
+  Referer: "https://www.tradingview.com/",
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+    "(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+};
+
 // 스캐너 /scan 은 POST 전용이라 범용 프록시 대신 고정 본문만 보내는 엔드포인트로 둔다.
 async function fetchMcapScan(n) {
   const body = {
@@ -454,20 +480,65 @@ async function fetchMcapScan(n) {
   };
   const upstream = await fetch("https://scanner.tradingview.com/america/scan", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      Origin: "https://www.tradingview.com",
-      Referer: "https://www.tradingview.com/",
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-        "(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-    },
+    headers: TV_SCAN_HEADERS,
     body: JSON.stringify(body),
   });
   if (!upstream.ok) throw new Error("upstream HTTP " + upstream.status);
   const data = await upstream.json();
   return Array.isArray(data.data) ? data.data : [];
+}
+
+// ===================== 시세 일괄 조회 (/quotes) =====================
+
+const QUOTE_COLUMNS = ["close", "change", "change_abs"];
+const QUOTE_MAX_SYMBOLS = 300;
+const QUOTE_CACHE_TTL = 20; // 초
+const QUOTE_SYMBOL_RE = /^[A-Z0-9_.!&-]{1,32}:[A-Z0-9_.!&\/-]{1,48}$/;
+
+async function handleQuotes(request, ctx, reqUrl) {
+  if (request.method !== "GET") {
+    return jsonResponse({ error: "method not allowed" }, 405);
+  }
+  // 스캐너는 소문자 심볼을 찾지 못하므로 대문자로 정규화한다.
+  const symbols = [...new Set(
+    (reqUrl.searchParams.get("symbols") || "")
+      .split(",")
+      .map((s) => s.trim().toUpperCase())
+      .filter((s) => QUOTE_SYMBOL_RE.test(s))
+  )].slice(0, QUOTE_MAX_SYMBOLS).sort();
+  if (!symbols.length) return jsonResponse({ quotes: {}, at: Date.now() });
+
+  const digest = await crypto.subtle.digest(
+    "SHA-256", new TextEncoder().encode(symbols.join(",")));
+  const hex = [...new Uint8Array(digest)]
+    .map((b) => b.toString(16).padStart(2, "0")).join("");
+  const cache = caches.default;
+  const cacheKey = new Request("https://cache.local/quotes?h=" + hex);
+  const hit = await cache.match(cacheKey);
+  if (hit) return hit;
+
+  let data;
+  try {
+    const upstream = await fetch("https://scanner.tradingview.com/global/scan", {
+      method: "POST",
+      headers: TV_SCAN_HEADERS,
+      body: JSON.stringify({ symbols: { tickers: symbols }, columns: QUOTE_COLUMNS }),
+    });
+    if (!upstream.ok) throw new Error("upstream HTTP " + upstream.status);
+    data = await upstream.json();
+  } catch (err) {
+    return jsonResponse({ error: "upstream fetch failed: " + err }, 502);
+  }
+  const quotes = {};
+  for (const it of Array.isArray(data && data.data) ? data.data : []) {
+    const d = (it && it.d) || [];
+    if (!it.s || typeof d[0] !== "number") continue;
+    quotes[it.s] = { close: d[0], change: d[1] ?? null, change_abs: d[2] ?? null };
+  }
+  const resp = jsonResponse({ quotes, at: Date.now() });
+  resp.headers.set("Cache-Control", "public, max-age=" + QUOTE_CACHE_TTL);
+  if (ctx) ctx.waitUntil(cache.put(cacheKey, resp.clone()));
+  return resp;
 }
 
 // 스냅샷이 속한 주의 금요일 날짜와, 금요일 장마감(21:00 UTC) 이후인지(확정) 여부
@@ -645,6 +716,20 @@ async function saveAiAccess(env, list) {
   await env.FAVORITES.put(AI_ACCESS_KEY, JSON.stringify(list));
 }
 
+async function loadResetRequests(env) {
+  try {
+    const arr = JSON.parse((await env.FAVORITES.get(PW_RESET_REQ_KEY)) || "[]");
+    if (Array.isArray(arr)) return arr.filter((r) => r && typeof r.account === "string");
+  } catch {
+    // 무시하고 빈 목록 반환
+  }
+  return [];
+}
+
+async function saveResetRequests(env, list) {
+  await env.FAVORITES.put(PW_RESET_REQ_KEY, JSON.stringify(list));
+}
+
 // 등록된 모든 계정 ID 목록을 반환한다. (KV 의 'fav:<account>' 키를 나열)
 // 관리자 화면에서 접근 허가 대상 계정을 검색·선택할 때 사용한다.
 async function listAllAccounts(env) {
@@ -715,12 +800,28 @@ async function verifySessionToken(env, account, keyHash, token) {
   return timingSafeEqual(want, sig);
 }
 
-// authKey 는 공유 키 원문 또는 세션 토큰.
+// 관리자는 리셋 수단이 없으므로 잠그지 않는다.
+async function isAccountLocked(env, account, record) {
+  if (!record || (record.failCount | 0) < PW_FAIL_MAX) return false;
+  return account !== (await getAdminAccount(env));
+}
+
+// authKey 는 공유 키 원문 또는 세션 토큰. 일반 계정은 원문 키 오입력 횟수를 기록하고 PW_FAIL_MAX 회에서 잠근다.
 async function credentialMatches(env, account, record, authKey) {
   if (!record || !record.keyHash) return false;
+  if (await isAccountLocked(env, account, record)) return false;
   if (await verifySessionToken(env, account, record.keyHash, authKey)) return true;
   const authHash = await sha256Hex(FAV_SALT + ":" + authKey);
-  return timingSafeEqual(record.keyHash, authHash);
+  const ok = timingSafeEqual(record.keyHash, authHash);
+  const isToken = authKey.startsWith(SESSION_TOKEN_PREFIX);
+  if (ok && record.failCount) {
+    delete record.failCount;
+    await env.FAVORITES.put("fav:" + account, JSON.stringify(record));
+  } else if (!ok && !isToken && account !== (await getAdminAccount(env))) {
+    record.failCount = (record.failCount | 0) + 1;
+    await env.FAVORITES.put("fav:" + account, JSON.stringify(record));
+  }
+  return ok;
 }
 
 // AI 평가 사용 권한: 관리자이거나 허용 목록에 포함되면 true.
@@ -755,7 +856,40 @@ async function handleAiAccess(request, env, reqUrl) {
       admin,
       allowed: await loadAiAccess(env),
       accounts: await listAllAccounts(env),
+      resetRequests: await loadResetRequests(env),
     });
+  }
+
+  if (request.method === "POST" && reqUrl.searchParams.get("op") === "reset_pw") {
+    let payload;
+    try {
+      payload = await request.json();
+    } catch {
+      return jsonResponse({ error: "invalid json body" }, 400);
+    }
+    const target = cleanStr(payload && payload.target);
+    if (!isValidAccount(target)) {
+      return jsonResponse({ error: "리셋할 계정 ID가 올바르지 않습니다." }, 400);
+    }
+    if (target === admin) {
+      return jsonResponse({ error: "관리자 계정은 리셋할 수 없습니다." }, 403);
+    }
+    const kvKey = "fav:" + target;
+    let targetRecord = null;
+    try {
+      targetRecord = JSON.parse((await env.FAVORITES.get(kvKey)) || "null");
+    } catch {
+      targetRecord = null;
+    }
+    const requests = (await loadResetRequests(env)).filter((r) => r.account !== target);
+    await saveResetRequests(env, requests);
+    if (!targetRecord) {
+      return jsonResponse({ error: "등록되지 않은 계정입니다.", resetRequests: requests }, 404);
+    }
+    targetRecord.keyHash = await sha256Hex(FAV_SALT + ":" + PW_RESET_DEFAULT);
+    delete targetRecord.failCount;
+    await env.FAVORITES.put(kvKey, JSON.stringify(targetRecord));
+    return jsonResponse({ reset: true, resetRequests: requests });
   }
 
   if (request.method === "POST") {
@@ -790,6 +924,12 @@ async function handleAiAccess(request, env, reqUrl) {
   }
 
   if (request.method === "DELETE") {
+    const resetReq = reqUrl.searchParams.get("reset_req");
+    if (resetReq !== null) {
+      const requests = (await loadResetRequests(env)).filter((r) => r.account !== resetReq);
+      await saveResetRequests(env, requests);
+      return jsonResponse({ resetRequests: requests });
+    }
     const target = cleanStr(reqUrl.searchParams.get("target"));
     let list = await loadAiAccess(env);
     list = list.filter((a) => a !== target);
@@ -1171,23 +1311,25 @@ async function handleFavorites(request, env, reqUrl) {
 
   const kvKey = "fav:" + account;
 
-  // 비밀번호 리셋: 키 검증 없이 계정 ID만으로 공유 키를 "0000"으로 초기화한다.
-  // (POST ?pw_op=reset) — 등록된 계정에서만 동작하고, 없으면 404.
-  // 키를 모를 때 복구용이므로 X-Fav-Key 검증 이전에 처리한다.
+  // 비밀번호 리셋 요청: 키를 모를 때 쓰므로 키 검증 없이 요청만 기록한다.
+  // 실제 리셋은 관리자가 /ai-access?op=reset_pw 로 승인해야 일어난다.
   if (request.method === "POST" && reqUrl.searchParams.get("pw_op") === "reset") {
-    let resetRecord = null;
-    try {
-      const raw = await env.FAVORITES.get(kvKey);
-      if (raw) resetRecord = JSON.parse(raw);
-    } catch {
-      resetRecord = null;
+    if (account === (await getAdminAccount(env))) {
+      return jsonResponse({ error: "관리자 계정은 비밀번호 리셋을 요청할 수 없습니다." }, 403);
     }
-    if (!resetRecord) {
+    const exists = await env.FAVORITES.get(kvKey);
+    if (!exists) {
       return jsonResponse({ error: "등록되지 않은 계정입니다." }, 404);
     }
-    resetRecord.keyHash = await sha256Hex(FAV_SALT + ":" + "0000");
-    await env.FAVORITES.put(kvKey, JSON.stringify(resetRecord));
-    return jsonResponse({ reset: true });
+    const requests = await loadResetRequests(env);
+    if (!requests.some((r) => r.account === account)) {
+      if (requests.length >= PW_RESET_REQ_MAX) {
+        return jsonResponse({ error: "리셋 요청이 너무 많습니다. 잠시 후 다시 시도하세요." }, 429);
+      }
+      requests.push({ account, at: Date.now() });
+      await saveResetRequests(env, requests);
+    }
+    return jsonResponse({ requested: true });
   }
 
   const authKey = request.headers.get("X-Fav-Key") || "";
@@ -1205,8 +1347,26 @@ async function handleFavorites(request, env, reqUrl) {
   }
 
   // 이미 존재하는 계정이면 키(또는 세션 토큰) 검증
-  if (record && record.keyHash && !(await credentialMatches(env, account, record, authKey))) {
-    return jsonResponse({ error: "계정 키가 일치하지 않습니다." }, 403);
+  if (record && record.keyHash) {
+    if (await isAccountLocked(env, account, record)) {
+      return jsonResponse(
+        { error: `비밀번호를 ${PW_FAIL_MAX}회 틀려 계정이 잠겼습니다. 비밀번호 리셋을 요청하세요.`, locked: true },
+        423
+      );
+    }
+    if (!(await credentialMatches(env, account, record, authKey))) {
+      if (await isAccountLocked(env, account, record)) {
+        return jsonResponse(
+          { error: `비밀번호를 ${PW_FAIL_MAX}회 틀려 계정이 잠겼습니다. 비밀번호 리셋을 요청하세요.`, locked: true },
+          423
+        );
+      }
+      const left = record.failCount ? PW_FAIL_MAX - record.failCount : 0;
+      return jsonResponse(
+        { error: left > 0 ? `계정 키가 일치하지 않습니다. (남은 시도 ${left}회)` : "계정 키가 일치하지 않습니다." },
+        403
+      );
+    }
   }
 
   const favorites =
