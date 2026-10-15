@@ -365,6 +365,8 @@
   .trend-tools .trend-btn { height:26px; padding:0 10px; font-size:12px; }
   .trend-tools .trend-btn.on { background:var(--pri); color:#fff; border-color:var(--pri); }
   .trend-tools .trend-hint { font-size:12px; color:var(--mut); }
+  :where(#compare-section, #idxchart-result, #rrg-result, #multpl-result,
+         #liq-result, #macro-chart, #result) svg { touch-action:pan-y; }
   .chart-svg.candle-svg { touch-action:pan-y; user-select:none; -webkit-user-select:none; }
   .chart-svg.candle-svg.trend-on { cursor:crosshair; touch-action:none;
     user-select:none; -webkit-user-select:none; }
@@ -12569,6 +12571,45 @@ def _on_header_visibility(*_args):
 _FX_TIMER = create_proxy(_refresh_header)
 window.setInterval(_FX_TIMER, 60000)
 document.addEventListener("visibilitychange", create_proxy(_on_header_visibility))
+</script>
+<script>
+// 터치 기기에서는 hover 가 없으므로, 차트 위 터치/가로 드래그를 mousemove 로, 차트 밖 터치를 mouseleave 로 바꿔 보낸다.
+(function () {
+  const HOSTS = "#compare-section, #idxchart-result, #rrg-result, #multpl-result, #liq-result, #macro-chart, #result";
+  let pending = null;
+  let lastTouch = 0;
+  const relay = (ev) => {
+    lastTouch = Date.now();
+    const t = ev.touches[0];
+    if (!t) return;
+    const svg = ev.target.closest && ev.target.closest("svg");
+    if (!svg || !svg.closest(HOSTS) || svg.classList.contains("trend-on")) return;
+    const first = !pending;
+    pending = { x: t.clientX, y: t.clientY };
+    if (!first) return;
+    requestAnimationFrame(() => {
+      const p = pending;
+      pending = null;
+      const el = document.elementFromPoint(p.x, p.y) || svg;
+      el.dispatchEvent(new MouseEvent("mousemove", { clientX: p.x, clientY: p.y, bubbles: true }));
+    });
+  };
+  document.addEventListener("touchstart", (ev) => {
+    const inChart = ev.target.closest && ev.target.closest("svg") && ev.target.closest(HOSTS);
+    if (!inChart) {
+      document.querySelectorAll(HOSTS).forEach((h) => h.dispatchEvent(new MouseEvent("mouseleave")));
+      return;
+    }
+    relay(ev);
+  }, { passive: true });
+  document.addEventListener("touchmove", relay, { passive: true });
+  // 브라우저가 탭 후 자동으로 보내는 mousemove 도 추세선 모드에서는 막는다.
+  document.addEventListener("mousemove", (ev) => {
+    if (!ev.isTrusted || Date.now() - lastTouch > 1000) return;
+    const svg = ev.target.closest && ev.target.closest("svg");
+    if (svg && svg.classList.contains("trend-on")) ev.stopPropagation();
+  }, true);
+})();
 </script>
 </body>
 </html>
