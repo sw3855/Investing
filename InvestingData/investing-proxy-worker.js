@@ -44,6 +44,8 @@
  *
  *  즐겨찾기 API (계정 ID + 공유 키 인증):
  *    계정 ID 는 쿼리(?account=), 공유 키는 요청 헤더 X-Fav-Key 로 전달한다.
+ *    X-Fav-Key 에는 공유 키 대신 GET/등록/키변경 응답의 token(세션 토큰)을 넣어도 된다.
+ *    토큰 서명 비밀값: 환경변수 SESSION_SECRET (없으면 FAV_SALT 사용).
  *    같은 계정 ID + 키를 입력하면 어느 기기에서든 같은 목록을 공유한다.
  *    GET    https://<worker>/favorites?account=<id>            → {favorites:[...], folders:[...], gurus:[...], exists}
  *    POST   https://<worker>/favorites?account=<id>&register=1  → 계정 등록(중복 시 409)
@@ -223,6 +225,9 @@ const FAV_MAX_LEN = 200;
 const FAV_MAX_FOLDERS = 100;
 // 공유 키 해시에 사용하는 고정 솔트 (레인보우 테이블 완화용)
 const FAV_SALT = "investing-fav-v1";
+// 세션 토큰: "~tok.<만료ms>.<HMAC>". 서명에 keyHash 를 포함해 키 변경/리셋 시 자동 무효화된다.
+const SESSION_TOKEN_PREFIX = "~tok.";
+const SESSION_TTL_MS = 24 * 3600 * 1000;
 
 // AI 평가 접근 제어: 관리자 계정·허용 계정 목록을 FAVORITES KV 에 저장한다.
 //  - ai_admin : 관리자 계정 ID (없으면 아래 기본값으로 최초 1회 시드)
@@ -678,10 +683,44 @@ async function verifyCredentials(env, account, authKey) {
   } catch {
     record = null;
   }
-  if (!record || !record.keyHash) return null;
-  const authHash = await sha256Hex(FAV_SALT + ":" + authKey);
-  if (!timingSafeEqual(record.keyHash, authHash)) return null;
+  if (!(await credentialMatches(env, account, record, authKey))) return null;
   return record;
+}
+
+async function hmacHex(secret, msg) {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, enc.encode(msg));
+  return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function sessionSecret(env) {
+  return (env && env.SESSION_SECRET) || FAV_SALT;
+}
+
+async function makeSessionToken(env, account, keyHash) {
+  const exp = Date.now() + SESSION_TTL_MS;
+  const sig = await hmacHex(sessionSecret(env), `${account}:${exp}:${keyHash}`);
+  return `${SESSION_TOKEN_PREFIX}${exp}.${sig}`;
+}
+
+async function verifySessionToken(env, account, keyHash, token) {
+  if (typeof token !== "string" || !token.startsWith(SESSION_TOKEN_PREFIX)) return false;
+  const [expStr, sig] = token.slice(SESSION_TOKEN_PREFIX.length).split(".");
+  const exp = Number(expStr);
+  if (!Number.isFinite(exp) || exp < Date.now() || !sig) return false;
+  const want = await hmacHex(sessionSecret(env), `${account}:${exp}:${keyHash}`);
+  return timingSafeEqual(want, sig);
+}
+
+// authKey 는 공유 키 원문 또는 세션 토큰.
+async function credentialMatches(env, account, record, authKey) {
+  if (!record || !record.keyHash) return false;
+  if (await verifySessionToken(env, account, record.keyHash, authKey)) return true;
+  const authHash = await sha256Hex(FAV_SALT + ":" + authKey);
+  return timingSafeEqual(record.keyHash, authHash);
 }
 
 // AI 평가 사용 권한: 관리자이거나 허용 목록에 포함되면 true.
@@ -1165,10 +1204,8 @@ async function handleFavorites(request, env, reqUrl) {
     record = null;
   }
 
-  const authHash = await sha256Hex(FAV_SALT + ":" + authKey);
-
-  // 이미 존재하는 계정이면 키 검증
-  if (record && record.keyHash && !timingSafeEqual(record.keyHash, authHash)) {
+  // 이미 존재하는 계정이면 키(또는 세션 토큰) 검증
+  if (record && record.keyHash && !(await credentialMatches(env, account, record, authKey))) {
     return jsonResponse({ error: "계정 키가 일치하지 않습니다." }, 403);
   }
 
@@ -1189,11 +1226,12 @@ async function handleFavorites(request, env, reqUrl) {
   const save = (over = {}) =>
     env.FAVORITES.put(
       kvKey,
-      JSON.stringify({ keyHash: authHash, favorites, folders, gurus, prefs, trends, ...over })
+      JSON.stringify({ keyHash: record.keyHash, favorites, folders, gurus, prefs, trends, ...over })
     );
 
   if (request.method === "GET") {
-    return jsonResponse({ favorites, folders, gurus, prefs, trends, exists: !!record });
+    const token = record ? await makeSessionToken(env, account, record.keyHash) : undefined;
+    return jsonResponse({ favorites, folders, gurus, prefs, trends, exists: !!record, token });
   }
 
   if (request.method === "POST") {
@@ -1202,11 +1240,16 @@ async function handleFavorites(request, env, reqUrl) {
       if (record) {
         return jsonResponse({ error: "이미 존재하는 계정 ID입니다." }, 409);
       }
+      if (authKey.startsWith(SESSION_TOKEN_PREFIX)) {
+        return jsonResponse({ error: "사용할 수 없는 공유 키 형식입니다." }, 400);
+      }
+      const keyHash = await sha256Hex(FAV_SALT + ":" + authKey);
       await env.FAVORITES.put(
         kvKey,
-        JSON.stringify({ keyHash: authHash, favorites: [], folders: [], gurus: [] })
+        JSON.stringify({ keyHash, favorites: [], folders: [], gurus: [] })
       );
-      return jsonResponse({ favorites: [], folders: [], gurus: [], registered: true });
+      const token = await makeSessionToken(env, account, keyHash);
+      return jsonResponse({ favorites: [], folders: [], gurus: [], registered: true, token });
     }
 
     // 이하 작업은 등록된 계정에서만 가능하다.
@@ -1227,9 +1270,13 @@ async function handleFavorites(request, env, reqUrl) {
       if (newKey.length < 4 || newKey.length > FAV_MAX_LEN) {
         return jsonResponse({ error: "새 공유 키는 4자 이상이어야 합니다." }, 400);
       }
+      if (newKey.startsWith(SESSION_TOKEN_PREFIX)) {
+        return jsonResponse({ error: "사용할 수 없는 공유 키 형식입니다." }, 400);
+      }
       const newHash = await sha256Hex(FAV_SALT + ":" + newKey);
       await save({ keyHash: newHash });
-      return jsonResponse({ favorites, folders, changed: true });
+      const token = await makeSessionToken(env, account, newHash);
+      return jsonResponse({ favorites, folders, changed: true, token });
     }
 
     // 사용자 설정 저장: ?pref_op=set, 본문 {earncal_folder}

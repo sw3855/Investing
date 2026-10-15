@@ -759,7 +759,7 @@
 <header>
   <h1>Investing Data</h1>
   <div class="hdr-acct">
-    <button id="acctBtn" class="acct-btn" type="button" title="계정"
+    <button id="acctBtn" class="acct-btn" type="button" title="계정" aria-label="계정"
             aria-haspopup="true" aria-expanded="false">
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <path fill="currentColor" d="M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5Zm0 2c-4 0-8 2-8 5v1h16v-1c0-3-4-5-8-5Z"/>
@@ -795,7 +795,7 @@
   <div class="modal-pop-box">
     <div class="modal-pop-head">
       <h4>AI 평가 접근 관리 (관리자 전용)</h4>
-      <button type="button" class="modal-pop-close" title="닫기">×</button>
+      <button type="button" class="modal-pop-close" title="닫기" aria-label="닫기">×</button>
     </div>
     <div class="row">
       <span class="ai-grant-wrap">
@@ -886,7 +886,7 @@
       <div class="modal-pop-box">
       <div class="modal-pop-head">
         <h4>⭐ 내 즐겨찾기</h4>
-        <button type="button" class="modal-pop-close" title="닫기">×</button>
+        <button type="button" class="modal-pop-close" title="닫기" aria-label="닫기">×</button>
       </div>
       <div class="fav-head">
         <label>폴더:
@@ -1032,9 +1032,9 @@
     <fieldset>
       <legend>즐겨찾기 종목 실적 발표 달력</legend>
       <div class="row earncal-nav">
-        <button type="button" id="earnCalPrev" title="이전 달">◀</button>
+        <button type="button" id="earnCalPrev" title="이전 달" aria-label="이전 달">◀</button>
         <span id="earnCalTitle" class="earncal-title"></span>
-        <button type="button" id="earnCalNext" title="다음 달">▶</button>
+        <button type="button" id="earnCalNext" title="다음 달" aria-label="다음 달">▶</button>
         <button type="button" id="earnCalUpBtn">다가오는 실적 발표</button>
         <label>폴더 강조:
           <select id="earnCalFolder" style="width:150px">
@@ -1049,7 +1049,7 @@
       <div class="modal-pop-box">
         <div class="modal-pop-head">
           <h4>다가오는 실적 발표</h4>
-          <button type="button" class="modal-pop-close" title="닫기">×</button>
+          <button type="button" class="modal-pop-close" title="닫기" aria-label="닫기">×</button>
         </div>
         <div id="earncal-up-body"></div>
       </div>
@@ -2180,7 +2180,16 @@ def fmt_date(ts):
 
 def _esc(s):
     s = "" if s is None else str(s)
-    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return (s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            .replace('"', "&quot;").replace("'", "&#39;"))
+
+
+def _warn(where, exc):
+    """무시하고 진행하는 예외를 브라우저 콘솔에 남긴다."""
+    try:
+        js.console.warn("[%s] %s: %s" % (where, type(exc).__name__, exc))
+    except Exception:
+        pass
 
 
 def _kv(k, v, cls=""):
@@ -2247,7 +2256,8 @@ async def _ensure_erp():
     try:
         html = await _fetch_multpl_text("s-p-500-earnings-yield", "by-month")
         rows = _parse_multpl(html)
-    except Exception:
+    except Exception as exc:
+        _warn("erp", exc)
         return
     if not rows:
         return
@@ -4170,16 +4180,6 @@ def render_macro(rows, mode=None):
     _bind_macro_rows()
 
 
-def _q_label(d):
-    """FRED 날짜(YYYY-MM-DD)를 '24 Q1 형식 분기 라벨로 변환."""
-    try:
-        y, m, _ = d.split("-")
-        q = (int(m) - 1) // 3 + 1
-        return "'%s Q%d" % (y[2:], q)
-    except (ValueError, AttributeError):
-        return d or ""
-
-
 # 차트 주기(월/분기/연도) 메타. fred=FRED frequency 코드, limit=조회 개수
 FREQ_META = {
     "m": {"fred": "m", "limit": 36, "label": "월"},
@@ -4849,10 +4849,6 @@ def render_liquidity(rows):
     _render_liq_chart()
     _bind(document.querySelector("#liq-sp500"), "change",
           lambda evt: _render_liq_chart())
-
-
-def _set_liq_status(msg):
-    _apply_status("#liq-status", msg)
 
 
 # ===================== 원/달러 환율 (헤더 상시 표시) =====================
@@ -5767,7 +5763,8 @@ async def _recov_volume_aligned(rows, vol_yf, rng, interval):
     cache_key = "%s|%s|%s" % (vol_yf, rng, interval)
     try:
         await _fetch_index_history(vol_yf, rng, interval)
-    except Exception:
+    except Exception as exc:
+        _warn("recov-volume", exc)
         return None
     vmap = _YF_VOLUME_CACHE.get(cache_key)
     if not vmap:
@@ -5939,7 +5936,7 @@ def _recov_help_popup():
     """회복 점수·조정 압력 계산 방식 설명 팝업 HTML."""
     return (
         '<div class="recov-help-pop" style="display:none">'
-        '<button type="button" class="recov-help-close" title="닫기">×</button>'
+        '<button type="button" class="recov-help-close" title="닫기" aria-label="닫기">×</button>'
         '<h4>회복 점수 · 조정 압력 계산 방식</h4>'
         '<p><b>입력</b><br>· 회복 점수 = 상대강도(지수 ÷ 벤치마크)<br>'
         '· 조정 압력 = 절대가격(종가)</p>'
@@ -6308,7 +6305,8 @@ async def _run_idxchart():
         fetch_rng = _PAN_FETCH_RANGE.get(rng, rng)
         try:
             rows = await _fetch_index_history(yf_sym, fetch_rng, interval)
-        except Exception:
+        except Exception as exc:
+            _warn("idxchart-pan", exc)
             fetch_rng = rng
             rows = await _fetch_index_history(yf_sym, rng, interval)
         bench_closes = None
@@ -6319,7 +6317,8 @@ async def _run_idxchart():
                 bench_rows = await _fetch_index_history(
                     bench_yf, fetch_rng, interval)
                 bench_closes = _align_bench_closes(rows, bench_rows)
-            except Exception:
+            except Exception as exc:
+                _warn("idxchart-bench", exc)
                 bench_closes = None
             vol_aligned = await _recov_volume_aligned(
                 rows, _RECOV_PROXY_ETF.get(sym), fetch_rng, interval)
@@ -6357,56 +6356,11 @@ _RRG_SECTORS = [
 _RRG_STATE = {"range": "1mo"}
 _RRG_LOADED = {"done": False, "at": 0.0}
 
-# 사용자가 직접 추가한 커스텀 종목/폴더(브라우저 localStorage 에 저장).
+# 사용자가 직접 추가한 커스텀 종목/폴더(새로고침 시 초기화).
 _RRG_CUSTOM = {"list": []}   # [{"ticker","name","color"}]
 _RRG_FOLDERS = {"list": []}  # ["폴더명", ...] — 즐겨찾기 폴더를 함께 표시
 _RRG_CUSTOM_PALETTE = ["#2962ff", "#e8663d", "#2e9e5b", "#b07aa1",
                        "#f2b100", "#00a6d6", "#d6336c", "#7048e8"]
-_RRG_CUSTOM_KEY = "rrg_custom_tickers"
-_RRG_FOLDERS_KEY = "rrg_folders"
-
-
-def _rrg_load_custom():
-    """localStorage 에서 커스텀 종목 목록을 읽어온다(실패 시 빈 목록)."""
-    try:
-        raw = window.localStorage.getItem(_RRG_CUSTOM_KEY)
-        data = json.loads(raw) if raw else []
-    except Exception:
-        data = []
-    out = []
-    if isinstance(data, list):
-        for d in data:
-            if isinstance(d, dict) and d.get("ticker"):
-                out.append({"ticker": str(d["ticker"]).upper(),
-                            "name": d.get("name") or str(d["ticker"]).upper(),
-                            "color": d.get("color") or _RRG_CUSTOM_PALETTE[0]})
-    _RRG_CUSTOM["list"] = out
-    return out
-
-
-def _rrg_save_custom():
-    try:
-        window.localStorage.setItem(_RRG_CUSTOM_KEY, json.dumps(_RRG_CUSTOM["list"]))
-    except Exception:
-        pass
-
-
-def _rrg_load_folders():
-    """localStorage 에서 함께 표시할 즐겨찾기 폴더 목록을 읽어온다."""
-    try:
-        raw = window.localStorage.getItem(_RRG_FOLDERS_KEY)
-        data = json.loads(raw) if raw else []
-    except Exception:
-        data = []
-    _RRG_FOLDERS["list"] = [str(x) for x in data if x] if isinstance(data, list) else []
-    return _RRG_FOLDERS["list"]
-
-
-def _rrg_save_folders():
-    try:
-        window.localStorage.setItem(_RRG_FOLDERS_KEY, json.dumps(_RRG_FOLDERS["list"]))
-    except Exception:
-        pass
 
 
 def _rrg_all_sectors():
@@ -6475,13 +6429,13 @@ def render_rrg_chips():
         chips.append(
             '<span class="rrg-custom-chip">'
             '<i style="background:%s"></i>%s'
-            '<button class="rrg-custom-del" data-ticker="%s" title="삭제">×</button>'
-            '</span>' % (c["color"], _esc(c["ticker"]), _esc(c["ticker"])))
+            '<button type="button" class="rrg-custom-del" data-ticker="%s" title="삭제" aria-label="%s 삭제">×</button>'
+            '</span>' % (c["color"], _esc(c["ticker"]), _esc(c["ticker"]), _esc(c["ticker"])))
     for name in _RRG_FOLDERS["list"]:
         chips.append(
             '<span class="rrg-custom-chip rrg-folder-chip">📁 %s'
-            '<button class="rrg-folder-del" data-folder="%s" title="삭제">×</button>'
-            '</span>' % (_esc(name), _esc(name)))
+            '<button type="button" class="rrg-folder-del" data-folder="%s" title="삭제" aria-label="%s 폴더 삭제">×</button>'
+            '</span>' % (_esc(name), _esc(name), _esc(name)))
     box.innerHTML = "".join(chips)
     dels = document.querySelectorAll("#rrg-chips .rrg-custom-del")
     for i in range(dels.length):
@@ -6494,7 +6448,7 @@ def render_rrg_chips():
 
 
 def _rrg_add_custom(ticker):
-    """커스텀 종목을 추가하고 저장 후 RRG 를 다시 그린다."""
+    """커스텀 종목을 추가하고 RRG 를 다시 그린다."""
     tk = (ticker or "").strip().upper()
     if not tk:
         return
@@ -6504,7 +6458,6 @@ def _rrg_add_custom(ticker):
         return
     color = _RRG_CUSTOM_PALETTE[len(_RRG_CUSTOM["list"]) % len(_RRG_CUSTOM_PALETTE)]
     _RRG_CUSTOM["list"].append({"ticker": tk, "name": tk, "color": color})
-    _rrg_save_custom()
     render_rrg_chips()
     asyncio.ensure_future(_run_rrg())
 
@@ -6515,19 +6468,17 @@ def _make_rrg_custom_del_handler(ticker):
         evt.stopPropagation()
         _RRG_CUSTOM["list"] = [c for c in _RRG_CUSTOM["list"]
                                if c["ticker"] != ticker]
-        _rrg_save_custom()
         render_rrg_chips()
         asyncio.ensure_future(_run_rrg())
     return handler
 
 
 def _rrg_add_folder(name):
-    """즐겨찾기 폴더를 표시 목록에 추가하고 저장 후 RRG 를 다시 그린다."""
+    """즐겨찾기 폴더를 표시 목록에 추가하고 RRG 를 다시 그린다."""
     nm = (name or "").strip()
     if not nm or nm in _RRG_FOLDERS["list"]:
         return
     _RRG_FOLDERS["list"].append(nm)
-    _rrg_save_folders()
     _populate_rrg_folders()
     render_rrg_chips()
     asyncio.ensure_future(_run_rrg())
@@ -6538,7 +6489,6 @@ def _make_rrg_folder_del_handler(name):
         evt.preventDefault()
         evt.stopPropagation()
         _RRG_FOLDERS["list"] = [n for n in _RRG_FOLDERS["list"] if n != name]
-        _rrg_save_folders()
         _populate_rrg_folders()
         render_rrg_chips()
         asyncio.ensure_future(_run_rrg())
@@ -6761,8 +6711,9 @@ def _rrg_render_body():
         _ts, ratio, momentum = item["tail"][-1]
         qclass, qlabel = _rrg_quadrant(ratio, momentum)
         hidden = item["ticker"] in _RRG_HIDDEN
-        eye = ('<button class="rrg-eye%s" data-ticker="%s" title="차트 표시/숨김">%s</button>'
-               % (" off" if hidden else "", _esc(item["ticker"]),
+        eye = ('<button type="button" class="rrg-eye%s" data-ticker="%s" title="차트 표시/숨김" aria-label="%s 차트 표시/숨김" aria-pressed="%s">%s</button>'
+               % (" off" if hidden else "", _esc(item["ticker"]), _esc(item["ticker"]),
+                  "false" if hidden else "true",
                   _RRG_EYE_OFF if hidden else _RRG_EYE_ON))
         grp = item.get("group", "etf")
         badge = ('' if grp == "etf" else
@@ -6845,8 +6796,8 @@ async def _run_rrg():
 
 
 # ── 캔들 차트 공통 호버(툴팁) ────────────────────────────────
-def _candle_hover(event, root_sel, hover, tip_id, guide_id, dot_id):
-    """캔들 차트(root_sel 내부) 위에서 가장 가까운 봉의 날짜·OHLC 툴팁을 표시."""
+def _candle_hover(event, root_sel, hover, prefix):
+    """캔들 차트(root_sel 내부) 위에서 가장 가까운 봉의 값과 가이드를 표시."""
     pts = hover.get("pts")
     if not pts:
         return
@@ -6858,17 +6809,16 @@ def _candle_hover(event, root_sel, hover, tip_id, guide_id, dot_id):
         return
     if (event.clientX < rect.left or event.clientX > rect.right
             or event.clientY < rect.top or event.clientY > rect.bottom):
-        _candle_hide(tip_id, guide_id, dot_id)
+        _candle_hide(prefix)
         return
     W = hover["W"]
     H = hover["H"]
     sx = (event.clientX - rect.left) / rect.width * W
     best = min(pts, key=lambda p: abs(p["x"] - sx))
-    _price_cursor(guide_id.rsplit("-guide", 1)[0],
-                  (event.clientY - rect.top) / rect.height * H)
+    _price_cursor(prefix, (event.clientY - rect.top) / rect.height * H)
 
-    guide = document.querySelector("#" + guide_id)
-    dot = document.querySelector("#" + dot_id)
+    guide = document.querySelector("#" + prefix + "-guide")
+    dot = document.querySelector("#" + prefix + "-guide-dot")
     if guide is not None:
         guide.setAttribute("x1", "%g" % best["x"])
         guide.setAttribute("x2", "%g" % best["x"])
@@ -6876,7 +6826,6 @@ def _candle_hover(event, root_sel, hover, tip_id, guide_id, dot_id):
         guide.setAttribute("y2", "%g" % hover["y2"])
         guide.style.display = "block"
     # 보조지표 SVG는 같은 날짜 인덱스를 자체 좌표계로 변환해 세로선을 표시한다.
-    prefix = guide_id.rsplit("-guide", 1)[0]
     bi = pts.index(best)
     indicator_x = 48.0 + (820.0 - 48.0 - 14.0) * (
         (bi + 0.5) / hover.get("slots", len(pts)))
@@ -6932,9 +6881,8 @@ def _price_cursor(prefix, sy):
     grp.style.display = ""
 
 
-def _candle_hide(tip_id, guide_id, dot_id):
-    prefix = guide_id.rsplit("-guide", 1)[0]
-    for sel in ("#" + tip_id, "#" + guide_id, "#" + dot_id, "#" + prefix + "-ycur",
+def _candle_hide(prefix):
+    for sel in ("#" + prefix + "-guide", "#" + prefix + "-guide-dot", "#" + prefix + "-ycur",
                 "#" + prefix + "-wr-guide", "#" + prefix + "-stoch-guide",
                 "#" + prefix + "-recov-guide"):
         el = document.querySelector(sel)
@@ -7028,7 +6976,8 @@ def _build_stock_overlay(rows, fin, metric_key, annual=False):
     try:
         years, metrics = _build_financial_metrics(
             fin, "annual" if annual else "quarterly")
-    except Exception:
+    except Exception as exc:
+        _warn("stock-overlay", exc)
         return None
     metric = None
     for m in metrics:
@@ -7272,11 +7221,13 @@ async def load_stock_chart(full_symbol, name):
     fetch_rng = _PAN_FETCH_RANGE.get(rng, rng)
     try:
         rows, win_sym = await _fetch_history_any(cands, fetch_rng, interval)
-    except Exception:
+    except Exception as exc:
+        _warn("stockchart-pan", exc)
         fetch_rng = rng
         try:
             rows, win_sym = await _fetch_history_any(cands, rng, interval)
-        except Exception:
+        except Exception as exc2:
+            _warn("stockchart", exc2)
             rows, win_sym = None, None
     # 회복 점수용 벤치마크(기본 ^NDX) 상대강도 + 종목 거래량을 함께 받는다.
     bench = None
@@ -7286,7 +7237,8 @@ async def load_stock_chart(full_symbol, name):
             bench_rows = await _fetch_index_history(
                 _RECOV_DEFAULT_BENCH, fetch_rng, interval)
             bench = _align_bench_closes(rows, bench_rows)
-        except Exception:
+        except Exception as exc:
+            _warn("stockchart-bench", exc)
             bench = None
         vol = await _recov_volume_aligned(rows, win_sym, fetch_rng, interval)
     _STOCKCHART_STATE["bench"] = bench
@@ -7618,7 +7570,8 @@ async def fetch_quarterly_roic(full_symbol):
             _sec_concept_quarter_end(cik, _SEC_ROIC_TAGS["cash"]),
             _sec_concept_quarter_end(cik, _SEC_ROIC_TAGS["sti"]),
         )
-    except Exception:
+    except Exception as exc:
+        _warn("sec-roic", exc)
         return None
     if not op:
         return None
@@ -7808,25 +7761,6 @@ async def fetch_13f_latest(cik):
     return {"holdings": holdings, "report_date": cur.get("report_date"),
             "filing_date": cur.get("filing_date"), "accession": cur.get("accession"),
             "prev_holdings": prev_holdings, "prev_report_date": prev_report}
-
-
-def _aggregate_holdings(holdings, dollars):
-    """CUSIP+옵션 기준으로 합산하고 비중을 계산해 가치 내림차순 정렬."""
-    agg = {}
-    for h in holdings:
-        key = (h["cusip"], h["put_call"])
-        if key not in agg:
-            agg[key] = {"issuer": h["issuer"], "cusip": h["cusip"],
-                        "put_call": h["put_call"], "value": 0.0, "shares": 0.0}
-        agg[key]["value"] += h["value"]
-        agg[key]["shares"] += h["shares"]
-    rows = list(agg.values())
-    total = sum(r["value"] for r in rows) or 1.0
-    for r in rows:
-        r["value_usd"] = r["value"] * (1.0 if dollars else 1000.0)
-        r["weight"] = r["value"] / total * 100.0
-    rows.sort(key=lambda r: r["value"], reverse=True)
-    return rows, total * (1.0 if dollars else 1000.0)
 
 
 def _stock_shares_by_cusip(holdings):
@@ -8291,7 +8225,7 @@ def render_guru_favorites(gurus):
         firm = g.get("firm") or ""
         cells.append(
             '<div class="fav-cell guru-fav-load" data-cik="%s" title="%s">'
-            '<button class="guru-fav-del" data-cik="%s" title="삭제">×</button>'
+            '<button type="button" class="guru-fav-del" data-cik="%s" title="삭제" aria-label="삭제">×</button>'
             '<span class="nm">%s</span>'
             '<span class="pv sub">%s</span>'
             '<span class="chg"></span>'
@@ -8349,6 +8283,7 @@ _LAST_LOOKUP = {"symbol": None, "name": None}
 # 로그인 정보는 탭 세션(sessionStorage)에만 보관해 새로고침 후에도 유지한다(탭을 닫으면 삭제).
 _FAV_CREDS = {"account": None, "key": None}
 _FAV_SESSION_KEY = "fav_session"
+_FAV_TOKEN_PREFIX = "~tok."  # 워커 SESSION_TOKEN_PREFIX 와 동일
 
 # 서버에서 받은 폴더 목록(빈 폴더 포함)을 세션 동안 보관한다.
 _FAV_FOLDERS = []
@@ -8374,11 +8309,14 @@ def _fav_logged_in():
 
 
 def _fav_set_creds(acct, key):
-    """로그인 정보를 메모리와 sessionStorage 에 함께 반영한다(None=로그아웃)."""
+    """로그인 정보를 메모리와 sessionStorage 에 함께 반영한다(None=로그아웃).
+
+    key 는 서버 세션 토큰이 원칙이며, 토큰이 아닌 공유 키 원문은 sessionStorage 에 저장하지 않는다.
+    """
     _FAV_CREDS["account"] = acct
     _FAV_CREDS["key"] = key
     try:
-        if acct and key:
+        if acct and key and key.startswith(_FAV_TOKEN_PREFIX):
             window.sessionStorage.setItem(
                 _FAV_SESSION_KEY, json.dumps({"account": acct, "key": key}))
         else:
@@ -8406,7 +8344,7 @@ async def _restore_fav_session():
         if status in (401, 403, 404) or (isinstance(data, dict) and data.get("exists") is False):
             _fav_set_creds(None, None)
         return
-    _fav_set_creds(acct, key)
+    _fav_set_creds(acct, data.get("token") or key)
     _FAV_FOLDERS = data.get("folders") or []
     _apply_fav_prefs(data)
     _update_fav_login_ui()
@@ -8541,7 +8479,7 @@ async def fav_change_password(new_key):
         body=json.dumps({"newKey": new_key}))
     if err:
         return False, err
-    _fav_set_creds(_FAV_CREDS["account"], new_key)
+    _fav_set_creds(_FAV_CREDS["account"], data.get("token") or new_key)
     return True, None
 
 
@@ -8638,12 +8576,12 @@ def render_favorites(favs):
             chips.append(
                 '<div class="fav-cell fav-load" data-symbol="%s" '
                 'data-folder="%s" draggable="true" title="%s">'
-                '<button class="fav-del" data-symbol="%s" title="삭제">×</button>'
+                '<button type="button" class="fav-del" data-symbol="%s" title="삭제" aria-label="%s 삭제">×</button>'
                 '<span class="nm">%s</span>'
                 '<span class="pv">-</span>'
                 '<span class="chg"></span>'
                 '</div>'
-                % (_esc(sym), _esc(folder), _esc(name or sym), _esc(sym), _esc(tkr)))
+                % (_esc(sym), _esc(folder), _esc(name or sym), _esc(sym), _esc(sym), _esc(tkr)))
         empty_hint = ('' if chips else
                      '<div class="hint" style="grid-column:1/-1">(비어 있음)</div>')
         # Default 는 기본 폴더라 이름 변경/삭제 버튼을 숨긴다
@@ -9077,7 +9015,7 @@ def _update_fav_login_ui():
     acct_info = document.querySelector("#favAccountInfo")
     if _fav_logged_in():
         document.querySelector("#favAccount").value = acct
-        document.querySelector("#favKey").value = key
+        document.querySelector("#favKey").value = ""
         # 로그인 상태에서는 ID/PW 입력칸을 숨기고 계정 정보를 표시한다.
         if acct_label is not None:
             acct_label.style.display = "none"
@@ -9550,10 +9488,6 @@ def _fg_num(v):
         return float(v)
     except (TypeError, ValueError):
         return None
-
-
-def _set_fg_status(msg):
-    _apply_status("#fg-status", msg)
 
 
 async def fetch_fear_greed():
@@ -10103,7 +10037,8 @@ async def load_multpl(slug=None):
         try:
             chtml = await _fetch_multpl_text(cmp_slug, freq)
             cmp_data = _parse_multpl(chtml)
-        except Exception:
+        except Exception as exc:
+            _warn("multpl-compare", exc)
             cmp_data = None
         if not cmp_data:
             _set_multpl_status("완료(비교 지표 '%s' 불러오기 실패) · %d행"
@@ -10130,7 +10065,8 @@ async def load_multpl_overview():
         try:
             html = await _fetch_multpl_text(slug, "by-month")
             data = _parse_multpl(html)
-        except Exception:
+        except Exception as exc:
+            _warn("multpl:" + slug, exc)
             data = None
         if data:
             ok += 1
@@ -11038,13 +10974,12 @@ def on_tab(event):
 
 @when("mousemove", "#idxchart-result")
 def on_idxchart_hover(event):
-    _candle_hover(event, "#idxchart-result", _IDXCHART_HOVER,
-                  "idxchart-tip", "idxchart-guide", "idxchart-guide-dot")
+    _candle_hover(event, "#idxchart-result", _IDXCHART_HOVER, "idxchart")
 
 
 @when("mouseleave", "#idxchart-result")
 def on_idxchart_leave(event):
-    _candle_hide("idxchart-tip", "idxchart-guide", "idxchart-guide-dot")
+    _candle_hide("idxchart")
     _trend_cancel("idxchart")
 
 
@@ -11257,7 +11192,7 @@ def on_rrg_view_click(event):
 
 
 @when("click", "#idxChartBtn")
-async def on_idxchart_click(event):
+async def on_idxchart_btn(event):
     await _run_idxchart()
 
 
@@ -11742,13 +11677,12 @@ def on_fin_leave(event):
 
 @when("mousemove", "#result")
 def on_stockchart_hover(event):
-    _candle_hover(event, "#stock-chart", _STOCKCHART_HOVER,
-                  "stockchart-tip", "stockchart-guide", "stockchart-guide-dot")
+    _candle_hover(event, "#stock-chart", _STOCKCHART_HOVER, "stockchart")
 
 
 @when("mouseleave", "#result")
 def on_stockchart_leave(event):
-    _candle_hide("stockchart-tip", "stockchart-guide", "stockchart-guide-dot")
+    _candle_hide("stockchart")
     _trend_cancel("stockchart")
 
 
@@ -11945,7 +11879,7 @@ async def on_fav_login(event):
         window.alert("등록되지 않은 계정입니다. '계정 등록'으로 먼저 계정을 만드세요.")
         return
     global _FAV_FOLDERS
-    _fav_set_creds(acct, key)
+    _fav_set_creds(acct, data.get("token") or key)
     _FAV_FOLDERS = data.get("folders") or []
     _apply_fav_prefs(data)
     _update_fav_login_ui()
@@ -11977,7 +11911,7 @@ async def on_fav_register(event):
         return
     # 등록 성공 → 바로 로그인 상태로 전환
     global _FAV_FOLDERS
-    _fav_set_creds(acct, key)
+    _fav_set_creds(acct, data.get("token") or key)
     _FAV_FOLDERS = data.get("folders") or []
     _update_fav_login_ui()
     render_favorites([])
@@ -12029,7 +11963,6 @@ async def on_fav_change_password(event):
         _set_fav_status("")
         window.alert("비밀번호 변경 실패: %s" % err)
         return
-    document.querySelector("#favKey").value = new_key
     _update_fav_login_ui()
     _set_fav_status("공유 키가 변경되었습니다.")
 
@@ -12325,7 +12258,7 @@ async def _view_macrodoc(doc_id):
     # 등록된 HTML 은 샌드박스 iframe 에 격리해 렌더링한다(부모 접근 차단).
     frame = document.createElement("iframe")
     frame.className = "macrodoc-frame"
-    frame.setAttribute("sandbox", "allow-scripts allow-popups")
+    frame.setAttribute("sandbox", "allow-scripts")
     frame.srcdoc = html
     viewer.appendChild(frame)
     _set_macrodoc_status("")
