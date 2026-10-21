@@ -276,6 +276,9 @@
   .earncal-up th, .earncal-up td { border-bottom:1px solid var(--bd); padding:5px 6px;
     text-align:left; }
   .earncal-up th { color:var(--mut); font-weight:600; font-size:12px; }
+  .earn-chip[data-go], .earncal-up tr[data-go] { cursor:pointer; }
+  .earn-chip[data-go]:hover { filter:brightness(.92); text-decoration:underline; }
+  .earncal-up tr[data-go]:hover td { text-decoration:underline; }
   @media (max-width:600px) {
     .earncal-grid td { height:64px; padding:2px; }
     .earn-chip { font-size:10px; padding:0 3px; }
@@ -1273,7 +1276,7 @@ import json
 import re
 import asyncio
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 from html import unescape as _html_unescape
 
@@ -1414,6 +1417,10 @@ FIN_HISTORY_FIELDS = [
     "dps_common_stock_prim_issue_ttm",
     "total_assets_fq",
     "total_debt_fq",
+    # 최신 분기(_fq_h[0])의 회계 기간 라벨(예: '2026-Q2')과 그 분기 종료일(unix 초).
+    # 실적 발표 직후에는 컨센서스(실제 실적)보다 한 분기 늦을 수 있어 비교용으로 사용.
+    "fiscal_period_current",
+    "fiscal_period_end_current",
     # 분기별 히스토리(_fq_h 접미사) - 분기 지표 표시용
     "total_revenue_fq_h",
     "gross_profit_fq_h",
@@ -1808,7 +1815,798 @@ async def fetch_financials(full_symbol):
         return None
     if not isinstance(data, dict) or data.get("s") == "error":
         return None
+
+    # TradingView 는 데이터가 없는 기간을 1e100 같은 자리표시 값으로 채우므로 None 처리
+    def _clean(v):
+        if isinstance(v, (int, float)) and abs(v) >= 1e99:
+            return None
+        return v
+    for k, v in list(data.items()):
+        if isinstance(v, list):
+            data[k] = [_clean(x) for x in v]
+        else:
+            data[k] = _clean(v)
+    # Yahoo/SEC 보충 전 TradingView 재무의 최신 분기(평가비율 기준 분기 표시용)
+    data["_tv_period"] = data.get("fiscal_period_current")
     return data
+
+
+# 실적 발표 직후 TradingView 분기 재무(_fq_h)가 늦을 때 보충 조회하는 Yahoo Finance
+# 재무 시계열 API. 값은 보고 통화이며 asOfDate(분기말)와 함께 제공된다.
+YF_TIMESERIES_HOSTS = [
+    "https://query1.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/",
+    "https://query2.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/",
+]
+
+# TradingView 분기 히스토리 필드 ← Yahoo 분기 시계열 타입
+YF_FQ_MAP = {
+    "total_revenue_fq_h": "quarterlyTotalRevenue",
+    "gross_profit_fq_h": "quarterlyGrossProfit",
+    "net_income_fq_h": "quarterlyNetIncome",
+    "ebitda_fq_h": "quarterlyEBITDA",
+    "free_cash_flow_fq_h": "quarterlyFreeCashFlow",
+    "earnings_per_share_diluted_fq_h": "quarterlyDilutedEPS",
+    "total_assets_fq_h": "quarterlyTotalAssets",
+    "total_debt_fq_h": "quarterlyTotalDebt",
+}
+
+
+async def fetch_yahoo_quarterly(full_symbol):
+    """Yahoo Finance 분기 재무를 조회. [{"end", "ccy", "values": {tv_key: v}}] (과거→최신)."""
+    now = int(time.time())
+    params = {"type": ",".join(YF_FQ_MAP.values()),
+              "period1": str(now - 400 * 86400), "period2": str(now)}
+    rev_map = {v: k for k, v in YF_FQ_MAP.items()}
+    for yf_sym in _yf_symbol_candidates(full_symbol):
+        p = dict(params, symbol=yf_sym)
+        data = None
+        for base in YF_TIMESERIES_HOSTS:
+            try:
+                data = await _get_json(base + yf_sym, p)
+                break
+            except InvestingApiError:
+                continue
+        results = (((data or {}).get("timeseries") or {}).get("result")) or []
+        rows = {}
+        for res in results:
+            types = (res.get("meta") or {}).get("type") or []
+            yf_type = types[0] if types else None
+            tv_key = rev_map.get(yf_type)
+            if not tv_key:
+                continue
+            for item in res.get(yf_type) or []:
+                if not item or not item.get("asOfDate"):
+                    continue
+                raw = (item.get("reportedValue") or {}).get("raw")
+                if not isinstance(raw, (int, float)):
+                    continue
+                try:
+                    end = int(datetime.strptime(item["asOfDate"], "%Y-%m-%d")
+                              .replace(tzinfo=timezone.utc).timestamp())
+                except ValueError:
+                    continue
+                row = rows.setdefault(end, {"end": end, "ccy": None, "values": {}})
+                row["values"][tv_key] = raw
+                row["ccy"] = row["ccy"] or item.get("currencyCode")
+        if rows:
+            return [rows[k] for k in sorted(rows)]
+    return []
+
+
+def _next_quarter_end_ts(ts):
+    """분기말 타임스탬프의 다음 분기말(3개월 뒤 월말) 타임스탬프."""
+    d = datetime.fromtimestamp(ts, timezone.utc)
+    m = d.month + 3
+    y = d.year + (m - 1) // 12
+    m = (m - 1) % 12 + 1
+    ny, nm = (y + 1, 1) if m == 12 else (y, m + 1)
+    return int(datetime(ny, nm, 1, tzinfo=timezone.utc).timestamp()) - 86400
+
+
+def _prepend_quarter(financials, consensus, values, end_ts, by_key):
+    """TradingView 분기 히스토리(최신→과거) 맨 앞에 다음 분기 값을 추가한다.
+
+    values: {tv _fq_h 키: 거래 통화 값}. 없는 지표는 None 으로 채운다.
+    by_key: {tv _fq_h 키: 값을 가져온 출처} (표 툴팁·안내 문구용).
+    """
+    m = re.match(r"^(\d{4})-Q([1-4])$", str(financials.get("fiscal_period_current") or ""))
+    n = len(financials.get("total_revenue_fq_h") or [])
+    if not m or n == 0:
+        return False
+    for key in FIN_HISTORY_FIELDS:
+        if not key.endswith("_fq_h"):
+            continue
+        arr = list(financials.get(key) or [])
+        arr += [None] * (n - len(arr))
+        financials[key] = [values.get(key)] + arr[:n]
+    y, q = int(m.group(1)), int(m.group(2)) + 1
+    if q > 4:
+        y, q = y + 1, 1
+    sources = []
+    for k in _FILL_KEYS:
+        s = by_key.get(k)
+        if s and s not in sources:
+            sources.append(s)
+    financials["fiscal_period_current"] = "%d-Q%d" % (y, q)
+    financials["fiscal_period_end_current"] = end_ts
+    financials["_supplement"] = {"label": "%d Q%d" % (y, q),
+                                 "source": " + ".join(sources), "by_key": dict(by_key)}
+    consensus["_ahead_of_financials"] = False
+    return True
+
+
+# 다음 분기 보충 대상 지표(TradingView _fq_h 키). DPS 는 보충 출처가 없어 제외.
+_FILL_KEYS = list(YF_FQ_MAP.keys())
+
+
+async def _yahoo_next_quarter(full_symbol, financials, trade_ccy):
+    """Yahoo 의 TradingView 최신 분기 '바로 다음 분기' 재무. (값(거래 통화), 분기말) 또는 (None, None)."""
+    end = financials.get("fiscal_period_end_current")
+    if not isinstance(end, (int, float)):
+        return None, None
+    try:
+        rows = await fetch_yahoo_quarterly(full_symbol)
+    except Exception as exc:
+        _warn("yahoo-quarterly", exc)
+        return None, None
+    # 분기말이 60~120일 뒤인 행만 채택
+    row = next((r for r in rows if end + 60 * 86400 < r["end"] <= end + 120 * 86400
+                and any(v is not None for v in r["values"].values())), None)
+    if row is None:
+        return None, None
+    rate = 1.0
+    if row["ccy"] and trade_ccy and row["ccy"] != trade_ccy:
+        rate = await fetch_fx_rate(row["ccy"], trade_ccy)
+        if not rate:
+            return None, None
+    return {k: v * rate for k, v in row["values"].items() if v is not None}, row["end"]
+
+
+async def _fill_latest_quarter(full_symbol, financials, consensus, trade_ccy):
+    """TradingView 에 없는 최근 분기를 지표별로 Yahoo → SEC 10-K/Q → SEC 8-K 순으로 채운다.
+
+    앞 출처에 없는 지표만 다음 출처에서 찾고, 모든 지표가 채워지면 뒤 출처는 조회하지 않는다.
+    """
+    if not consensus or not consensus.get("_ahead_of_financials") or not financials:
+        return
+    end = financials.get("fiscal_period_end_current")
+    rel = consensus.get("earnings_release_date")
+    if not isinstance(end, (int, float)):
+        return
+    merged, by_key, q_end = {}, {}, None
+
+    def merge(vals, source):
+        for k in _FILL_KEYS:
+            if merged.get(k) is None and (vals or {}).get(k) is not None:
+                merged[k] = vals[k]
+                by_key[k] = source
+
+    def missing():
+        return [k for k in _FILL_KEYS if merged.get(k) is None]
+
+    y_vals, y_end = await _yahoo_next_quarter(full_symbol, financials, trade_ccy)
+    if y_vals:
+        merge(y_vals, "Yahoo Finance")
+        q_end = y_end
+
+    if missing():
+        try:
+            filing = await _sec_latest_filing(full_symbol, end, rel)
+            if filing and filing.get("error"):
+                consensus["_sec_error"] = True
+                filing = None
+            else:
+                consensus["_sec_has_latest"] = filing is not None
+            if filing:
+                rate = 1.0
+                if trade_ccy and trade_ccy != "USD":
+                    rate = await fetch_fx_rate("USD", trade_ccy)
+                if rate:
+                    # 10-K/Q 값을 반영하고도 빈 지표가 남을 때만 8-K 보도자료를 조회
+                    need_8k = lambda v: any(merged.get(k) is None and v.get(k) is None
+                                            for k in _FILL_KEYS)
+                    for source, usd_vals, s_end in await _sec_next_quarter(
+                            financials, filing, need_8k):
+                        merge({k: v * rate for k, v in usd_vals.items()}, source)
+                        q_end = q_end or s_end
+                        if "8-K" in source:
+                            # TTM(직전 분기 TTM + 이번 분기 - 전년 동기) 계산용 8-K 값(USD)
+                            consensus["_k8_values"] = usd_vals
+        except Exception as exc:
+            consensus["_sec_error"] = True
+            _warn("sec-latest", exc)
+
+    if merged.get("total_revenue_fq_h") is None or q_end is None:
+        return
+    if _prepend_quarter(financials, consensus, merged, q_end, by_key):
+        if consensus.get("_k8_values"):
+            financials["_supplement"]["values"] = consensus["_k8_values"]
+
+
+_MONTHS = ["January", "February", "March", "April", "May", "June", "July",
+           "August", "September", "October", "November", "December"]
+
+
+def _parse_earnings_release(doc, period_end_ts):
+    """실적 발표 8-K 보도자료(EX-99) HTML 에서 해당 분기 주요 재무를 추출한다.
+
+    손익계산서 표(매출·순이익이 함께 있고 'Three Months' 와 분기말 날짜를 포함)와
+    재무상태표('Total assets')의 첫 번째 숫자 열을 사용한다. 반환: {tv _fq_h 키: USD}.
+    현금흐름은 보통 누적(YTD)이라 FCF·EBITDA 는 추출하지 않는다.
+    """
+    pe = datetime.fromtimestamp(period_end_ts, timezone.utc)
+    pe_txt = "%s %d" % (_MONTHS[pe.month - 1], pe.day)
+
+    def cell_text(c):
+        t = _html_unescape(re.sub(r"<[^>]+>", " ", c))
+        return re.sub(r"\s+", " ", t).strip()
+
+    def parse_num(s):
+        s = s.replace("$", "").replace(",", "").replace(" ", "")
+        neg = s.startswith("(")
+        s = s.strip("()")
+        try:
+            v = float(s)
+        except ValueError:
+            return None
+        return -v if neg else v
+
+    def table_rows(t):
+        rows = []
+        for tr in re.findall(r"<tr.*?</tr>", t, re.S | re.I):
+            cells = [cell_text(c) for c in re.findall(r"<td.*?</td>", tr, re.S | re.I)]
+            cells = [c for c in cells if c and c not in ("$", ")", "%")]
+            if not cells:
+                continue
+            label = re.sub(r"\s*\.{2,}.*$", "", cells[0]).strip()
+            nums = [parse_num(c) for c in cells[1:]]
+            rows.append((label, [x for x in nums if x is not None]))
+        return rows
+
+    def scale_for(pos):
+        win = doc[max(0, pos - 4000):pos].lower()
+        if "in thousands" in win:
+            return 1e3
+        if "in millions" in win:
+            return 1e6
+        low = doc.lower()
+        return 1e3 if "in thousands" in low and "in millions" not in low else 1e6
+
+    def first(rows, pattern):
+        for label, nums in rows:
+            if nums and re.match(pattern, label, re.I):
+                return nums[0]
+        return None
+
+    out = {}
+    for tm in re.finditer(r"<table.*?</table>", doc, re.S | re.I):
+        t = tm.group(0)
+        plain = cell_text(t)
+        rows = table_rows(t)
+        sc = scale_for(tm.start())
+        rev_pat = r"^(total )?(net )?(revenues?|sales)(, net)?$"
+        ni_pat = r"^net (income|loss|earnings)( \(loss\))?$|^net \(loss\) income$"
+        if ("total_revenue_fq_h" not in out and first(rows, rev_pat) is not None
+                and first(rows, ni_pat) is not None
+                and "three months" in plain.lower() and pe_txt in plain
+                and str(pe.year) in plain):
+            rev = first(rows, rev_pat)
+            out["total_revenue_fq_h"] = rev * sc
+            out["net_income_fq_h"] = first(rows, ni_pat) * sc
+            gp = first(rows, r"^gross (profit|margin)$")
+            cor = first(rows, r"^(total )?cost of (revenues?|sales)$")
+            if gp is not None:
+                out["gross_profit_fq_h"] = gp * sc
+            elif cor is not None:
+                out["gross_profit_fq_h"] = (rev - cor) * sc
+            eps = first(rows, r"^diluted( net (income|earnings|loss).*per share.*)?$")
+            if eps is not None and abs(eps) < 10000:
+                out["earnings_per_share_diluted_fq_h"] = eps
+            eps_b = first(rows, r"^basic( net (income|earnings|loss).*per share.*)?$")
+            if eps_b is not None and abs(eps_b) < 10000:
+                out["_eps_basic"] = eps_b
+        if "total_assets_fq_h" not in out and first(rows, r"^total assets$") is not None:
+            out["total_assets_fq_h"] = first(rows, r"^total assets$") * sc
+            debt = [nums[0] for label, nums in rows if nums and re.match(
+                r"^(short-term |long-term |current portion of (long-term )?)?"
+                r"(debt|borrowings|notes payable)", label, re.I)]
+            if debt:
+                out["total_debt_fq_h"] = sum(debt) * sc
+    return out
+
+
+# 10-Q/10-K XBRL(us-gaap) 태그 후보 - 앞에서부터 값이 있는 태그를 사용
+_SEC_Q_TAGS = {
+    "revenue": ["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax",
+                "RevenueFromContractWithCustomerIncludingAssessedTax", "SalesRevenueNet"],
+    "gross_profit": ["GrossProfit"],
+    "cost": ["CostOfRevenue", "CostOfGoodsAndServicesSold"],
+    "net_income": ["NetIncomeLoss", "ProfitLoss"],
+    "eps": ["EarningsPerShareDiluted"],
+    "eps_basic": ["EarningsPerShareBasic"],
+    "op_income": ["OperatingIncomeLoss"],
+    "da": ["DepreciationDepletionAndAmortization", "DepreciationAndAmortization",
+           "DepreciationAmortizationAndAccretionNet"],
+    "ocf": ["NetCashProvidedByUsedInOperatingActivities"],
+    "capex": ["PaymentsToAcquirePropertyPlantAndEquipment",
+              "PaymentsToAcquireProductiveAssets"],
+    "assets": ["Assets"],
+    "debt_lt": ["LongTermDebt"],
+    "debt_nc": ["LongTermDebtNoncurrent", "LongTermDebtAndCapitalLeaseObligations"],
+    "debt_cur": ["DebtCurrent", "LongTermDebtCurrent"],
+    "debt_st": ["ShortTermBorrowings"],
+}
+_SEC_Q_LIMIT = asyncio.Semaphore(4)   # SEC 공정 사용(초당 10건) 제한 대비
+_SEC_CONCEPT_CACHE = {}               # (cik, tag, unit) -> (조회시각, items)
+_SEC_CONCEPT_TTL = 10 * 60
+_SEC_FACTS = {}                       # cik -> {"at", "task"(companyfacts 조회 Task)}
+
+
+async def _sec_company_facts(cik):
+    """회사 전체 XBRL 재무(companyfacts) 1건을 조회·캐시. 동시 호출은 한 요청을 공유.
+
+    항목별 companyconcept 를 수십 번 부르는 대신 이것 하나로 모든 태그를 얻는다.
+    실패 시 None(호출부는 companyconcept 로 폴백).
+    """
+    ent = _SEC_FACTS.get(cik)
+    if ent and time.time() - ent["at"] < _SEC_CONCEPT_TTL:
+        return await ent["task"]
+
+    async def _get():
+        d = await _sec_get_json(
+            "https://data.sec.gov/api/xbrl/companyfacts/CIK%010d.json" % cik)
+        return d if isinstance(d, dict) and isinstance(d.get("facts"), dict) else None
+
+    task = asyncio.ensure_future(_get())
+    _SEC_FACTS[cik] = {"at": time.time(), "task": task}
+    res = await task
+    if res is None:
+        _SEC_FACTS.pop(cik, None)       # 실패는 캐시하지 않음
+    return res
+
+
+async def _sec_concept_units(cik, tag):
+    """us-gaap 개념의 units dict({단위: [항목...]}). companyfacts 우선, 실패 시 개별 조회."""
+    facts = await _sec_company_facts(cik)
+    if facts is not None:
+        return ((facts["facts"].get("us-gaap") or {}).get(tag) or {}).get("units") or {}
+    url = ("https://data.sec.gov/api/xbrl/companyconcept/CIK%010d/us-gaap/%s.json"
+           % (cik, tag))
+    async with _SEC_Q_LIMIT:
+        data = await _sec_get_json(url)
+    return (data or {}).get("units") or {}
+
+
+async def _sec_concept_items(cik, tag, unit):
+    """us-gaap 개념의 10-Q/10-K 항목 리스트(unit 단위). 실패 시 []."""
+    ck = (cik, tag, unit)
+    hit = _SEC_CONCEPT_CACHE.get(ck)
+    if hit and time.time() - hit[0] < _SEC_CONCEPT_TTL:
+        return hit[1]
+    items = (await _sec_concept_units(cik, tag)).get(unit) or []
+    items = [it for it in items
+             if it.get("val") is not None and len(it.get("end") or "") >= 10
+             and ("10-Q" in (it.get("form") or "") or "10-K" in (it.get("form") or ""))]
+    _SEC_CONCEPT_CACHE[ck] = (time.time(), items)
+    return items
+
+
+def _sec_flow_value(items, end, prev_end, allow_diff=True):
+    """기간 항목의 분기(3개월) 값. 없으면 누적(YTD) - 직전 분기 누적으로 계산.
+
+    allow_diff=False 면 3개월 값만 사용(EPS 처럼 차감이 성립하지 않는 지표).
+    """
+    same = [it for it in items if it["end"] == end and it.get("start")]
+    for it in same:
+        d = _days_between(it["start"], end)
+        if d is not None and 80 <= d <= 100:
+            return it["val"]
+    if not allow_diff:
+        return None
+    for it in sorted(same, key=lambda x: x["start"]):
+        for p in items:
+            if p.get("start") != it["start"] or p["end"] == end:
+                continue
+            g = _days_between(p["end"], prev_end)
+            if g is not None and abs(g) <= 7:
+                return it["val"] - p["val"]
+    return None
+
+
+def _sec_instant_value(items, end):
+    """재무상태표 항목의 분기말 잔액."""
+    for it in items:
+        if it["end"] == end and not it.get("start"):
+            return it["val"]
+    for it in items:
+        if it["end"] == end:
+            return it["val"]
+    return None
+
+
+async def _sec_10q_values(cik, report_date, prev_end):
+    """10-Q/10-K XBRL 에서 report_date 분기의 주요 재무를 계산. {tv _fq_h 키: USD}."""
+    async def pick(key, kind):
+        unit = "USD/shares" if key == "eps" else "USD"
+        for tag in _SEC_Q_TAGS[key]:
+            items = await _sec_concept_items(cik, tag, unit)
+            v = (_sec_flow_value(items, report_date, prev_end, key != "eps")
+                 if kind == "flow" else _sec_instant_value(items, report_date))
+            if v is not None:
+                return v
+        return None
+
+    keys = [("revenue", "flow"), ("gross_profit", "flow"), ("cost", "flow"),
+            ("net_income", "flow"), ("eps", "flow"), ("op_income", "flow"),
+            ("da", "flow"), ("ocf", "flow"), ("capex", "flow"), ("assets", "inst"),
+            ("debt_lt", "inst"), ("debt_nc", "inst"), ("debt_cur", "inst"),
+            ("debt_st", "inst")]
+    vals = dict(zip([k for k, _ in keys],
+                    await asyncio.gather(*[pick(k, kind) for k, kind in keys])))
+    out = {}
+    rev = vals["revenue"]
+    if rev is None:
+        return out
+    out["total_revenue_fq_h"] = rev
+    if vals["gross_profit"] is not None:
+        out["gross_profit_fq_h"] = vals["gross_profit"]
+    elif vals["cost"] is not None:
+        out["gross_profit_fq_h"] = rev - vals["cost"]
+    if vals["net_income"] is not None:
+        out["net_income_fq_h"] = vals["net_income"]
+    if vals["eps"] is not None:
+        out["earnings_per_share_diluted_fq_h"] = vals["eps"]
+    if vals["op_income"] is not None and vals["da"] is not None:
+        out["ebitda_fq_h"] = vals["op_income"] + vals["da"]
+    if vals["ocf"] is not None and vals["capex"] is not None:
+        out["free_cash_flow_fq_h"] = vals["ocf"] - vals["capex"]
+    if vals["assets"] is not None:
+        out["total_assets_fq_h"] = vals["assets"]
+    # 장기 차입금이 확인될 때만 총차입금을 계산(일부만 더한 값은 오해 소지)
+    if vals["debt_lt"] is not None:
+        out["total_debt_fq_h"] = vals["debt_lt"] + (vals["debt_st"] or 0)
+    elif vals["debt_nc"] is not None:
+        out["total_debt_fq_h"] = (vals["debt_nc"] + (vals["debt_cur"] or 0)
+                                  + (vals["debt_st"] or 0))
+    return out
+
+
+async def _sec_next_quarter(financials, filing, need_8k):
+    """SEC 자료로 TradingView 최신 분기 다음 분기의 재무를 출처 우선순위대로 반환.
+
+    [(출처명, {tv _fq_h 키: USD}, 분기말 ts), ...] - 10-K/Q(XBRL·감사인 검토) 먼저,
+    need_8k(vals) 가 True(10-K/Q 를 반영하고도 빈 지표가 남음)일 때만 8-K 보도자료(EX-99)를 파싱.
+    """
+    end = financials.get("fiscal_period_end_current")
+    if not isinstance(end, (int, float)):
+        return []
+    prev_end = datetime.fromtimestamp(end, timezone.utc).strftime("%Y-%m-%d")
+    out = []
+    if filing.get("q_report"):
+        vals = await _sec_10q_values(filing["cik"], filing["q_report"], prev_end)
+        if vals:
+            q_end = int(datetime.strptime(filing["q_report"], "%Y-%m-%d")
+                        .replace(tzinfo=timezone.utc).timestamp())
+            out.append(("SEC %s" % filing.get("q_form", "10-Q"), vals, q_end))
+            if not need_8k(vals) and vals.get("total_revenue_fq_h") is not None:
+                return out
+    if filing.get("k8_acc"):
+        url = await _sec_8k_exhibit_url(filing["cik"], filing["k8_acc"])
+        doc = await _sec_get_text(url) if url else None
+        if doc:
+            q_end = _next_quarter_end_ts(end)
+            vals = _parse_earnings_release(doc, q_end)
+            if vals:
+                out.append(("SEC 8-K 실적 발표", vals, q_end))
+    return out
+
+
+# TradingView 값과 다르면 SEC(10-Q/10-K) 공시 값으로 교체할 지표.
+# (지표 키, TradingView _fq_h 키, XBRL 태그 그룹, 기간/잔액, 허용 오차(상대, 절대))
+_SEC_RECONCILE = [
+    ("revenue", "total_revenue_fq_h", "revenue", "flow", 0.01, 0.0),
+    ("net_income", "net_income_fq_h", "net_income", "flow", 0.01, 0.0),
+    ("eps", "earnings_per_share_diluted_fq_h", "eps", "flow", 0.01, 0.005),
+    ("assets", "total_assets_fq_h", "assets", "inst", 0.01, 0.0),
+]
+_SEC_RECONCILE_QUARTERS = 4   # 최근 몇 개 분기를 대조할지
+_SEC_ALIGN_TOL = 0.05         # 매출 차이가 이보다 크면 다른 분기/정의로 보고 건너뜀
+
+
+def _shift_quarter_end(ts, k):
+    """분기말 타임스탬프를 k 분기 이전(월말 기준)으로 옮긴 'YYYY-MM-DD'."""
+    d = datetime.fromtimestamp(ts, timezone.utc)
+    t = d.year * 12 + (d.month - 1) - 3 * k
+    y, m = t // 12, t % 12 + 1
+    ny, nm = (y + 1, 1) if m == 12 else (y, m + 1)
+    last = datetime(ny, nm, 1, tzinfo=timezone.utc).timestamp() - 86400
+    return datetime.fromtimestamp(last, timezone.utc).strftime("%Y-%m-%d")
+
+
+def _sec_series_value(items, target, kind, allow_diff):
+    """target 분기말(±10일, 52/53주 회계 대응)에 해당하는 SEC 값."""
+    ends = sorted({it["end"] for it in items})
+    for e in ends:
+        g = _days_between(e, target)
+        if g is None or abs(g) > 10:
+            continue
+        if kind == "inst":
+            v = _sec_instant_value(items, e)
+        else:
+            prev = datetime.strptime(e, "%Y-%m-%d") - timedelta(days=91)
+            v = _sec_flow_value(items, e, prev.strftime("%Y-%m-%d"), allow_diff)
+        if v is not None:
+            return v
+    return None
+
+
+async def _reconcile_with_sec(full_symbol, financials, trade_ccy):
+    """최근 분기의 매출·순이익·희석 EPS·총자산을 SEC 공시 값과 대조해 교체한다.
+
+    매출이 5% 이내로 일치해 같은 분기로 확인된 경우에만, 1% 이상(EPS 는 0.005 이상)
+    차이 나는 값을 SEC 값으로 바꾸고 financials["_sec_overrides"] 에 기록한다.
+    """
+    exch = full_symbol.split(":")[0].upper() if ":" in full_symbol else ""
+    if exch not in _YF_US_EXCH or trade_ccy != "USD" or not financials:
+        return
+    end0 = financials.get("fiscal_period_end_current")
+    n = len(financials.get("total_revenue_fq_h") or [])
+    if not isinstance(end0, (int, float)) or n == 0:
+        return
+    cik = await _sec_cik_for_symbol(full_symbol)
+    if cik is None:
+        return
+
+    async def series(group):
+        unit = "USD/shares" if group == "eps" else "USD"
+        out = []
+        for tag in _SEC_Q_TAGS[group]:
+            items = await _sec_concept_items(cik, tag, unit)
+            out.append(_sec_post_restatement(items) if group == "eps" else items)
+        return out
+
+    tag_items = dict(zip(
+        [r[0] for r in _SEC_RECONCILE],
+        await asyncio.gather(*[series(r[2]) for r in _SEC_RECONCILE])))
+
+    def sec_val(metric, kind, target):
+        for items in tag_items[metric]:
+            v = _sec_series_value(items, target, kind, metric != "eps")
+            if v is not None:
+                return v
+        return None
+
+    labels = _quarter_labels(financials, n)            # 과거→최신
+    supp = financials.get("_supplement") or {}
+    skip0 = str(supp.get("source", "")).startswith("SEC")
+    overrides = []
+    for i in range(min(_SEC_RECONCILE_QUARTERS, n)):
+        if i == 0 and skip0:
+            continue                                   # 이미 SEC 값으로 채운 분기
+        target = _shift_quarter_end(end0, i)
+        tv_rev = financials["total_revenue_fq_h"][i]
+        sec_rev = sec_val("revenue", "flow", target)
+        if (tv_rev is None or sec_rev is None or tv_rev == 0
+                or abs(sec_rev - tv_rev) / abs(tv_rev) > _SEC_ALIGN_TOL):
+            continue
+        for metric, key, _g, kind, rel_tol, abs_tol in _SEC_RECONCILE:
+            arr = financials.get(key) or []
+            if i >= len(arr):
+                continue
+            tv_v = arr[i]
+            sec_v = sec_rev if metric == "revenue" else sec_val(metric, kind, target)
+            if sec_v is None:
+                continue
+            if tv_v is not None:
+                diff = abs(sec_v - tv_v)
+                if diff <= abs_tol or (tv_v != 0 and diff / abs(tv_v) <= rel_tol):
+                    continue
+            arr[i] = sec_v
+            overrides.append({"metric": metric, "label": labels[n - 1 - i],
+                              "old": tv_v, "new": sec_v})
+    if overrides:
+        financials["_sec_overrides"] = overrides
+
+
+def _sec_post_restatement(items):
+    """주식분할 등으로 재작성된 주당 지표에서, 재작성 이후 제출된 항목만 남긴다.
+
+    같은 기간 값이 이후 제출물에서 20% 넘게 바뀐 경우를 재작성으로 보고(최근 2년 기간만),
+    그중 가장 이른 재작성 제출일 이후의 항목만 사용한다(분할 전/후 값 혼용 방지).
+    """
+    if not items:
+        return items
+    latest_end = max(it["end"] for it in items)
+    groups = {}
+    for it in items:
+        g = _days_between(it["end"], latest_end)
+        if g is not None and g <= 730:
+            groups.setdefault((it.get("start"), it["end"]), []).append(it)
+    cutoff = None
+    for lst in groups.values():
+        lst = sorted(lst, key=lambda x: x.get("filed") or "")
+        base = lst[0]["val"]
+        for it in lst[1:]:
+            v = it["val"]
+            if base and v and base * v > 0 and max(abs(base), abs(v)) / min(abs(base), abs(v)) > 1.2:
+                f = it.get("filed") or ""
+                cutoff = f if cutoff is None or f < cutoff else cutoff
+                break
+    if cutoff is None:
+        return items
+    return [it for it in items if (it.get("filed") or "") >= cutoff]
+
+
+def _sec_ttm_value(items, target):
+    """SEC 기간 항목으로 target 분기말 기준 TTM 을 계산한다. (상태, 값) 반환.
+
+    TTM = 최신 누적(YTD) + 직전 회계연도(10-K) - 전년 동기 누적.
+    target 이 회계연도말이면 연간 값 그대로. 상태:
+      "ok"        : 계산 성공
+      "no_annual" : 최신 누적은 있으나 직전 회계연도/전년 동기 값이 없음 → 계산 안 함
+      "no_data"   : target 분기의 XBRL 자체가 없음(8-K 보충 분기 등)
+    """
+    def near(a, b, tol=10):
+        g = _days_between(a, b)
+        return g is not None and abs(g) <= tol
+
+    def dur(it):
+        return _days_between(it["start"], it["end"]) if it.get("start") else None
+
+    same = [it for it in items if it.get("start") and near(it["end"], target)]
+    if not same:
+        return "no_data", None
+    for it in same:
+        d = dur(it)
+        if d is not None and 350 <= d <= 380:
+            return "ok", it["val"]
+    ytd = max(same, key=lambda it: dur(it) or 0)
+    d_ytd = dur(ytd) or 0
+    fy_start = datetime.strptime(ytd["start"][:10], "%Y-%m-%d")
+    prev_fy_end = (fy_start - timedelta(days=1)).strftime("%Y-%m-%d")
+    annual = next((it for it in items if it.get("start") and near(it["end"], prev_fy_end)
+                   and 350 <= (dur(it) or 0) <= 380), None)
+    py_start = (fy_start - timedelta(days=365)).strftime("%Y-%m-%d")
+    py_end = (datetime.strptime(ytd["end"][:10], "%Y-%m-%d")
+              - timedelta(days=365)).strftime("%Y-%m-%d")
+    prior = next((it for it in items if it.get("start") and near(it["start"], py_start)
+                  and near(it["end"], py_end) and abs((dur(it) or 0) - d_ytd) <= 10), None)
+    if annual is None or prior is None:
+        return "no_annual", None
+    return "ok", ytd["val"] + annual["val"] - prior["val"]
+
+
+# TTM 필드(TradingView) ← SEC 계산식. 값은 태그 그룹 또는 (그룹A, 연산, 그룹B)
+_SEC_TTM_FIELDS = [
+    ("revenue", "total_revenue_ttm", ("revenue",)),
+    ("net_income", "net_income_ttm", ("net_income",)),
+    ("gross_profit", "gross_profit_ttm", ("gross_profit",)),
+    ("gross_profit", "gross_profit_ttm", ("revenue", "-", "cost")),
+    ("ebitda", "ebitda_ttm", ("op_income", "+", "da")),
+    ("fcf", "free_cash_flow_ttm", ("ocf", "-", "capex")),
+    ("eps", "earnings_per_share_basic_ttm", ("eps_basic",)),
+]
+
+
+async def _reconcile_ttm_with_sec(full_symbol, financials, data, trade_ccy, fund_ccy):
+    """TTM 지표를 SEC 10-Q/10-K 로 계산해 TradingView 값과 대조·교체한다.
+
+    직전 회계연도 10-K 값이 없으면 계산하지 않고 TTM 을 비운다('-' 표시).
+    최신 분기가 XBRL 에 아직 없으면(8-K 로만 보충된 분기 등) TradingView 값을 유지한다.
+    교체 내역은 financials["_sec_ttm_overrides"] = {지표 키: {"old", "new"}}.
+    """
+    exch = full_symbol.split(":")[0].upper() if ":" in full_symbol else ""
+    if (exch not in _YF_US_EXCH or trade_ccy != "USD" or fund_ccy != "USD"
+            or not financials):
+        return
+    end0 = financials.get("fiscal_period_end_current")
+    if not isinstance(end0, (int, float)):
+        return
+    target = datetime.fromtimestamp(end0, timezone.utc).strftime("%Y-%m-%d")
+    cik = await _sec_cik_for_symbol(full_symbol)
+    if cik is None:
+        return
+
+    groups = sorted({g for _m, _f, spec in _SEC_TTM_FIELDS for g in spec
+                     if g not in ("+", "-")})
+
+    # 최신 분기가 8-K 로만 보충된 경우(10-Q/10-K 미제출) 그 분기의 8-K 값
+    supp = financials.get("_supplement") or {}
+    k8 = supp.get("values") or {}
+    k8_q = {
+        "revenue": k8.get("total_revenue_fq_h"),
+        "net_income": k8.get("net_income_fq_h"),
+        "gross_profit": k8.get("gross_profit_fq_h"),
+        "cost": (k8["total_revenue_fq_h"] - k8["gross_profit_fq_h"]
+                 if k8.get("total_revenue_fq_h") is not None
+                 and k8.get("gross_profit_fq_h") is not None else None),
+        "eps_basic": k8.get("_eps_basic"),
+    }
+    prev_target = _shift_quarter_end(end0, 1)
+    py_target = _shift_quarter_end(end0, 4)
+
+    async def ttm(group):
+        unit = "USD/shares" if group.startswith("eps") else "USD"
+        status = "no_data"
+        for tag in _SEC_Q_TAGS[group]:
+            items = await _sec_concept_items(cik, tag, unit)
+            if group.startswith("eps"):
+                items = _sec_post_restatement(items)
+            st, v = _sec_ttm_value(items, target)
+            if st == "ok":
+                return st, v
+            if st == "no_annual":
+                status = st
+                continue
+            # 이번 분기 XBRL 이 없으면: 직전 분기 TTM + 이번 분기(8-K) - 전년 동기 분기
+            q_new = k8_q.get(group)
+            if q_new is None:
+                continue
+            st_p, ttm_p = _sec_ttm_value(items, prev_target)
+            if st_p == "no_annual":
+                status = st_p
+                continue
+            q_py = _sec_series_value(items, py_target, "flow", not group.startswith("eps"))
+            if st_p == "ok" and q_py is not None:
+                return "ok_8k", ttm_p + q_new - q_py
+        return status, None
+
+    res = dict(zip(groups, await asyncio.gather(*[ttm(g) for g in groups])))
+    if res.get("revenue", ("", None))[0] in ("ok", "ok_8k"):
+        financials["_sec_ttm_ok"] = True
+
+    overrides = {}
+    done = set()
+    for metric, field, spec in _SEC_TTM_FIELDS:
+        if field in done:
+            continue
+        parts = [res[g] for g in spec if g not in ("+", "-")]
+        if any(st == "no_data" for st, _v in parts):
+            continue                       # 다음 후보식 또는 TradingView 유지
+        done.add(field)
+        old = financials.get(field)
+        reason = "sec_8k" if any(st == "ok_8k" for st, _v in parts) else "sec"
+        if any(st == "no_annual" for st, _v in parts):
+            new, reason = None, "no_annual"
+        elif len(parts) == 1:
+            new = parts[0][1]
+        else:
+            a, b = parts[0][1], parts[1][1]
+            new = a + b if spec[1] == "+" else a - b
+        if old is not None and new is not None:
+            tol = 0.005 if metric == "eps" else 0.0
+            diff = abs(new - old)
+            if diff <= tol or (old != 0 and diff / abs(old) <= 0.01):
+                continue
+        if old is None and new is None:
+            continue
+        financials[field] = new
+        if field == "earnings_per_share_basic_ttm" and data is not None:
+            data[field] = new
+        overrides[metric] = {"old": old, "new": new, "reason": reason}
+
+    # 보충 분기 기준으로 TTM 을 새로 계산했다면, SEC 로 계산하지 못한 TTM 은
+    # TradingView 의 이전 분기 기준 값이라 기준이 섞이므로 비운다('-').
+    if financials.get("_supplement") and financials.get("_sec_ttm_ok"):
+        for metric, field, _spec in _SEC_TTM_FIELDS:
+            if field in done or financials.get(field) is None:
+                continue
+            done.add(field)
+            old = financials[field]
+            financials[field] = None
+            if field == "earnings_per_share_basic_ttm" and data is not None:
+                data[field] = None
+            overrides[metric] = {"old": old, "new": None, "reason": "stale"}
+    if overrides:
+        financials["_sec_ttm_overrides"] = overrides
+
+
+_TTM_REASON_TIP = {
+    "sec": "SEC 공시로 계산한 TTM 으로 교체",
+    "sec_8k": "SEC 직전 분기 TTM + 이번 분기 8-K 실적 - 전년 동기로 계산한 TTM 으로 교체",
+    "no_annual": "직전 회계연도 10-K 가 없어 TTM 을 계산하지 않음",
+    "stale": "SEC 로 계산할 수 없어 표시하지 않음(다른 지표와 기준 분기가 달라짐)",
+}
 
 
 async def fetch_fx_rate(from_ccy, to_ccy):
@@ -1984,8 +2782,7 @@ async def lookup(ticker, exchange=None, lang="en"):
     async def _none():
         return None
 
-    (valuation, financials, consensus, _rf, _erp, rate, usd_rate,
-     sec_roic) = await asyncio.gather(
+    (valuation, financials, consensus, _rf, _erp, rate, usd_rate) = await asyncio.gather(
         fetch_valuation(full_symbol),
         fetch_financials(full_symbol),
         fetch_consensus(full_symbol),
@@ -1993,8 +2790,19 @@ async def lookup(ticker, exchange=None, lang="en"):
         _ensure_erp(),       # WACC 계산용 시장 내재 위험프리미엄 확보
         fetch_fx_rate(fund_ccy, trade_ccy) if need_fx else _none(),
         _usd_rate(),
-        fetch_quarterly_roic(full_symbol),
     )
+
+    # 실적 발표 직후 컨센서스의 '직전 분기 실제'는 이미 갱신됐지만 재무 히스토리(_fq_h)는
+    # 아직 이전 분기에 머무를 수 있다. 직전 실적 발표일이 히스토리 최신 분기 종료일보다
+    # 100일 이상 뒤면(= 그 다음 분기의 발표) 히스토리가 한 분기 늦은 것으로 본다.
+    # (매출 비교는 은행 등 컨센서스/재무제표 매출 정의가 다른 종목에서 오판한다)
+    if consensus is not None:
+        rel = consensus.get("earnings_release_date")
+        end = (financials or {}).get("fiscal_period_end_current")
+        consensus["_ahead_of_financials"] = bool(
+            isinstance(rel, (int, float)) and isinstance(end, (int, float))
+            and rel - end > 100 * 86400)
+        consensus["_enriching"] = True
 
     fx = None
     if rate:
@@ -2002,12 +2810,73 @@ async def lookup(ticker, exchange=None, lang="en"):
         _convert_consensus(consensus, rate)
         fx = {"from": fund_ccy, "to": trade_ccy, "rate": rate}
 
+    # Yahoo/SEC 보강(enrich_stock)은 화면을 먼저 그린 뒤 백그라운드에서 수행한다.
     payload = {
         "forecast": data, "valuation": valuation, "financials": financials,
         "consensus": consensus, "fx": fx, "usd_rate": usd_rate,
-        "sec_roic": sec_roic,
+        "sec_roic": None, "_ccy": (trade_ccy, fund_ccy), "_enriching": True,
     }
     return "stock", full_symbol, payload
+
+
+async def enrich_stock(full_symbol, payload):
+    """TradingView 기본 데이터에 Yahoo/SEC 보강을 적용한다(payload 제자리 수정).
+
+    분기 보충(Yahoo → SEC 10-Q → 8-K), 최근 분기·TTM 의 SEC 대조, SEC ROIC.
+    SEC 재무는 companyfacts 1건을 공유 캐시로 쓰므로 단계 간 중복 요청이 없다.
+    """
+    data = payload.get("forecast") or {}
+    financials = payload.get("financials")
+    consensus = payload.get("consensus")
+    trade_ccy, fund_ccy = payload.get("_ccy") or (None, None)
+
+    async def _quarters():
+        if consensus is None:
+            return
+        # 최근 분기: TradingView → Yahoo → SEC 10-K/Q → SEC 8-K (지표별 순차 보충)
+        await _fill_latest_quarter(full_symbol, financials, consensus, trade_ccy)
+        # 최근 분기 핵심 지표·TTM 을 SEC 공시 값과 대조(미국 상장·USD 종목만)
+        try:
+            await _reconcile_with_sec(full_symbol, financials, trade_ccy)
+        except Exception as exc:
+            _warn("sec-reconcile", exc)
+        try:
+            await _reconcile_ttm_with_sec(full_symbol, financials, data, trade_ccy, fund_ccy)
+        except Exception as exc:
+            _warn("sec-ttm", exc)
+
+    _q, sec_roic = await asyncio.gather(_quarters(), fetch_quarterly_roic(full_symbol))
+    payload["sec_roic"] = sec_roic
+    payload["_enriching"] = False
+    if consensus is not None:
+        consensus["_enriching"] = False
+
+
+_ENRICH_STATE = {"token": 0}
+
+
+async def _enrich_and_rerender(full_symbol, payload):
+    """백그라운드 보강 후, 사용자가 그사이 다른 종목을 조회하지 않았으면 다시 그린다."""
+    _ENRICH_STATE["token"] += 1
+    token = _ENRICH_STATE["token"]
+    try:
+        await enrich_stock(full_symbol, payload)
+    except Exception as exc:
+        _warn("enrich", exc)
+        payload["_enriching"] = False
+        if payload.get("consensus") is not None:
+            payload["consensus"]["_enriching"] = False
+    # 보강 완료 전에 비교 목록에 추가된 경우 ROIC 반영(재무 dict 는 같은 객체라 자동 반영)
+    for c in _COMPARE:
+        if c.get("symbol") == full_symbol and payload.get("sec_roic") is not None:
+            c["sec_roic"] = payload["sec_roic"]
+    if _ENRICH_STATE["token"] != token or _LAST_STOCK.get("symbol") != full_symbol:
+        return
+    try:
+        render_report(full_symbol, payload, keep_chart=True)
+        _set_status("완료 · %s (종목)" % full_symbol)
+    except Exception as exc:
+        _warn("enrich-render", exc)
 
 
 def rating_label(mark):
@@ -2372,7 +3241,7 @@ _CMP_HOVER = {"cols": [], "W": 0.0, "H": 0.0, "y1": 0.0, "y2": 0.0, "ndots": 0}
 _USD_RATES = {"USD": 1.0}
 
 
-def render_report(full_symbol, payload):
+def render_report(full_symbol, payload, keep_chart=False):
     if isinstance(payload, dict) and "forecast" in payload:
         data = payload.get("forecast") or {}
         valuation = payload.get("valuation")
@@ -2477,9 +3346,11 @@ def render_report(full_symbol, payload):
 
     # 실적 추정치 · 컨센서스 (실제 실적 + 애널리스트 추정 통합)
     eps_ttm = data.get("earnings_per_share_basic_ttm")
-    rev_ttm = data.get("total_revenue")
+    # data["total_revenue"] 는 최근 '회계연도' 매출이므로 TTM 은 재무 히스토리 값을 쓴다.
+    rev_ttm = (financials or {}).get("total_revenue_ttm")
     next_earn = data.get("earnings_release_next_date")
     con = consensus or {}
+    ahead = bool(con.get("_ahead_of_financials"))
 
     def _con(key):
         # 컨센서스 우선, 없으면 forecast(data) 로 폴백(다음 분기/회계연도만 존재).
@@ -2494,11 +3365,16 @@ def render_report(full_symbol, payload):
         v = _con(key)
         return fmt_large(v, cur) if v is not None else "-"
 
-    # 분기/회계연도 라벨 계산(직전 실적 분기 기준). 실패 시 일반 라벨 사용.
-    q_prev_lbl, q_cur_lbl, q_next_lbl = "직전 분기", "이번 분기", "다음 분기"
-    fy_cur_lbl, fy_next_lbl = "올해 FY", "내년 FY"
+    # 분기/회계연도 라벨 계산. 실패 시 일반 라벨 사용.
+    #   *_forecast_fq      = 직전 '발표된' 분기의 컨센서스(실제 - 서프라이즈와 동일)
+    #   *_forecast_next_fq = 그 다음(아직 발표 전) 분기
+    #   *_forecast_next_fy = 다음 분기가 속한 회계연도, *_forecast_fy = 그 직전 회계연도
+    q_prev_lbl, q_next_lbl = "직전 분기", "다음 분기"
+    fy_cur_lbl, fy_next_lbl = "직전 FY", "올해 FY"
+    fin_latest_lbl = None
     try:
         _base = _quarter_labels(financials, 1) if financials else []
+        fin_latest_lbl = _base[-1]
         _by, _bq = _base[-1].split(" Q")
         _by, _bq = int(_by), int(_bq)
 
@@ -2506,28 +3382,63 @@ def render_report(full_symbol, payload):
             t = y * 4 + (q - 1) + k
             return t // 4, t % 4 + 1
 
-        _cy, _cq = _qadd(_by, _bq, 1)
-        _ny, _nq = _qadd(_by, _bq, 2)
+        if ahead:
+            _by, _bq = _qadd(_by, _bq, 1)
+        _ny, _nq = _qadd(_by, _bq, 1)
         q_prev_lbl = "%d Q%d" % (_by, _bq)
-        q_cur_lbl = "%d Q%d" % (_cy, _cq)
         q_next_lbl = "%d Q%d" % (_ny, _nq)
-        fy_cur_lbl = "FY%d" % _cy
-        fy_next_lbl = "FY%d" % (_cy + 1)
+        fy_cur_lbl = "FY%d" % (_ny - 1)
+        fy_next_lbl = "FY%d" % _ny
     except (ValueError, IndexError, AttributeError, TypeError):
         pass
 
     html.append('<div class="sec"><h3>실적 추정치 · 컨센서스</h3>')
+    supp = (financials or {}).get("_supplement")
+    if ahead and fin_latest_lbl and con.get("_enriching"):
+        html.append('<div class="hint">ℹ 최근 분기(%s) 실적을 Yahoo/SEC 에서 확인하는 '
+                    '중입니다...</div>' % _esc(q_prev_lbl))
+    elif ahead and fin_latest_lbl and con.get("_sec_error"):
+        html.append('<div class="hint">⚠ 최근 분기(%s) 실적을 SEC 에서 확인하지 못했습니다'
+                    '(일시적 조회 실패 · 다시 조회해 보세요).</div>' % _esc(q_prev_lbl))
+    elif ahead and fin_latest_lbl and not con.get("_sec_has_latest"):
+        html.append('<div class="hint">⚠ 최근 분기(%s) 실적 데이터가 아직 없습니다.</div>'
+                    % _esc(q_prev_lbl))
+    elif supp:
+        ttm_note = ("" if (financials or {}).get("_sec_ttm_ok")
+                    else " (TTM 지표는 이전 분기 기준)")
+        html.append('<div class="hint">ℹ %s 분기 재무는 %s 에서 보충했습니다.%s</div>'
+                    % (_esc(supp["label"]), _esc(supp["source"]), ttm_note))
 
     # 최근 실적(TTM) + 직전 분기 실제·어닝 서프라이즈
     eps_act = con.get("earnings_per_share_fq")
+    rev_act = con.get("revenue_fq")
     surp = con.get("eps_surprise_fq")
     surp_pct = con.get("eps_surprise_percent_fq")
     last_date = con.get("earnings_release_date")
     est_prev = (eps_act - surp) if (eps_act is not None
                                     and surp is not None) else None
+    ttm_ov = (financials or {}).get("_sec_ttm_overrides") or {}
+
+    def _ttm_kv(label, metric, text):
+        o = ttm_ov.get(metric)
+        if not o:
+            return _kv(label, text)
+        tip = _TTM_REASON_TIP.get(o.get("reason"), "")
+        if o["old"] is not None:
+            tip += " (TradingView: %s)" % (
+                fmt_large(o["old"], cur) if metric != "eps" else fmt_num(o["old"]))
+        return ('<div class="kv" title="%s"><span class="k">%s</span>'
+                '<span class="v">%s*</span></div>' % (_esc(tip), _esc(label), _esc(text)))
+
     html.append('<div class="grid">')
-    html.append(_kv("매출 (최근 TTM)", fmt_large(rev_ttm, cur)))
-    html.append(_kv("EPS (최근 TTM)", "%s %s" % (fmt_num(eps_ttm), cur)))
+    html.append(_ttm_kv("매출 (최근 TTM)", "revenue", fmt_large(rev_ttm, cur)))
+    html.append(_ttm_kv("EPS (최근 TTM)", "eps", "%s %s" % (fmt_num(eps_ttm), cur)))
+    if rev_act is not None:
+        html.append(_kv("%s 실제 매출" % q_prev_lbl, fmt_large(rev_act, cur)))
+        rev_est = con.get("revenue_forecast_fq")
+        if rev_est is not None:
+            html.append(_kv("%s 컨센서스 매출" % q_prev_lbl,
+                            fmt_large(rev_est, cur)))
     if eps_act is not None:
         html.append(_kv("%s 실제 EPS" % q_prev_lbl,
                         "%s %s" % (fmt_num(eps_act), cur)))
@@ -2542,12 +3453,12 @@ def render_report(full_symbol, payload):
                         '</span></div>' % (scls, arrow, surp_pct))
     html.append('</div>')
 
-    # 향후 기간별 EPS·매출 컨센서스(표)
-    html.append('<h3 style="margin-top:14px">향후 컨센서스 (애널리스트 추정)</h3>')
+    # 기간별 EPS·매출 컨센서스(표)
+    html.append('<h3 style="margin-top:14px">기간별 컨센서스 (애널리스트 추정)</h3>')
     html.append('<div class="fin-table-wrap"><table class="fin-table">'
-                '<thead><tr><th>구분</th><th>%s</th><th>%s</th>'
+                '<thead><tr><th>구분</th><th>%s (발표 완료)</th><th>%s</th>'
                 '<th>%s</th><th>%s</th></tr></thead><tbody>'
-                % (_esc(q_cur_lbl), _esc(q_next_lbl),
+                % (_esc(q_prev_lbl), _esc(q_next_lbl),
                    _esc(fy_cur_lbl), _esc(fy_next_lbl)))
     html.append('<tr><td>EPS (%s)</td><td>%s</td><td>%s</td><td>%s</td>'
                 '<td>%s</td></tr>'
@@ -2577,10 +3488,12 @@ def render_report(full_symbol, payload):
             v = valuation.get(key)
             return "%s%s" % (fmt_num(v), suffix) if v is not None else "-"
         html.append('<div class="sec"><h3>평가비율 (현재)</h3><div class="grid">')
+        tv_q = str((financials or {}).get("_tv_period") or "").replace("-", " ")
+        pbr_lbl = "PBR (P/B · %s 자본 기준)" % tv_q if tv_q else "PBR (P/B)"
         html.append(_kv("시가총액", fmt_large(valuation.get("market_cap_basic"), cur)))
         html.append(_kv("PER (P/E · TTM)", rv("price_earnings_ttm")))
         html.append(_kv("Forward PER (P/E)", rv("price_earnings_fwd")))
-        html.append(_kv("PBR (P/B)", rv("price_book_fq")))
+        html.append(_kv(pbr_lbl, rv("price_book_fq")))
         html.append(_kv("EV / EBITDA", rv("enterprise_value_ebitda_ttm")))
         html.append(_kv("P / OCF", rv("price_to_cash_f_operating_activities_ttm")))
         html.append(_kv("PEG", rv("price_earnings_growth_ttm", "")))
@@ -2621,11 +3534,23 @@ def render_report(full_symbol, payload):
     html.append('<div id="stock-chart"></div>')
     html.append('<div id="fin-section"></div>')
 
+    # 보강 후 재표시(keep_chart)면 차트 DOM·분기/연간 탭 상태를 그대로 유지한다.
+    old_chart = document.querySelector("#stock-chart") if keep_chart else None
+    prev_period = (_FIN_STATE.get("period")
+                   if keep_chart and _FIN_STATE.get("symbol") == full_symbol else None)
+    if old_chart is not None:
+        old_chart.remove()
+
     document.querySelector("#result").innerHTML = "".join(html)
     _bind_tech_controls()
     init_financials(full_symbol, financials, cur)
+    if prev_period and prev_period != _FIN_STATE.get("period"):
+        _apply_fin_period(prev_period)
     render_compare()
-    asyncio.ensure_future(load_stock_chart(full_symbol, desc))
+    if old_chart is not None:
+        document.querySelector("#stock-chart").replaceWith(old_chart)
+    else:
+        asyncio.ensure_future(load_stock_chart(full_symbol, desc))
 
 
 def _on_add_compare(event):
@@ -3196,7 +4121,12 @@ def render_compare():
     row("시가총액", f_mktcap)
     row("PER (P/E · TTM)", f_val("price_earnings_ttm"))
     row("Forward PER (P/E)", f_val("price_earnings_fwd"))
-    row("PBR (P/B)", f_val("price_book_fq"))
+
+    def f_pbr(c):
+        txt, cls = f_val("price_book_fq")(c)
+        tv_q = str((c.get("financials") or {}).get("_tv_period") or "").replace("-", " ")
+        return (("%s (%s 자본)" % (txt, tv_q)) if tv_q and txt != "-" else txt), cls
+    row("PBR (P/B)", f_pbr)
     row("EV / EBITDA", f_val("enterprise_value_ebitda_ttm"))
     row("P / OCF", f_val("price_to_cash_f_operating_activities_ttm"))
     row("PEG", f_val("price_earnings_growth_ttm", ""))
@@ -3374,9 +4304,15 @@ def _bind(el, event, handler):
 def _quarter_labels(fin, n):
     """분기 기간 라벨(예: '2025 Q4')을 유도한다. 연대순(과거→최신) 배열 반환.
 
-    TradingView 는 분기 기간 라벨을 제공하지 않으므로, 최신 회계연도와
-    '최근 4개 분기 매출 합계 ≈ 최신 연간 매출' 관계로 최신 분기 위치를 추정한다.
+    TradingView 가 제공하는 fiscal_period_current(예: '2026-Q2')가 있으면 그것을
+    최신 분기 라벨로 쓴다. 없으면 최신 회계연도와 '최근 4개 분기 매출 합계 ≈ 최신
+    연간 매출' 관계로 최신 분기 위치를 추정한다.
     """
+    newest = None
+    m = re.match(r"^(\d{4})-Q([1-4])$", str(fin.get("fiscal_period_current") or ""))
+    if m:
+        newest = (int(m.group(1)), int(m.group(2)))
+
     fy_h = fin.get("fiscal_period_fy_h") or []
     latest_fy = None
     if fy_h:
@@ -3384,7 +4320,7 @@ def _quarter_labels(fin, n):
             latest_fy = int(fy_h[0])
         except (ValueError, TypeError):
             latest_fy = None
-    if latest_fy is None:
+    if newest is None and latest_fy is None:
         # 회계연도 정보가 없으면 최신부터 역순 번호를 라벨로 사용
         return list(reversed(["P%d" % (n - i) for i in range(n)]))
 
@@ -3393,7 +4329,7 @@ def _quarter_labels(fin, n):
     latest_ann_rev = ann_rev[0] if ann_rev else None
 
     off = 0  # 최신 회계연도 이후로 이미 발표된 분기 수(0~3)
-    if latest_ann_rev:
+    if newest is None and latest_ann_rev:
         best = None
         for o in range(4):
             win = q_rev[o:o + 4]
@@ -3403,7 +4339,9 @@ def _quarter_labels(fin, n):
             if best is None or d < best:
                 best, off = d, o
 
-    if off > 0:
+    if newest is not None:
+        year, q = newest
+    elif off > 0:
         year, q = latest_fy + 1, off
     else:
         year, q = latest_fy, 4
@@ -3704,12 +4642,32 @@ def _fin_chart_svg(metric, sel_years, cur):
     return "".join(parts)
 
 
+# 분기 표 지표 키 → TradingView _fq_h 키 (보충 분기 출처 툴팁용)
+_METRIC_FQ_KEY = {
+    "revenue": "total_revenue_fq_h", "net_income": "net_income_fq_h",
+    "gross_profit": "gross_profit_fq_h", "ebitda": "ebitda_fq_h",
+    "fcf": "free_cash_flow_fq_h", "eps": "earnings_per_share_diluted_fq_h",
+    "assets": "total_assets_fq_h", "debt": "total_debt_fq_h",
+}
+
+
 def _fin_table(metrics, sel_years, cur):
     if not sel_years:
         return '<div class="hint">표시할 기간을 선택하세요.</div>'
     years = _FIN_STATE.get("years", [])
     show_cur = _FIN_STATE.get("period") != "quarterly"
     idx = {y: i for i, y in enumerate(years)}
+    # SEC 공시 값으로 교체된 분기 칸: (지표 키, 분기 라벨) -> 기록
+    ov = {}
+    ttm_ov = {}
+    supp_lbl, supp_by = None, {}
+    if not show_cur:
+        for o in (_FIN_STATE.get("fin") or {}).get("_sec_overrides") or []:
+            ov[(o["metric"], o["label"])] = o
+        supp = (_FIN_STATE.get("fin") or {}).get("_supplement") or {}
+        supp_lbl, supp_by = supp.get("label"), supp.get("by_key") or {}
+    else:
+        ttm_ov = (_FIN_STATE.get("fin") or {}).get("_sec_ttm_overrides") or {}
     html = ['<div class="fin-table-wrap"><table class="fin-table"><thead><tr>'
             '<th>지표</th>']
     for y in sel_years:
@@ -3722,11 +4680,32 @@ def _fin_table(metrics, sel_years, cur):
         html.append('<tr%s><td>%s</td>' % (rowcls, _esc(m["label"])))
         for y in sel_years:
             v = m["values"][idx[y]] if y in idx else None
-            html.append('<td>%s</td>' % _esc(_metric_cell_fmt(m["kind"], v, cur)))
+            o = ov.get((m["key"], y))
+            src = (supp_by.get(_METRIC_FQ_KEY.get(m["key"]))
+                   if supp_lbl and y == supp_lbl and m["key"] in _METRIC_FQ_KEY else None)
+            if o:
+                tip = "SEC 공시 값으로 교체 (TradingView: %s)" % _metric_cell_fmt(
+                    m["kind"], o["old"], cur)
+                html.append('<td title="%s">%s*</td>'
+                            % (_esc(tip), _esc(_metric_cell_fmt(m["kind"], v, cur))))
+            elif supp_lbl and y == supp_lbl and m["key"] in _METRIC_FQ_KEY:
+                tip = ("출처: %s" % src) if src else "출처: 없음 (TradingView·Yahoo·SEC 모두 미제공)"
+                html.append('<td title="%s">%s</td>'
+                            % (_esc(tip), _esc(_metric_cell_fmt(m["kind"], v, cur))))
+            else:
+                html.append('<td>%s</td>' % _esc(_metric_cell_fmt(m["kind"], v, cur)))
         if show_cur:
             cv = m.get("current")
-            html.append('<td class="cur-col">%s</td>'
-                        % _esc(_metric_cell_fmt(m["kind"], cv, cur)))
+            to = ttm_ov.get(m["key"])
+            if to:
+                tip = _TTM_REASON_TIP.get(to.get("reason"), "")
+                if to["old"] is not None:
+                    tip += " (TradingView: %s)" % _metric_cell_fmt(m["kind"], to["old"], cur)
+                html.append('<td class="cur-col" title="%s">%s*</td>'
+                            % (_esc(tip), _esc(_metric_cell_fmt(m["kind"], cv, cur))))
+            else:
+                html.append('<td class="cur-col">%s</td>'
+                            % _esc(_metric_cell_fmt(m["kind"], cv, cur)))
         html.append('</tr>')
     html.append('</tbody></table></div>')
     return "".join(html)
@@ -3777,11 +4756,24 @@ def refresh_financials():
     # 표
     html.append(_fin_table(metrics, sel_years, cur))
     note = ("출처: Investing · 분기별 재무 데이터에서 계산한 지표입니다. "
-            "성장률은 전년동기(YoY) 기준이며, 분기 기간 라벨은 매출 기준으로 "
-            "추정한 값입니다."
+            "성장률은 전년동기(YoY) 기준이며, 분기 기간 라벨은 TradingView 회계 "
+            "기간 기준입니다."
             if quarterly else
             "출처: Investing · 연도별 재무 데이터에서 계산한 지표입니다. "
             "선택한 지표는 표에서 강조됩니다.")
+    supp = (st.get("fin") or {}).get("_supplement")
+    if quarterly and supp:
+        note += (" ※ %s 분기는 TradingView 미반영으로 지표별로 Yahoo Finance → SEC 10-K/Q → "
+                 "SEC 8-K 순으로 찾은 값을 사용했습니다(이번: %s · 칸에 마우스를 올리면 "
+                 "출처 표시, 지표 정의가 일부 다를 수 있고 없는 항목은 빈칸)."
+                 % (supp["label"], supp["source"]))
+    if quarterly and (st.get("fin") or {}).get("_sec_overrides"):
+        note += (" * 표시: TradingView 값이 SEC 10-Q/10-K 공시 값과 1% 이상 달라 "
+                 "SEC 값으로 교체한 칸입니다(마우스를 올리면 원래 값 표시).")
+    if not quarterly and (st.get("fin") or {}).get("_sec_ttm_overrides"):
+        note += (" 현재(TTM) 열의 * 표시: SEC 10-Q/10-K 로 계산한 TTM(직전 회계연도 + "
+                 "올해 누적 - 전년 동기 누적)으로 교체했거나, 직전 회계연도 10-K 가 없거나 "
+                 "기준 분기가 맞지 않아 표시하지 않은('-') 칸입니다(마우스를 올리면 사유 표시).")
     html.append('<div class="hint">%s</div>' % note)
     html.append('</div></div>')
 
@@ -7497,22 +8489,49 @@ def _guru_by_cik(cik):
     return _GURU_INDEX.get(cik)
 
 
+# SEC 공정 사용 정책(초당 10건)을 넘으면 403 이 반환된다. 앱 전체 SEC 요청을
+# 동시 2건·최소 간격으로 제한하고, 403/429/5xx·네트워크 오류는 간격을 늘려 재시도한다.
+_SEC_HTTP_LIMIT = asyncio.Semaphore(2)
+_SEC_HTTP_STATE = {"last": 0.0}
+_SEC_MIN_INTERVAL = 0.15
+_SEC_RETRY_DELAYS = (0.8, 1.6, 3.2)
+
+
+async def _sec_fetch_text(url):
+    """SEC EDGAR 를 프록시 경유로 조회해 본문 문자열을 반환. 실패 시 None."""
+    for attempt in range(len(_SEC_RETRY_DELAYS) + 1):
+        status = None
+        async with _SEC_HTTP_LIMIT:
+            wait = _SEC_HTTP_STATE["last"] + _SEC_MIN_INTERVAL - time.time()
+            if wait > 0:
+                await asyncio.sleep(wait)
+            _SEC_HTTP_STATE["last"] = time.time()
+            try:
+                resp = await pyfetch(_proxied(url), method="GET")
+                status = resp.status
+                if status < 400:
+                    return await resp.string()
+                try:
+                    body = (await resp.string())[:160]
+                except Exception:
+                    body = ""
+                _SEC_LAST_ERR["msg"] = "HTTP %s · %s · 응답: %s" % (status, url, body)
+            except Exception as exc:
+                _SEC_LAST_ERR["msg"] = "네트워크 오류(%s): %s" % (url, exc)
+        retryable = status is None or status in (403, 429) or status >= 500
+        if not retryable or attempt == len(_SEC_RETRY_DELAYS):
+            return None
+        await asyncio.sleep(_SEC_RETRY_DELAYS[attempt])
+    return None
+
+
 async def _sec_get_json(url):
     """SEC EDGAR JSON 조회(프록시 경유). 실패 시 None."""
-    try:
-        resp = await pyfetch(_proxied(url), method="GET")
-    except Exception as exc:
-        _SEC_LAST_ERR["msg"] = "네트워크 오류(%s): %s" % (url, exc)
-        return None
-    if resp.status >= 400:
-        try:
-            body = (await resp.string())[:160]
-        except Exception:
-            body = ""
-        _SEC_LAST_ERR["msg"] = "HTTP %s · %s · 응답: %s" % (resp.status, url, body)
+    text = await _sec_fetch_text(url)
+    if text is None:
         return None
     try:
-        return json.loads(await resp.string())
+        return json.loads(text)
     except ValueError:
         _SEC_LAST_ERR["msg"] = "JSON 파싱 실패 · %s" % url
         return None
@@ -7520,19 +8539,7 @@ async def _sec_get_json(url):
 
 async def _sec_get_text(url):
     """SEC EDGAR 텍스트/XML 조회(프록시 경유). 실패 시 None."""
-    try:
-        resp = await pyfetch(_proxied(url), method="GET")
-    except Exception as exc:
-        _SEC_LAST_ERR["msg"] = "네트워크 오류(%s): %s" % (url, exc)
-        return None
-    if resp.status >= 400:
-        try:
-            body = (await resp.string())[:160]
-        except Exception:
-            body = ""
-        _SEC_LAST_ERR["msg"] = "HTTP %s · %s · 응답: %s" % (resp.status, url, body)
-        return None
-    return await resp.string()
+    return await _sec_fetch_text(url)
 
 
 def _local_tag(tag):
@@ -7592,16 +8599,66 @@ def _days_between(a, b):
         return None
 
 
+async def _sec_latest_filing(full_symbol, period_end_ts, release_ts):
+    """재무 히스토리 최신 분기 이후 분기의 실적이 SEC 에 제출됐는지 확인.
+
+    그 분기의 10-Q/10-K 와 실적 발표 8-K(Item 2.02, 발표일 무렵 제출)를 모두 찾는다.
+    반환: {"cik", "q_report", "q_form", "k8_acc"} (둘 다 없으면 None,
+          SEC 조회 자체가 실패하면 {"error": True}).
+    """
+    cik = await _sec_cik_for_symbol(full_symbol)
+    if cik is None:
+        return None if _SEC_CIK_MAP else {"error": True}
+    subs = await _sec_get_json(SEC_SUBMISSIONS_URL % cik)
+    if not isinstance(subs, dict):
+        return {"error": True}
+    recent = (subs.get("filings") or {}).get("recent") or {}
+    forms = recent.get("form") or []
+    fdates = recent.get("filingDate") or []
+    rdates = recent.get("reportDate") or []
+    items = recent.get("items") or []
+    accs = recent.get("accessionNumber") or []
+    fmt = lambda ts: datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d")
+    end_d = fmt(period_end_ts)
+    rel_d = fmt(release_ts - 2 * 86400) if release_ts else end_d
+    out = {"cik": cik, "q_report": None, "q_form": None, "k8_acc": None}
+    for i, form in enumerate(forms):
+        fdate = fdates[i] if i < len(fdates) else ""
+        rdate = rdates[i] if i < len(rdates) else ""
+        if (not out["q_report"] and form in ("10-Q", "10-K", "10-Q/A", "10-K/A")
+                and rdate > end_d):
+            # 바로 다음 분기(분기말 60~120일 뒤)만 채택
+            g = _days_between(end_d, rdate)
+            if g is not None and 60 <= g <= 120:
+                out["q_report"], out["q_form"] = rdate, form
+        if (not out["k8_acc"] and form == "8-K"
+                and "2.02" in (items[i] if i < len(items) else "")
+                and fdate >= rel_d):
+            out["k8_acc"] = accs[i] if i < len(accs) else None
+    if not out["q_report"] and not out["k8_acc"]:
+        return None
+    return out
+
+
+async def _sec_8k_exhibit_url(cik, acc):
+    """8-K 제출물 인덱스에서 보도자료(EX-99/EX-99.1) 문서 URL 을 찾는다."""
+    base = "%s/%d/%s" % (SEC_ARCHIVES_BASE, cik, acc.replace("-", ""))
+    idx = await _sec_get_text("%s/%s-index.html" % (base, acc))
+    for tr in re.findall(r"<tr.*?</tr>", idx or "", re.S | re.I):
+        if re.search(r">\s*EX-99(\.1)?\s*<", tr):
+            href = re.search(r'href="([^"]+\.html?)"', tr, re.I)
+            if href:
+                h = href.group(1)
+                return ("https://www.sec.gov" + h if h.startswith("/")
+                        else "%s/%s" % (base, h))
+    return None
+
+
 async def _sec_concept_quarterly_flow(cik, tags):
     """손익 항목의 '분기(3개월)' 값 {기말일: 값}. 연간-9개월 차이로 4분기도 보완."""
     three, nine, ann = {}, {}, {}
     for tag in tags:
-        url = ("https://data.sec.gov/api/xbrl/companyconcept/CIK%010d/us-gaap/%s.json"
-               % (cik, tag))
-        data = await _sec_get_json(url)
-        if not isinstance(data, dict):
-            continue
-        for it in (data.get("units") or {}).get("USD") or []:
+        for it in (await _sec_concept_units(cik, tag)).get("USD") or []:
             form = it.get("form") or ""
             if "10-K" not in form and "10-Q" not in form:
                 continue
@@ -7633,12 +8690,7 @@ async def _sec_concept_quarter_end(cik, tags):
     """재무상태표 항목의 '분기말 잔액' {기말일: 값}. 10-Q/10-K 모두 사용."""
     out = {}
     for tag in tags:
-        url = ("https://data.sec.gov/api/xbrl/companyconcept/CIK%010d/us-gaap/%s.json"
-               % (cik, tag))
-        data = await _sec_get_json(url)
-        if not isinstance(data, dict):
-            continue
-        for it in (data.get("units") or {}).get("USD") or []:
+        for it in (await _sec_concept_units(cik, tag)).get("USD") or []:
             form = it.get("form") or ""
             if "10-K" not in form and "10-Q" not in form:
                 continue
@@ -9466,9 +10518,10 @@ def _render_earncal():
             if day == today:
                 cls.append("today")
             chips = "".join(
-                '<span class="earn-chip%s %s %s" title="%s">%s</span>' % (
+                '<span class="earn-chip%s %s %s" data-go="%s" title="%s">%s</span>' % (
                     " past" if ev["date"] < today else "",
                     _earncal_mark(ev, sym_folders), ev.get("kind", ""),
+                    _esc(ev["sym"]),
                     _esc("%s %s%s" % (ev["sym"], ev["name"],
                                       _EARN_KIND_LABEL.get(ev.get("kind", ""), ""))),
                     _esc(ev["tkr"]))
@@ -9504,8 +10557,9 @@ def _render_earncal_upcoming():
         return
     sym_folders = _earncal_sym_folders()
     trs = "".join(
-        '<tr class="%s"><td>%s</td><td>%s</td><td><b>%s</b></td><td>%s%s</td></tr>' % (
-            _earncal_mark(ev, sym_folders),
+        '<tr class="%s" data-go="%s" title="클릭하면 종목을 조회합니다">'
+        '<td>%s</td><td>%s</td><td><b>%s</b></td><td>%s%s</td></tr>' % (
+            _earncal_mark(ev, sym_folders), _esc(ev["sym"]),
             ev["date"].isoformat(),
             "D-DAY" if ev["date"] == today else "D-%d" % (ev["date"] - today).days,
             _esc(ev["tkr"]), _esc(ev["name"]),
@@ -9547,12 +10601,30 @@ def on_earncal_up(event):
     document.querySelector("#earncal-up-pop").classList.add("open")
 
 
+def _earncal_go(symbol):
+    document.querySelector("#earncal-up-pop").classList.remove("open")
+    document.querySelector("#ticker").value = symbol
+    document.querySelector('.tab-btn[data-tab="stock"]').click()
+    document.querySelector("#lookupBtn").click()
+
+
+@when("click", "#earncal-result")
+def on_earncal_result_click(event):
+    chip = event.target.closest("[data-go]")
+    if chip is not None:
+        _earncal_go(chip.getAttribute("data-go"))
+
+
 @when("click", "#earncal-up-pop")
 def on_earncal_pop_click(event):
     # 배경(오버레이) 또는 닫기 버튼 클릭 시 닫는다.
     t = event.target
     if t.id == "earncal-up-pop" or t.closest(".modal-pop-close") is not None:
         document.querySelector("#earncal-up-pop").classList.remove("open")
+        return
+    row = t.closest("tr[data-go]")
+    if row is not None:
+        _earncal_go(row.getAttribute("data-go"))
 
 
 # ===================== 공포·탐욕 지수 (CNN Business) =====================
@@ -10726,7 +11798,8 @@ async def on_lookup(event):
             _set_status("완료 · %s (ETF)" % full_symbol)
         else:
             render_report(full_symbol, payload)
-            _set_status("완료 · %s (종목)" % full_symbol)
+            _set_status("완료 · %s (종목) · Yahoo/SEC 보강 중..." % full_symbol)
+            asyncio.ensure_future(_enrich_and_rerender(full_symbol, payload))
     except InvestingApiError as exc:
         _set_status("오류")
         window.alert("조회 실패:\n%s" % exc)
