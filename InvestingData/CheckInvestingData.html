@@ -2098,10 +2098,14 @@ def _parse_earnings_release(doc, period_end_ts):
                 out["gross_profit_fq_h"] = gp * sc
             elif cor is not None:
                 out["gross_profit_fq_h"] = (rev - cor) * sc
-            eps = first(rows, r"^diluted( net (income|earnings|loss).*per share.*)?$")
+            eps = first(rows, r"^diluted( (net )?(income|earnings|loss).*per share.*)?$"
+                              r"|^(net )?(income|earnings)( \(loss\))? per (common )?share"
+                              r"[ ,\-\u2013\u2014]+diluted$")
             if eps is not None and abs(eps) < 10000:
                 out["earnings_per_share_diluted_fq_h"] = eps
-            eps_b = first(rows, r"^basic( net (income|earnings|loss).*per share.*)?$")
+            eps_b = first(rows, r"^basic( (net )?(income|earnings|loss).*per share.*)?$"
+                                r"|^(net )?(income|earnings)( \(loss\))? per (common )?share"
+                                r"[ ,\-\u2013\u2014]+basic$")
             if eps_b is not None and abs(eps_b) < 10000:
                 out["_eps_basic"] = eps_b
         if "total_assets_fq_h" not in out and first(rows, r"^total assets$") is not None:
@@ -2600,6 +2604,8 @@ async def _reconcile_ttm_with_sec(full_symbol, financials, data, trade_ccy, fund
         financials["_sec_ttm_overrides"] = overrides
 
 
+_EPS_BASIS_WARN_PCT = 15.0   # GAAP 실제 EPS vs 컨센서스 차이가 이 % 이상이면 기준 불일치 경고
+
 _TTM_REASON_TIP = {
     "sec": "SEC 공시로 계산한 TTM 으로 교체",
     "sec_8k": "SEC 직전 분기 TTM + 이번 분기 8-K 실적 - 전년 동기로 계산한 TTM 으로 교체",
@@ -2802,6 +2808,10 @@ async def lookup(ticker, exchange=None, lang="en"):
             isinstance(rel, (int, float)) and isinstance(end, (int, float))
             and rel - end > 100 * 86400)
         consensus["_enriching"] = True
+        # '직전 분기 실제 EPS' 가 속한 분기말(보충으로 재무 분기가 바뀌기 전에 확정)
+        if isinstance(end, (int, float)):
+            consensus["_reported_q_end"] = (_next_quarter_end_ts(end)
+                                            if consensus["_ahead_of_financials"] else end)
 
     fx = None
     if rate:
@@ -2844,7 +2854,14 @@ async def enrich_stock(full_symbol, payload):
         except Exception as exc:
             _warn("sec-ttm", exc)
 
-    _q, sec_roic = await asyncio.gather(_quarters(), fetch_quarterly_roic(full_symbol))
+    async def _eps_basis():
+        try:
+            await _check_eps_basis(full_symbol, consensus, trade_ccy)
+        except Exception as exc:
+            _warn("eps-basis", exc)
+
+    _q, sec_roic, _b = await asyncio.gather(
+        _quarters(), fetch_quarterly_roic(full_symbol), _eps_basis())
     payload["sec_roic"] = sec_roic
     payload["_enriching"] = False
     if consensus is not None:
@@ -3417,6 +3434,7 @@ def render_report(full_symbol, payload, keep_chart=False):
     est_prev = (eps_act - surp) if (eps_act is not None
                                     and surp is not None) else None
     ttm_ov = (financials or {}).get("_sec_ttm_overrides") or {}
+    eps_note = None
 
     def _ttm_kv(label, metric, text):
         o = ttm_ov.get(metric)
@@ -3439,18 +3457,53 @@ def render_report(full_symbol, payload, keep_chart=False):
             html.append(_kv("%s 컨센서스 매출" % q_prev_lbl,
                             fmt_large(rev_est, cur)))
     if eps_act is not None:
-        html.append(_kv("%s 실제 EPS" % q_prev_lbl,
-                        "%s %s" % (fmt_num(eps_act), cur)))
+        basis = con.get("_eps_basis")
+        aligned = con.get("_eps_aligned")
+        gaap_v, adj_v = con.get("_eps_gaap"), con.get("_eps_adj")
+        basis_txt = {"gaap": " (GAAP)", "adjusted": " (조정)", "same": " (GAAP=조정)"}.get(basis, "")
+        if aligned is not None:
+            # 컨센서스와 같은 조정 기준으로 비교(회사 공시 조정/일회성 제외 EPS)
+            adj_lbl = ("일회성 제외 · 회사 공시" if con.get("_eps_adj_kind") == "excl"
+                       else "조정 · 회사 공시")
+            html.append(_kv("%s 실제 EPS (%s)" % (q_prev_lbl, adj_lbl),
+                            "%s %s" % (fmt_num(aligned), cur)))
+            html.append(_kv("%s 실제 EPS (GAAP)" % q_prev_lbl,
+                            "%s %s" % (fmt_num(eps_act), cur)))
+            surp_pct = con.get("_eps_aligned_surp_pct")
+        else:
+            html.append(_kv("%s 실제 EPS%s" % (q_prev_lbl, basis_txt),
+                            "%s %s" % (fmt_num(eps_act), cur)))
+            if basis == "adjusted" and gaap_v is not None:
+                html.append(_kv("%s 실제 EPS (GAAP)" % q_prev_lbl,
+                                "%s %s" % (fmt_num(gaap_v), cur)))
         if est_prev is not None:
             html.append(_kv("%s 컨센서스 EPS" % q_prev_lbl,
                             "%s %s" % (fmt_num(est_prev), cur)))
         if surp_pct is not None:
             scls = "up" if surp_pct >= 0 else "down"
             arrow = "▲" if surp_pct >= 0 else "▼"
-            html.append('<div class="kv"><span class="k">어닝 서프라이즈</span>'
+            s_lbl = "어닝 서프라이즈" + (" (조정 기준)" if aligned is not None
+                                     else (" (GAAP 기준)" if basis == "gaap" else ""))
+            html.append('<div class="kv"><span class="k">%s</span>'
                         '<span class="v"><span class="%s">%s%+.2f%%</span>'
-                        '</span></div>' % (scls, arrow, surp_pct))
+                        '</span></div>' % (_esc(s_lbl), scls, arrow, surp_pct))
+        # 실제 EPS 가 GAAP 인데 회사가 조정 EPS 를 공시하지 않아 기준을 맞추지 못한 경우
+        if (aligned is None and basis == "gaap" and adj_v is None
+                and surp_pct is not None and abs(surp_pct) >= _EPS_BASIS_WARN_PCT
+                and est_prev is not None):
+            eps_note = ('⚠ 실제 EPS 는 GAAP 기준(일회성 손익 포함)이고 회사가 조정 EPS 를 공시하지 '
+                        '않아 기준을 맞추지 못했습니다. 컨센서스는 조정 기준 추정이 섞여 있을 수 '
+                        '있어 서프라이즈가 왜곡될 수 있습니다. (GAAP − 컨센서스: %+.2f %s)'
+                        % (eps_act - est_prev, cur))
     html.append('</div>')
+    if eps_note:
+        html.append('<div class="hint">%s</div>' % _esc(eps_note))
+    elif con.get("_eps_aligned") is not None:
+        kind_txt = ("일회성 항목 제외 EPS" if con.get("_eps_adj_kind") == "excl"
+                    else "조정 EPS")
+        html.append('<div class="hint">ℹ TradingView 실제 EPS 가 GAAP 기준이라, SEC 8-K 에 '
+                    '회사가 공시한 %s 로 컨센서스와 기준을 맞춰 서프라이즈를 계산했습니다.'
+                    '</div>' % kind_txt)
 
     # 기간별 EPS·매출 컨센서스(표)
     html.append('<h3 style="margin-top:14px">기간별 컨센서스 (애널리스트 추정)</h3>')
@@ -8893,9 +8946,28 @@ async def _sec_fetch_text(url):
     return None
 
 
+_SEC_TEXT_CACHE = {}    # url -> {"at", "task"} (제출 목록·8-K 문서: 한 조회 안에서 여러 단계가 공유)
+_SEC_TEXT_TTL = 10 * 60
+
+
+async def _sec_fetch_text_cached(url):
+    """제출 목록(submissions)·Archives 문서는 짧게 캐시하고 동시 요청을 하나로 합친다."""
+    if "/submissions/" not in url and "/Archives/" not in url:
+        return await _sec_fetch_text(url)
+    ent = _SEC_TEXT_CACHE.get(url)
+    if ent and time.time() - ent["at"] < _SEC_TEXT_TTL:
+        return await ent["task"]
+    task = asyncio.ensure_future(_sec_fetch_text(url))
+    _SEC_TEXT_CACHE[url] = {"at": time.time(), "task": task}
+    res = await task
+    if res is None:
+        _SEC_TEXT_CACHE.pop(url, None)
+    return res
+
+
 async def _sec_get_json(url):
     """SEC EDGAR JSON 조회(프록시 경유). 실패 시 None."""
-    text = await _sec_fetch_text(url)
+    text = await _sec_fetch_text_cached(url)
     if text is None:
         return None
     try:
@@ -8907,7 +8979,7 @@ async def _sec_get_json(url):
 
 async def _sec_get_text(url):
     """SEC EDGAR 텍스트/XML 조회(프록시 경유). 실패 시 None."""
-    return await _sec_fetch_text(url)
+    return await _sec_fetch_text_cached(url)
 
 
 def _local_tag(tag):
@@ -9020,6 +9092,139 @@ async def _sec_8k_exhibit_url(cik, acc):
                 return ("https://www.sec.gov" + h if h.startswith("/")
                         else "%s/%s" % (base, h))
     return None
+
+
+# 회사가 실적 발표 보도자료에 직접 공시한 조정(Non-GAAP) EPS 문구.
+# 라벨과 숫자 사이에는 기호·'of'·'was' 정도만 허용(가이던스 'guidance to $x' 등 오인 방지).
+_ADJ_EPS_RE = re.compile(
+    r"\b(?:adjusted|non-gaap)\s+(?:diluted\s+)?"
+    r"(?:eps|earnings\s+per\s+(?:diluted\s+)?share|net\s+income\s+per\s+(?:diluted\s+)?share"
+    r"|diluted\s+earnings\s+per\s+share)"
+    r"[\s*\u2020\u2021\u00b9\u00b2\u00b3]*(?:\((?:non-gaap|a|b|c|\d)\)[\s*]*)?"
+    r"(?:of|was|were|:)?\s*\$?\s*(\(?-?\d{1,4}\.\d{2}\)?)", re.I)
+
+# 조정 EPS 라벨 없이 일회성 항목 제외 효과를 문장으로 공시하는 형식.
+#   예) "Diluted EPS of $3.83 would have increased by $3.57 to $7.40."  (Meta)
+#       "diluted EPS would have been $7.40"
+_EXCL_EPS_RE = re.compile(
+    r"diluted\s+(?:eps|earnings\s+per\s+share)(?:\s*\([^)]{0,10}\))?\s+of\s+\$?\s*"
+    r"(\(?-?\d{1,4}\.\d{2}\)?)\s+would\s+have\s+(?:increased|decreased)\s+by\s+\$?\s*"
+    r"\(?-?\d{1,4}\.\d{2}\)?\s+to\s+\$?\s*(\(?-?\d{1,4}\.\d{2}\)?)", re.I)
+_EXCL_EPS_RE2 = re.compile(
+    r"diluted\s+(?:eps|earnings\s+per\s+share)\s+would\s+have\s+been\s+\$?\s*"
+    r"(\(?-?\d{1,4}\.\d{2}\)?)", re.I)
+
+
+def _eps_num(s):
+    """'(1.23)' / '-1.23' / '1.23' → float. 실패 시 None."""
+    neg = s.startswith("(") or s.startswith("-")
+    try:
+        v = float(s.strip("()").lstrip("-"))
+    except ValueError:
+        return None
+    return -v if neg else v
+
+
+def _parse_adjusted_eps(doc, gaap=None):
+    """보도자료 HTML 에서 회사 공시 조정 EPS(이번 분기)를 추출. (값, 종류) 또는 (None, None).
+
+    종류 "adjusted": 'Adjusted/Non-GAAP EPS' 라벨로 공시 - 가장 많이 나온 값(동률이면 먼저 나온 값).
+    종류 "excl"    : 라벨 없이 '일회성 항목 제외 시 희석 EPS' 를 문장으로 공시(Meta 형식).
+                     시작값이 GAAP 희석 EPS 와 일치하는 문장을 우선한다.
+    """
+    text = re.sub(r"\s+", " ", _html_unescape(re.sub(r"<[^>]+>", " ", doc or "")))
+    vals = [v for v in (_eps_num(m.group(1)) for m in _ADJ_EPS_RE.finditer(text))
+            if v is not None]
+    if vals:
+        return max(vals, key=lambda v: (vals.count(v), -vals.index(v))), "adjusted"
+    excl = []
+    for m in _EXCL_EPS_RE.finditer(text):
+        base, to = _eps_num(m.group(1)), _eps_num(m.group(2))
+        if to is not None:
+            excl.append((base, to))
+    if excl:
+        if gaap is not None:
+            for base, to in excl:
+                if base is not None and abs(base - gaap) <= 0.011:
+                    return to, "excl"
+        return excl[0][1], "excl"
+    m = _EXCL_EPS_RE2.search(text)
+    if m and _eps_num(m.group(1)) is not None:
+        return _eps_num(m.group(1)), "excl"
+    return None, None
+
+
+async def _sec_earnings_release_doc(cik, release_ts):
+    """실적 발표일 무렵(-2일 ~ +5일) 제출된 실적 발표 8-K(Item 2.02)의 보도자료 HTML."""
+    subs = await _sec_get_json(SEC_SUBMISSIONS_URL % cik)
+    recent = ((subs or {}).get("filings") or {}).get("recent") or {}
+    fmt = lambda ts: datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d")
+    lo, hi = fmt(release_ts - 2 * 86400), fmt(release_ts + 5 * 86400)
+    forms = recent.get("form") or []
+    fdates = recent.get("filingDate") or []
+    items = recent.get("items") or []
+    accs = recent.get("accessionNumber") or []
+    for i, form in enumerate(forms):
+        fdate = fdates[i] if i < len(fdates) else ""
+        item = items[i] if i < len(items) else ""
+        if form == "8-K" and "2.02" in (item or "") and lo <= fdate <= hi and i < len(accs):
+            url = await _sec_8k_exhibit_url(cik, accs[i])
+            return await _sec_get_text(url) if url else None
+    return None
+
+
+async def _check_eps_basis(full_symbol, consensus, trade_ccy):
+    """TradingView '직전 분기 실제 EPS' 가 GAAP 인지 조정(Non-GAAP) 인지 SEC 로 판별하고,
+    GAAP 이면서 회사 공시 조정 EPS 가 있으면 컨센서스와 같은 조정 기준으로 서프라이즈를 다시 계산한다.
+
+    consensus 에 기록: _eps_gaap, _eps_adj, _eps_basis("gaap"/"adjusted"/"same"/None),
+    _eps_aligned(조정 기준 실제 EPS), _eps_aligned_surp, _eps_aligned_surp_pct.
+    """
+    exch = full_symbol.split(":")[0].upper() if ":" in full_symbol else ""
+    if not consensus or exch not in _YF_US_EXCH or trade_ccy != "USD":
+        return
+    act = consensus.get("earnings_per_share_fq")
+    surp = consensus.get("eps_surprise_fq")
+    rel = consensus.get("earnings_release_date")
+    q_end = consensus.get("_reported_q_end")
+    if act is None or not isinstance(rel, (int, float)) or not isinstance(q_end, (int, float)):
+        return
+    cik = await _sec_cik_for_symbol(full_symbol)
+    if cik is None:
+        return
+
+    doc = await _sec_earnings_release_doc(cik, rel)
+    gaap = None
+    if doc:
+        gaap = _parse_earnings_release(doc, q_end).get("earnings_per_share_diluted_fq_h")
+    if gaap is None:
+        # 보도자료 표를 못 읽으면 10-Q/10-K XBRL 의 희석 EPS(3개월 값)
+        target = datetime.fromtimestamp(q_end, timezone.utc).strftime("%Y-%m-%d")
+        for tag in _SEC_Q_TAGS["eps"]:
+            items = _sec_post_restatement(await _sec_concept_items(cik, tag, "USD/shares"))
+            gaap = _sec_series_value(items, target, "flow", False)
+            if gaap is not None:
+                break
+    adj, adj_kind = _parse_adjusted_eps(doc, gaap) if doc else (None, None)
+
+    def eq(a, b):
+        return a is not None and b is not None and abs(a - b) <= 0.011
+
+    basis = None
+    if eq(act, gaap) and (adj is None or eq(adj, gaap)):
+        basis = "gaap" if adj is None else "same"
+    elif eq(act, gaap):
+        basis = "gaap"
+    elif eq(act, adj):
+        basis = "adjusted"
+    consensus.update({"_eps_gaap": gaap, "_eps_adj": adj, "_eps_adj_kind": adj_kind,
+                      "_eps_basis": basis})
+
+    est = (act - surp) if surp is not None else None
+    if basis == "gaap" and adj is not None and not eq(adj, gaap) and est is not None:
+        consensus["_eps_aligned"] = adj
+        consensus["_eps_aligned_surp"] = adj - est
+        consensus["_eps_aligned_surp_pct"] = ((adj - est) / abs(est) * 100.0) if est else None
 
 
 async def _sec_concept_quarterly_flow(cik, tags):
