@@ -367,10 +367,9 @@
   .trend-tools { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:0 0 6px; }
   .trend-tools .trend-btn { height:26px; padding:0 10px; font-size:12px; }
   .trend-tools .trend-btn.on { background:var(--pri); color:#fff; border-color:var(--pri); }
-  .trend-tools .trend-hint { font-size:12px; color:var(--mut); }
   :where(#compare-section, #idxchart-result, #rrg-result, #multpl-result,
          #liq-result, #macro-chart, #result) svg { touch-action:pan-y; }
-  .chart-svg.candle-svg { touch-action:pan-y; user-select:none; -webkit-user-select:none; }
+  .chart-svg.candle-svg { touch-action:none; user-select:none; -webkit-user-select:none; }
   .chart-svg.candle-svg.trend-on { cursor:crosshair; touch-action:none;
     user-select:none; -webkit-user-select:none; }
     .multpl-tip.candle-tip { top:auto; bottom:8px; left:8px; right:8px;
@@ -6226,6 +6225,30 @@ _TREND_MODE = {}        # prefix -> 그리기 모드 on/off
 _TREND_GEOM = {}        # prefix -> 마지막 렌더된 캔들 좌표계
 _TREND_DRAG = {}        # prefix -> 드래그 시작점 (ts, price, sx, sy)
 _TREND_EDIT = {}        # prefix -> 끌고 있는 끝점 (선 인덱스, 0|1)
+_TREND_SEL = {}         # prefix -> (trend_key, 선 인덱스) 선택된 추세선
+_TREND_MOVE = {}        # prefix -> 통째로 옮기는 중인 선 상태
+_TREND_ACTIVE = {"prefix": None}   # 키보드 단축키 대상 차트(마지막으로 포인터가 있던 차트)
+_TREND_HIST = {}        # trend_key -> 변경 전 스냅샷 목록 (Ctrl+Z 되돌리기)
+_TREND_HIST_MAX = 50
+_TREND_CLIP = {}        # Ctrl+C 로 복사한 추세선 {"key", "line", "n": 붙여넣은 횟수}
+
+
+def _trend_snapshot(key):
+    """변경 직전 상태를 되돌리기 이력에 쌓는다."""
+    if not key:
+        return
+    h = _TREND_HIST.setdefault(key, [])
+    h.append([list(ln) for ln in _TRENDLINES.get(key, [])])
+    del h[:-_TREND_HIST_MAX]
+
+
+def _trend_drop_noop_snapshot(key):
+    """끌기 시작 때 쌓은 스냅샷이 실제로 바뀌지 않았으면 제거. 바뀌었으면 True."""
+    h = _TREND_HIST.get(key)
+    if h and h[-1] == _TRENDLINES.get(key, []):
+        h.pop()
+        return False
+    return True
 _TREND_ROOT = {"idxchart": "#idxchart-result", "stockchart": "#stock-chart"}
 _TREND_COLOR = "#e91e63"
 
@@ -6296,6 +6319,7 @@ def _apply_fav_trends(data):
     for key, lines in server.items():
         if isinstance(lines, list) and lines:
             _TRENDLINES[key] = lines
+            _TREND_HIST.pop(key, None)
     fav_syms = {f.get("symbol") for f in (data.get("favorites") or [])
                 if isinstance(f, dict)}
     for key in list(_TRENDLINES):
@@ -6357,14 +6381,20 @@ def _trend_layer_markup(prefix):
     if not g or not g.get("key"):
         return ""
     right = g["padL"] + g["plot_w"]
+    sel = _trend_sel(prefix)
     out = []
-    for ln in _TRENDLINES.get(g["key"], []):
+    for li, ln in enumerate(_TRENDLINES.get(g["key"], [])):
         x1, y1 = _trend_xy(g, ln[0], ln[1])
         x2, y2 = _trend_xy(g, ln[2], ln[3])
         if x2 < x1:
             x1, y1, x2, y2 = x2, y2, x1, y1
+        if li == sel:
+            out.append('<line x1="%g" y1="%g" x2="%g" y2="%g" stroke="%s" '
+                       'stroke-width="7" stroke-opacity="0.25" stroke-linecap="round"/>'
+                       % (x1, y1, x2, y2, _TREND_COLOR))
         out.append('<line x1="%g" y1="%g" x2="%g" y2="%g" stroke="%s" '
-                   'stroke-width="1.6"/>' % (x1, y1, x2, y2, _TREND_COLOR))
+                   'stroke-width="%s"/>' % (x1, y1, x2, y2, _TREND_COLOR,
+                                            "2.4" if li == sel else "1.6"))
         # 오른쪽 끝까지 점선으로 연장(향후 지지/저항 확인용)
         if x2 - x1 > 0.5 and x2 < right:
             ye = y2 + (y2 - y1) / (x2 - x1) * (right - x2)
@@ -6377,22 +6407,43 @@ def _trend_layer_markup(prefix):
     return "".join(out)
 
 
+def _trend_sel(prefix):
+    """현재 차트에서 선택된 추세선 인덱스(없거나 무효하면 None)."""
+    s = _TREND_SEL.get(prefix)
+    g = _TREND_GEOM.get(prefix) or {}
+    if not s or s[0] != g.get("key") or s[1] >= len(_TRENDLINES.get(s[0]) or []):
+        return None
+    return s[1]
+
+
+def _trend_select(prefix, li):
+    """선택 변경 후 레이어·툴바 갱신. li=None 이면 선택 해제."""
+    key = (_TREND_GEOM.get(prefix) or {}).get("key")
+    new = (key, li) if (key and li is not None) else None
+    if _TREND_SEL.get(prefix) == new:
+        return
+    if new is None:
+        _TREND_SEL.pop(prefix, None)
+    else:
+        _TREND_SEL[prefix] = new
+    _trend_refresh(prefix)
+
+
 def _trend_toolbar_html(prefix, key):
     if not key:
         return ""
     on = bool(_TREND_MODE.get(prefix))
     has = bool(_TRENDLINES.get(key))
     dis = "" if has else " disabled"
-    hint = "시작점과 끝점을 차례로 클릭하고, 끝점을 끌어 수정하세요" if on else ""
+    sel_on = not on and _trend_sel(prefix) is not None
     return ('<div class="trend-tools" data-prefix="%s">'
             '<button type="button" class="trend-btn%s" data-trend="draw">'
-            '추세선 그리기</button>'
-            '<button type="button" class="trend-btn" data-trend="undo"%s>'
-            '마지막 삭제</button>'
+            '추세선 추가</button>'
+            '<button type="button" class="trend-btn" data-trend="delsel"%s>'
+            '선택 삭제</button>'
             '<button type="button" class="trend-btn" data-trend="clear"%s>'
-            '모두 지우기</button>'
-            '<span class="trend-hint">%s</span></div>'
-            % (prefix, " on" if on else "", dis, dis, hint))
+            '모두 지우기</button></div>'
+            % (prefix, " on" if on else "", "" if sel_on else " disabled", dis))
 
 
 def _trend_refresh(prefix):
@@ -6412,6 +6463,22 @@ def _trend_refresh(prefix):
             svg.classList.remove("trend-on")
 
 
+def _svg_client_to_user(svg, cx, cy, rect, W, H):
+    """화면 좌표 → SVG viewBox 좌표 (x, y, 화면px당 SVG단위).
+    preserveAspectRatio=meet 로 여백이 생겨도 맞도록 getScreenCTM 을 쓴다."""
+    try:
+        m = svg.getScreenCTM()
+        if m is not None and m.a and m.d:
+            p = svg.createSVGPoint()
+            p.x, p.y = cx, cy
+            q = p.matrixTransform(m.inverse())
+            return q.x, q.y, 1.0 / m.a
+    except Exception:
+        pass
+    return ((cx - rect.left) / rect.width * W, (cy - rect.top) / rect.height * H,
+            W / rect.width)
+
+
 def _trend_svg_xy(event, prefix):
     """포인터 → SVG 좌표 (sx, sy, 화면px당 SVG단위)."""
     g = _TREND_GEOM.get(prefix)
@@ -6423,9 +6490,7 @@ def _trend_svg_xy(event, prefix):
     rect = svg.getBoundingClientRect()
     if not rect.width or not rect.height:
         return None
-    return ((event.clientX - rect.left) / rect.width * g["W"],
-            (event.clientY - rect.top) / rect.height * g["H"],
-            g["W"] / rect.width)
+    return _svg_client_to_user(svg, event.clientX, event.clientY, rect, g["W"], g["H"])
 
 
 def _trend_point(event, prefix, clamp=False):
@@ -6465,6 +6530,28 @@ def _trend_hit(event, prefix):
     return best
 
 
+def _trend_hit_line(event, prefix):
+    """포인터 근처(화면 6px)의 추세선 몸통 → 선 인덱스 또는 None (위에 그려진 선 우선)."""
+    g = _TREND_GEOM.get(prefix)
+    if not g or not _TRENDLINES.get(g.get("key")):
+        return None
+    xy = _trend_svg_xy(event, prefix)
+    if xy is None:
+        return None
+    px, py, tol = xy[0], xy[1], 6.0 * xy[2]
+    lines = _TRENDLINES[g["key"]]
+    for li in range(len(lines) - 1, -1, -1):
+        ln = lines[li]
+        x1, y1 = _trend_xy(g, ln[0], ln[1])
+        x2, y2 = _trend_xy(g, ln[2], ln[3])
+        dx, dy = x2 - x1, y2 - y1
+        L2 = dx * dx + dy * dy
+        t = 0.0 if L2 == 0 else min(1.0, max(0.0, ((px - x1) * dx + (py - y1) * dy) / L2))
+        if ((x1 + t * dx - px) ** 2 + (y1 + t * dy - py) ** 2) ** 0.5 <= tol:
+            return li
+    return None
+
+
 def _trend_set_cursor(prefix, cursor):
     svg = document.querySelector(_TREND_ROOT[prefix] + " svg.candle-svg")
     if svg is not None:
@@ -6472,16 +6559,39 @@ def _trend_set_cursor(prefix, cursor):
 
 
 def _trend_pointer_down(event, prefix):
+    t = event.target
+    if t is not None and t.closest is not None and t.closest(".trend-tools") is not None:
+        return      # 툴바 버튼 클릭은 click 핸들러가 처리(선택 유지)
+    _TREND_ACTIVE["prefix"] = prefix
     st = _TREND_DRAG.get(prefix)
     hit = None if st else _trend_hit(event, prefix)
     if hit is not None:
         event.preventDefault()
+        _trend_snapshot(_TREND_GEOM[prefix]["key"])
         _TREND_EDIT[prefix] = hit
+        _trend_select(prefix, hit[0])
         _trend_set_cursor(prefix, "grabbing")
         return
     if not _TREND_MODE.get(prefix):
+        li = _trend_hit_line(event, prefix)
+        if li is not None:
+            # 선 몸통 클릭 = 선택 + 통째로 이동 시작
+            event.preventDefault()
+            g = _TREND_GEOM[prefix]
+            ln = _TRENDLINES[g["key"]][li]
+            xy = _trend_svg_xy(event, prefix)
+            _trend_snapshot(g["key"])
+            _TREND_MOVE[prefix] = {
+                "li": li, "sx": xy[0], "sy": xy[1], "moved": False,
+                "orig": list(ln),
+                "fi": (_trend_ts_to_fi(g, ln[0]), _trend_ts_to_fi(g, ln[2]))}
+            _trend_select(prefix, li)
+            _trend_set_cursor(prefix, "grabbing")
+            return
+        _trend_select(prefix, None)
         _pan_start(event, prefix)
         return
+    _trend_select(prefix, None)
     pt = _trend_point(event, prefix)
     if pt is None:
         return
@@ -6492,8 +6602,11 @@ def _trend_pointer_down(event, prefix):
         if abs(pt[2] - x1) + abs(pt[3] - y1) < 6:
             return
         _trend_cancel(prefix, clear_draw=True)
+        _TREND_MODE[prefix] = False     # 추세선은 한 번에 하나씩 추가
         key = _TREND_GEOM[prefix]["key"]
+        _trend_snapshot(key)
         _TRENDLINES.setdefault(key, []).append([st[0], st[1], pt[0], pt[1]])
+        _TREND_SEL[prefix] = (key, len(_TRENDLINES[key]) - 1)
         _trend_save(key)
         _trend_refresh(prefix)
         return
@@ -6506,7 +6619,26 @@ def _trend_pointer_down(event, prefix):
 
 
 def _trend_pointer_move(event, prefix):
+    if _trend_point(event, prefix) is not None:
+        _TREND_ACTIVE["prefix"] = prefix
     if _pan_move(event, prefix):
+        return
+    mv = _TREND_MOVE.get(prefix)
+    if mv is not None:
+        g = _TREND_GEOM[prefix]
+        lines = _TRENDLINES.get(g["key"]) or []
+        xy = _trend_svg_xy(event, prefix)
+        if xy is None or mv["li"] >= len(lines):
+            return
+        dfi = (xy[0] - mv["sx"]) / g["plot_w"] * g["n"]
+        dp = -(xy[1] - mv["sy"]) / g["plot_h"] * (g["vmax"] - g["vmin"])
+        o = mv["orig"]
+        lines[mv["li"]] = [_trend_fi_to_ts(g, mv["fi"][0] + dfi), o[1] + dp,
+                           _trend_fi_to_ts(g, mv["fi"][1] + dfi), o[3] + dp]
+        mv["moved"] = True
+        layer = document.querySelector("#%s-trend-layer" % prefix)
+        if layer is not None:
+            layer.innerHTML = _trend_layer_markup(prefix)
         return
     ed = _TREND_EDIT.get(prefix)
     if ed is not None:
@@ -6521,8 +6653,12 @@ def _trend_pointer_move(event, prefix):
             layer.innerHTML = _trend_layer_markup(prefix)
         return
     if not _TREND_DRAG.get(prefix):
-        _trend_set_cursor(
-            prefix, "grab" if _trend_hit(event, prefix) is not None else "")
+        cur = ""
+        if _trend_hit(event, prefix) is not None:
+            cur = "grab"
+        elif not _TREND_MODE.get(prefix) and _trend_hit_line(event, prefix) is not None:
+            cur = "move"
+        _trend_set_cursor(prefix, cur)
         return
     pt = _trend_point(event, prefix, clamp=True)
     tmp = document.querySelector("#%s-trend-temp" % prefix)
@@ -6542,8 +6678,15 @@ def _trend_cancel(prefix, clear_draw=False):
         if pan["pending"]:
             _pan_render(prefix)
         _trend_set_cursor(prefix, "")
+    key = (_TREND_GEOM.get(prefix) or {}).get("key")
     if _TREND_EDIT.pop(prefix, None) is not None:
-        _trend_save((_TREND_GEOM.get(prefix) or {}).get("key"))
+        if _trend_drop_noop_snapshot(key):
+            _trend_save(key)
+        _trend_set_cursor(prefix, "")
+    mv = _TREND_MOVE.pop(prefix, None)
+    if mv is not None:
+        if _trend_drop_noop_snapshot(key):
+            _trend_save(key)
         _trend_set_cursor(prefix, "")
     if not clear_draw:
         return
@@ -6569,18 +6712,162 @@ def _handle_trend_click(event):
     act = btn.getAttribute("data-trend")
     if act == "draw":
         _TREND_MODE[prefix] = not _TREND_MODE.get(prefix)
+        _TREND_SEL.pop(prefix, None)
         _trend_cancel(prefix, clear_draw=True)
-    elif act == "undo" and key and _TRENDLINES.get(key):
-        _TRENDLINES[key].pop()
-        if not _TRENDLINES[key]:
-            del _TRENDLINES[key]
-        _trend_save(key)
+    elif act == "delsel":
+        _trend_delete_selected(prefix)
+        return
     elif act == "clear" and key and _TRENDLINES.get(key):
         if not window.confirm("이 차트의 추세선을 모두 지울까요?"):
             return
+        _trend_snapshot(key)
         del _TRENDLINES[key]
+        _TREND_SEL.pop(prefix, None)
         _trend_save(key)
     _trend_refresh(prefix)
+
+
+def _trend_undo(prefix):
+    """되돌리기: 이 차트의 직전 추세선 상태로 복원."""
+    key = (_TREND_GEOM.get(prefix) or {}).get("key")
+    h = _TREND_HIST.get(key) if key else None
+    if not h:
+        return False
+    _trend_cancel(prefix, clear_draw=True)
+    prev = h.pop()
+    if prev:
+        _TRENDLINES[key] = prev
+    else:
+        _TRENDLINES.pop(key, None)
+    _TREND_SEL.pop(prefix, None)
+    _trend_save(key)
+    _trend_refresh(prefix)
+    return True
+
+
+def _trend_copy(prefix):
+    """선택한 추세선을 내부 클립보드에 복사."""
+    li = _trend_sel(prefix)
+    if li is None:
+        return False
+    key = _TREND_GEOM[prefix]["key"]
+    _TREND_CLIP.clear()
+    _TREND_CLIP.update({"key": key, "line": list(_TRENDLINES[key][li]), "n": 0})
+    return True
+
+
+def _trend_paste(prefix):
+    """복사한 추세선을 같은 차트에 붙여넣기. 겹치지 않도록 붙일 때마다 화면 12px씩 아래로."""
+    g = _TREND_GEOM.get(prefix) or {}
+    key = g.get("key")
+    if not key or not _TREND_CLIP or _TREND_CLIP["key"] != key:
+        return False
+    _TREND_CLIP["n"] += 1
+    ln = _TREND_CLIP["line"]
+    px = 1.0
+    svg = document.querySelector(_TREND_ROOT[prefix] + " svg.candle-svg")
+    if svg is not None and svg.getBoundingClientRect().width:
+        px = g["W"] / svg.getBoundingClientRect().width     # 화면 1px 의 SVG 단위
+    dp = 12.0 * px * _TREND_CLIP["n"] / g["plot_h"] * (g["vmax"] - g["vmin"])
+    _trend_snapshot(key)
+    _TRENDLINES.setdefault(key, []).append([ln[0], ln[1] - dp, ln[2], ln[3] - dp])
+    _TREND_SEL[prefix] = (key, len(_TRENDLINES[key]) - 1)
+    _trend_save(key)
+    _trend_refresh(prefix)
+    return True
+
+
+def _trend_delete_selected(prefix):
+    """선택한 추세선 삭제(되돌리기 가능)."""
+    li = _trend_sel(prefix)
+    if li is None:
+        return False
+    key = _TREND_GEOM[prefix]["key"]
+    _trend_cancel(prefix)
+    _trend_snapshot(key)
+    del _TRENDLINES[key][li]
+    if not _TRENDLINES[key]:
+        del _TRENDLINES[key]
+    _TREND_SEL.pop(prefix, None)
+    _trend_save(key)
+    _trend_refresh(prefix)
+    return True
+
+
+def _trend_chart_visible(prefix):
+    svg = document.querySelector(_TREND_ROOT[prefix] + " svg.candle-svg")
+    return svg is not None and svg.getClientRects().length > 0
+
+
+def _on_trend_keydown(event):
+    t = event.target
+    tag = (getattr(t, "tagName", "") or "").upper()
+    if tag in ("INPUT", "TEXTAREA", "SELECT") or getattr(t, "isContentEditable", False):
+        return
+    if event.key == "Escape":
+        handled = False
+        for prefix in _TREND_ROOT:
+            if _TREND_MODE.get(prefix) or _TREND_DRAG.get(prefix):
+                _trend_end_add(prefix)
+                handled = True
+            if _TREND_SEL.get(prefix):
+                _trend_select(prefix, None)
+                handled = True
+        if handled:
+            event.preventDefault()
+        return
+    if event.key in ("Delete", "Backspace"):
+        if event.ctrlKey or event.metaKey or event.altKey:
+            return
+        for prefix in _TREND_ROOT:
+            if _trend_chart_visible(prefix) and _trend_delete_selected(prefix):
+                event.preventDefault()
+        return
+    if not (event.ctrlKey or event.metaKey) or event.altKey or event.shiftKey:
+        return
+    prefix = _TREND_ACTIVE["prefix"]
+    if prefix not in _TREND_ROOT or not _trend_chart_visible(prefix):
+        return
+    code = event.code
+    if code == "KeyC":
+        sel = window.getSelection()
+        if sel is not None and str(sel.toString()):
+            return      # 텍스트 복사는 그대로 둔다
+        if _trend_copy(prefix):
+            event.preventDefault()
+    elif code == "KeyV":
+        if _trend_paste(prefix):
+            event.preventDefault()
+    elif code == "KeyZ":
+        if _trend_undo(prefix):
+            event.preventDefault()
+
+
+document.addEventListener("keydown", create_proxy(_on_trend_keydown))
+
+
+def _trend_end_add(prefix):
+    """추세선 추가 모드 종료(그리던 선 취소 포함)."""
+    _trend_cancel(prefix, clear_draw=True)
+    if _TREND_MODE.get(prefix):
+        _TREND_MODE[prefix] = False
+        _trend_refresh(prefix)
+
+
+def _on_trend_doc_pointerdown(event):
+    """추세선 추가 중 캔들 영역 밖을 누르면 추가를 취소."""
+    t = event.target
+    if t is not None and t.closest is not None and \
+            t.closest('.trend-btn[data-trend="draw"]') is not None:
+        return      # 추가 버튼 자체는 click 핸들러가 토글
+    for prefix in _TREND_ROOT:
+        if (_TREND_MODE.get(prefix) or _TREND_DRAG.get(prefix)) and \
+                _trend_point(event, prefix) is None:
+            _trend_end_add(prefix)
+
+
+# capture 단계라 차트 자체의 pointerdown 처리보다 먼저 실행된다.
+document.addEventListener("pointerdown", create_proxy(_on_trend_doc_pointerdown), True)
 
 
 # ── 캔들 차트 좌우 이동(팬) ──────────────────────────────────
@@ -6604,7 +6891,8 @@ def _pan_init(prefix, rows, rng):
         cut = rows[-1][0] - span * 86400
         count = min(n, max(2, sum(1 for r in rows if r[0] > cut)))
     _PAN_VIEW[prefix] = {"n": n, "count": count, "end": n,
-                         "blank": max(5, count // 2)}   # 최신 봉 오른쪽 빈 칸 최대 수
+                         "blank": max(5, count // 2),   # 최신 봉 오른쪽 빈 칸 최대 수
+                         "yoff": 0.0}   # 상하 이동량(자동 가격범위 대비 비율, +면 위쪽 가격대)
 
 
 def _pan_window(prefix, n):
@@ -6642,11 +6930,14 @@ def _pan_start(event, prefix):
         return
     g = _TREND_GEOM[prefix]
     svg = document.querySelector(_TREND_ROOT[prefix] + " svg.candle-svg")
-    bw = svg.getBoundingClientRect().width * g["plot_w"] / g["W"] / v["count"]
-    if bw <= 0:
+    r = svg.getBoundingClientRect()
+    bw = r.width * g["plot_w"] / g["W"] / v["count"]
+    ph = r.height * g["plot_h"] / g["H"]       # 캔들 영역 높이(화면 px)
+    if bw <= 0 or ph <= 0:
         return
     event.preventDefault()
     _PAN_DRAG[prefix] = {"x": event.clientX, "end": v["end"], "bw": bw,
+                         "y": event.clientY, "yoff": v.get("yoff", 0.0), "ph": ph,
                          "pending": False, "at": 0.0}
     _trend_set_cursor(prefix, "grabbing")
 
@@ -6675,6 +6966,12 @@ def _pan_move(event, prefix):
     end = min(max(end, v["count"]), v["n"] + v["blank"])
     if end != v["end"]:
         v["end"] = end
+        st["pending"] = True
+    # 아래로 끌면 차트가 내려가며 위쪽(높은) 가격대가 보인다. 화면 밖으로 날아가지 않게 ±3배 범위로 제한.
+    yoff = st["yoff"] + (event.clientY - st["y"]) / st["ph"]
+    yoff = min(max(yoff, -3.0), 3.0)
+    if abs(yoff - v.get("yoff", 0.0)) > 1e-4:
+        v["yoff"] = yoff
         st["pending"] = True
     # 렌더가 느린 경우 밀린 이벤트는 건너뛰고, 마지막 위치는 놓을 때 반영한다.
     if st["pending"] and time.time() - st["at"] >= _PAN_THROTTLE:
@@ -7067,6 +7364,12 @@ def _candle_svg(rows, dec=2, prefix="idxchart", hover=None, overlay=None,
     pad = (vmax - vmin) * 0.06
     vmax += pad
     vmin -= pad
+    # 상하 이동(팬): 자동 맞춤 범위를 yoff 비율만큼 평행 이동
+    yoff = (_PAN_VIEW.get(prefix) or {}).get("yoff", 0.0)
+    if yoff:
+        shift = (vmax - vmin) * yoff
+        vmax += shift
+        vmin += shift
 
     ov = overlay if (overlay and overlay.get("points")) else None
     OV_COLOR = "#8e44ad"
@@ -7160,6 +7463,12 @@ def _candle_svg(rows, dec=2, prefix="idxchart", hover=None, overlay=None,
 
     cw = plot_w / slots
     body_w = max(min(cw * 0.62, 14.0), 1.0)
+    # 캔들·이동평균은 캔들 영역으로 클리핑(상하 이동 시 축 라벨·하위 패널 침범 방지).
+    # 가격 축은 고가·저가 기준이라 장기 MA 가 범위를 벗어날 수도 있다.
+    parts.append('<clipPath id="%s-plot-clip"><rect x="%g" y="%g" '
+                 'width="%g" height="%g"/></clipPath>'
+                 % (prefix, padL, padT, plot_w, plot_h))
+    parts.append('<g clip-path="url(#%s-plot-clip)">' % prefix)
     for i, (ts, o, h, lo, c) in enumerate(rows):
         cx = X(i)
         col = "#089981" if c >= o else "#f23645"
@@ -7171,12 +7480,6 @@ def _candle_svg(rows, dec=2, prefix="idxchart", hover=None, overlay=None,
         parts.append('<rect x="%g" y="%g" width="%g" height="%g" fill="%s"/>'
                      % (cx - body_w / 2, top, body_w, bh, col))
 
-    # 이동평균선(캔들 위에 겹침). 가격 축은 고가·저가 기준이라 장기 MA 가 범위를
-    # 벗어날 수 있으므로 캔들 영역으로 클리핑해 축 라벨·하위 패널과 겹치지 않게 한다.
-    parts.append('<clipPath id="%s-plot-clip"><rect x="%g" y="%g" '
-                 'width="%g" height="%g"/></clipPath>'
-                 % (prefix, padL, padT, plot_w, plot_h))
-    parts.append('<g clip-path="url(#%s-plot-clip)">' % prefix)
     for period, color, vals in ma_series:
         ma_pts = ["%g,%g" % (X(i), Y(v))
                   for i, v in enumerate(vals) if v is not None]
@@ -7233,12 +7536,14 @@ def _candle_svg(rows, dec=2, prefix="idxchart", hover=None, overlay=None,
                          'fill="%s" fill-opacity="0.75" rx="2"/>'
                          % (px - bw / 2, by, bw, bh, OV_COLOR))
 
-    # x축 날짜 라벨
-    long_range = n > 180
-    step = max(1, n // 8)
+    # x축 날짜 라벨(오른쪽 빈 칸은 예상 거래일로 이어서 표시)
+    fut = _future_info(rows)
+    long_range = slots > 180
+    step = max(1, slots // 8)
     i = 0
-    while i < n:
-        dt = datetime.fromtimestamp(rows[i][0], tz=timezone.utc)
+    while i < slots:
+        ts_i = rows[i][0] if i < n else _future_ts(fut, i - n + 1)
+        dt = datetime.fromtimestamp(ts_i, tz=timezone.utc)
         lb = dt.strftime("%y/%m") if long_range else dt.strftime("%m/%d")
         parts.append('<text x="%g" y="%g" class="ax-x">%s</text>'
                      % (X(i), H - padB + 22, _esc(lb)))
@@ -7257,6 +7562,12 @@ def _candle_svg(rows, dec=2, prefix="idxchart", hover=None, overlay=None,
                  '<text id="%s-ycur-val" x="%g" y="4" text-anchor="end" '
                  'style="fill:#fff;font-size:10px;font-weight:600"></text></g>'
                  % (prefix, padL, W - padR, padL - 6, prefix, padL - 7))
+    # 마우스 x 위치의 날짜(x축 라벨)
+    parts.append('<g id="%s-xcur" pointer-events="none" style="display:none">'
+                 '<rect x="-36" y="%g" width="72" height="16" rx="3" fill="#2962ff"/>'
+                 '<text id="%s-xcur-val" x="0" y="%g" text-anchor="middle" '
+                 'style="fill:#fff;font-size:10px;font-weight:600"></text></g>'
+                 % (prefix, H - padB + 10, prefix, H - padB + 22))
     parts.append('</svg>')
 
     def _ma_tip(idx):
@@ -7297,9 +7608,39 @@ def _candle_svg(rows, dec=2, prefix="idxchart", hover=None, overlay=None,
     hover["W"] = W
     hover["H"] = H
     hover["slots"] = slots
+    hover["padL"] = padL
+    hover["plot_w"] = plot_w
+    hover["fut"] = fut
     hover["y1"] = padT
     hover["y2"] = H - padB
     return "".join(parts)
+
+
+def _future_info(rows):
+    """빈 칸 날짜 외삽 정보: (마지막 시각, 봉 간격 초, 주말 건너뛰기 여부)."""
+    if not rows:
+        return (0, 86400.0, False)
+    tss = [r[0] for r in rows]
+    diffs = sorted(b - a for a, b in zip(tss, tss[1:]) if b > a)
+    step = float(diffs[len(diffs) // 2]) if diffs else 86400.0
+    daily = step <= 1.5 * 86400
+    # 주말에도 봉이 있는 자산(비트코인 등)은 달력일 그대로 진행
+    has_weekend = any(datetime.fromtimestamp(t, tz=timezone.utc).weekday() >= 5
+                      for t in tss[-60:])
+    return (tss[-1], 86400.0 if daily else step, daily and not has_weekend)
+
+
+def _future_ts(fut, k):
+    """마지막 봉 이후 k번째 칸의 예상 시각."""
+    last, step, skip_weekend = fut
+    if not skip_weekend:
+        return last + k * step
+    t = last
+    while k > 0:
+        t += 86400
+        if datetime.fromtimestamp(t, tz=timezone.utc).weekday() < 5:
+            k -= 1
+    return t
 
 
 # 원/달러 차트에서 현재 환율(1 USD = rate KRW)로 환전 금액을 계산하는 변환기.
@@ -7904,22 +8245,42 @@ def _candle_hover(event, root_sel, hover, prefix):
         return
     W = hover["W"]
     H = hover["H"]
-    sx = (event.clientX - rect.left) / rect.width * W
-    best = min(pts, key=lambda p: abs(p["x"] - sx))
-    _price_cursor(prefix, (event.clientY - rect.top) / rect.height * H)
+    sx, sy, _ = _svg_client_to_user(svg, event.clientX, event.clientY, rect, W, H)
+    slots = hover.get("slots", len(pts))
+    if hover.get("plot_w"):
+        k = int(round((sx - hover["padL"]) / hover["plot_w"] * slots - 0.5))
+        k = min(max(k, 0), slots - 1)
+    else:
+        k = pts.index(min(pts, key=lambda p: abs(p["x"] - sx)))
+    future = k >= len(pts)
+    _price_cursor(prefix, sy)
+    if future:
+        gx = hover["padL"] + hover["plot_w"] * (k + 0.5) / slots
+        date_txt = datetime.fromtimestamp(
+            _future_ts(hover["fut"], k - len(pts) + 1), tz=timezone.utc).strftime("%Y-%m-%d")
+        best, bi = None, len(pts) - 1     # 값 표시는 마지막 봉 유지
+    else:
+        best, bi = pts[k], k
+        gx, date_txt = best["x"], best["date"]
+    xcur = document.querySelector("#" + prefix + "-xcur")
+    if xcur is not None:
+        cx = min(max(gx, hover.get("padL", 36.0)), W - 36.0)
+        xcur.setAttribute("transform", "translate(%g,0)" % cx)
+        xt = document.querySelector("#" + prefix + "-xcur-val")
+        if xt is not None:
+            xt.textContent = date_txt
+        xcur.style.display = ""
 
     guide = document.querySelector("#" + prefix + "-guide")
     dot = document.querySelector("#" + prefix + "-guide-dot")
     if guide is not None:
-        guide.setAttribute("x1", "%g" % best["x"])
-        guide.setAttribute("x2", "%g" % best["x"])
+        guide.setAttribute("x1", "%g" % gx)
+        guide.setAttribute("x2", "%g" % gx)
         guide.setAttribute("y1", "%g" % hover["y1"])
         guide.setAttribute("y2", "%g" % hover["y2"])
         guide.style.display = "block"
     # 보조지표 SVG는 같은 날짜 인덱스를 자체 좌표계로 변환해 세로선을 표시한다.
-    bi = pts.index(best)
-    indicator_x = 48.0 + (820.0 - 48.0 - 14.0) * (
-        (bi + 0.5) / hover.get("slots", len(pts)))
+    indicator_x = 48.0 + (820.0 - 48.0 - 14.0) * ((k + 0.5) / slots)
     for indicator_id in (prefix + "-wr-guide", prefix + "-stoch-guide",
                          prefix + "-recov-guide"):
         indicator_guide = document.querySelector("#" + indicator_id)
@@ -7942,16 +8303,22 @@ def _candle_hover(event, root_sel, hover, prefix):
         cv = corr_vals[bi] if bi < len(corr_vals) else None
         val_el.innerHTML = _recov_value_markup(rv, cv)
     if dot is not None:
-        dot.setAttribute("cx", "%g" % best["x"])
-        dot.setAttribute("cy", "%g" % best["y"])
-        dot.style.display = "block"
+        g_ = _TREND_GEOM.get(prefix) or {}
+        off = (best is not None and g_.get("plot_h") and
+               not (g_["padT"] <= best["y"] <= g_["padT"] + g_["plot_h"]))
+        if best is None or off:
+            dot.style.display = "none"
+        else:
+            dot.setAttribute("cx", "%g" % best["x"])
+            dot.setAttribute("cy", "%g" % best["y"])
+            dot.style.display = "block"
 
     price_el = document.querySelector("#" + prefix + "-price-val")
     if price_el is not None:
-        price_el.innerHTML = best.get("psvg", "")
+        price_el.innerHTML = pts[bi].get("psvg", "")
     ma_el = document.querySelector("#" + prefix + "-ma-val")
     if ma_el is not None:
-        ma_el.innerHTML = best.get("masvg", "")
+        ma_el.innerHTML = pts[bi].get("masvg", "")
 
 
 def _price_cursor(prefix, sy):
@@ -7974,6 +8341,7 @@ def _price_cursor(prefix, sy):
 
 def _candle_hide(prefix):
     for sel in ("#" + prefix + "-guide", "#" + prefix + "-guide-dot", "#" + prefix + "-ycur",
+                "#" + prefix + "-xcur",
                 "#" + prefix + "-wr-guide", "#" + prefix + "-stoch-guide",
                 "#" + prefix + "-recov-guide"):
         el = document.querySelector(sel)
@@ -13676,6 +14044,34 @@ document.addEventListener("visibilitychange", create_proxy(_on_header_visibility
     relay(ev);
   }, { passive: true });
   document.addEventListener("touchmove", relay, { passive: true });
+  // 캔들 SVG 는 touch-action:none 이라 캔들 영역(가격 플롯) 터치는 차트 상하·좌우 이동에 쓰인다.
+  // 같은 SVG 의 축·하위 패널 등 플롯 밖에서 시작한 터치는 직접 페이지를 스크롤한다.
+  const inCandlePlot = (svg, t) => {
+    const r = svg.querySelector('clipPath[id$="-plot-clip"] rect');
+    const m = svg.getScreenCTM();
+    if (!r || !m) return false;
+    const p = svg.createSVGPoint();
+    p.x = t.clientX; p.y = t.clientY;
+    const q = p.matrixTransform(m.inverse());
+    const x = +r.getAttribute("x"), y = +r.getAttribute("y");
+    return q.x >= x && q.x <= x + +r.getAttribute("width") &&
+           q.y >= y && q.y <= y + +r.getAttribute("height");
+  };
+  let manualY = null;
+  document.addEventListener("touchstart", (ev) => {
+    manualY = null;
+    if (ev.touches.length !== 1) return;
+    const host = ev.target.closest && ev.target.closest(".candle-tooltip-host");
+    const svg = host && host.querySelector("svg.candle-svg");
+    if (svg && !inCandlePlot(svg, ev.touches[0])) manualY = ev.touches[0].clientY;
+  }, { passive: true });
+  document.addEventListener("touchmove", (ev) => {
+    if (manualY === null || ev.touches.length !== 1) return;
+    const y = ev.touches[0].clientY;
+    window.scrollBy(0, manualY - y);
+    manualY = y;
+  }, { passive: true });
+  document.addEventListener("touchend", () => { manualY = null; }, { passive: true });
   // 브라우저가 탭 후 자동으로 보내는 mousemove 도 추세선 모드에서는 막는다.
   document.addEventListener("mousemove", (ev) => {
     if (!ev.isTrusted || Date.now() - lastTouch > 1000) return;
