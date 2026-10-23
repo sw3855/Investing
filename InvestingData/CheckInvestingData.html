@@ -1538,6 +1538,11 @@ def _extract_array(text, key):
 # 파생상품/펀드보다 실제 주식을 우선하기 위한 유형별 가중치
 _TYPE_SCORE = {"stock": 100, "dr": 70, "fund": 60}
 _TYPE_PENALTY = {"futures", "warrant", "option", "index"}
+# 'stock'/'fund' 로 분류돼도 실제로는 암호화폐 오라클·CFD 등 합성 상품인 경우
+# (예: PYTH:ITA, THINKMARKETS:ITA) 를 걸러내기 위한 typespecs
+_TYPESPEC_PENALTY = {"crypto", "cfd", "oracle", "synthetic", "cryptoasset"}
+# 미국 주요 거래소(ETF 는 CBOE/AMEX(NYSE Arca) 상장이 많음) 우선
+_US_EXCHANGES = {"NASDAQ", "NYSE", "AMEX", "CBOE", "NYSE ARCA", "ARCA", "BATS"}
 
 
 def _norm(text):
@@ -1578,15 +1583,23 @@ def _score_item(item, query_norm, prefer_kr=False):
         type_score = -100
     else:
         type_score = _TYPE_SCORE.get(typ, 0)
-    score = type_score + text_match * 20
+    specs = {str(s).lower() for s in (item.get("typespecs") or [])}
+    if specs & _TYPESPEC_PENALTY:
+        type_score -= 150
+    # 티커 완전 일치가 유형 가중치보다 우선해야 ETF(ITA 등)가 다른 나라의
+    # 동일 티커 주식이나 설명이 'ITA...' 로 시작하는 주식에 밀리지 않는다.
+    # (한글 회사명 검색은 KRX 가점이 유지되도록 기존 가중치 사용)
+    score = type_score + text_match * (20 if prefer_kr else 100)
 
+    exch = strip_tags(item.get("prefix") or item.get("exchange") or "").upper()
     # 한글 회사명 검색은 국내 상장(KRX) 결과를 우선한다. 설명이 영문으로 저장된
     # 종목(예: 'LS ELECTRIC')이라 이름이 literal 일치하지 않아도 TradingView 의
     # 자체 관련도 순위를 신뢰하도록 KRX 거래소에 가점을 준다.
     if prefer_kr:
-        exch = strip_tags(item.get("prefix") or item.get("exchange") or "").upper()
         if exch == "KRX":
             score += 30
+    elif exch in _US_EXCHANGES:
+        score += 60
     return score, text_match
 
 
