@@ -1,0 +1,1041 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>복리의 마법을 부릴 수 있는 퀄리티 주식 찾는 법 - 백찬규 센터장</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Noto Sans KR', 'sans-serif'],
+                    },
+                    colors: {
+                        brand: {
+                            50: '#f0f9ff',
+                            100: '#e0f2fe',
+                            500: '#0ea5e9',
+                            600: '#0284c7',
+                            700: '#0369a1',
+                            900: '#0c4a6e',
+                        },
+                        accent: {
+                            gold: '#f59e0b',
+                            green: '#10b981',
+                            purple: '#8b5cf6',
+                            rose: '#f43f5e'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            font-family: 'Noto Sans KR', sans-serif;
+            user-select: none;
+            /* Lock to the visible viewport (dvh excludes mobile browser toolbars) */
+            height: 100vh;
+            height: 100dvh;
+        }
+        #main-slide-view {
+            -webkit-overflow-scrolling: touch;
+            overscroll-behavior: contain;
+        }
+        .slide {
+            word-break: keep-all;
+            overflow-wrap: anywhere;
+        }
+        footer {
+            padding-bottom: env(safe-area-inset-bottom);
+            box-sizing: content-box;
+        }
+        @media (max-width: 640px) {
+            /* Let label/value rows wrap instead of overflowing on narrow screens */
+            .slide .flex.justify-between {
+                flex-wrap: wrap;
+                gap: 0.375rem;
+            }
+            .slide h2 {
+                font-size: 1.375rem;
+                line-height: 1.35;
+            }
+            .slide .p-6 {
+                padding: 1rem;
+            }
+            .slide .gap-6 {
+                gap: 1rem;
+            }
+            .slide .mb-6 {
+                margin-bottom: 1rem;
+            }
+        }
+        .slide {
+            display: none;
+            opacity: 0;
+            transition: opacity 0.3s ease-in-out, transform 0.3s ease-in-out;
+            transform: translateY(10px);
+        }
+        .slide.active {
+            display: flex;
+            opacity: 1;
+            transform: translateY(0);
+        }
+        /* Glassmorphism */
+        .glass-card {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .glass-card-hover {
+            transition: all 0.25s ease;
+        }
+        .glass-card-hover:hover {
+            border-color: rgba(14, 165, 233, 0.4);
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px -5px rgba(14, 165, 233, 0.15);
+        }
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0f172a;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 9999px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #475569;
+        }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 flex flex-col justify-between overflow-hidden">
+
+    <!-- Top Navigation Header -->
+    <header class="h-16 border-b border-slate-800/80 bg-slate-900/90 px-4 md:px-8 flex items-center justify-between z-30 shrink-0">
+        <div class="flex items-center space-x-3 min-w-0 mr-2">
+            <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-brand-600 to-cyan-400 flex items-center justify-center font-bold text-white shadow-lg shadow-brand-500/20 shrink-0">
+                <i class="fa-solid me-0 fa-chart-line"></i>
+            </div>
+            <div class="min-w-0">
+                <h1 class="text-sm md:text-base font-bold truncate bg-clip-text text-transparent bg-gradient-to-r from-white via-slate-200 to-slate-400">
+                    퀄리티 주식 투자 전략 Masterclass
+                </h1>
+                <p class="text-xs text-slate-400 hidden sm:block">NH투자증권 백찬규 센터장 강의 정리</p>
+            </div>
+        </div>
+
+        <div class="flex items-center space-x-2 md:space-x-4 shrink-0">
+            <!-- Slide counter badge -->
+            <div class="bg-slate-800/80 px-3 py-1 rounded-full text-xs font-medium text-slate-300 border border-slate-700/60">
+                <span id="current-slide-num" class="text-brand-500 font-bold">1</span> / <span id="total-slides-num">9</span>
+            </div>
+
+            <!-- Table of contents button -->
+            <button onclick="toggleTocModal()" class="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition flex items-center space-x-1.5 text-xs font-medium">
+                <i class="fa-solid fa-list-ul"></i>
+                <span class="hidden sm:inline">목차</span>
+            </button>
+
+            <!-- Fullscreen toggle -->
+            <button onclick="toggleFullScreen()" class="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition text-xs">
+                <i class="fa-solid fa-expand" id="fullscreen-icon"></i>
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Presentation Container -->
+    <main class="flex-1 min-h-0 relative overflow-y-auto overflow-x-hidden p-3 sm:p-4 md:p-8 flex items-start justify-center" id="main-slide-view">
+
+        <!-- SLIDE 1: Title Cover -->
+        <section class="slide active w-full max-w-5xl flex-col items-center justify-center text-center my-auto">
+            <div class="inline-flex items-center space-x-2 bg-brand-500/10 border border-brand-500/30 text-brand-500 px-4 py-1.5 rounded-full text-xs md:text-sm font-semibold mb-6 animate-pulse">
+                <i class="fa-solid fa-wand-magic-sparkles"></i>
+                <span>복리의 마법을 부리는 미국 우량주 투자 가이드</span>
+            </div>
+            
+            <h1 class="text-3xl md:text-5xl lg:text-6xl font-black tracking-tight leading-tight mb-6 bg-clip-text text-transparent bg-gradient-to-r from-white via-slate-100 to-slate-400">
+                복리의 마법을 부릴 수 있는<br>
+                <span class="bg-clip-text text-transparent bg-gradient-to-r from-brand-500 via-cyan-400 to-emerald-400">퀄리티 주식(Quality Stock)</span> 찾는 법
+            </h1>
+
+            <p class="text-slate-400 text-base md:text-lg max-w-2xl mb-10 font-normal leading-relaxed">
+                단기 변동성을 이겨내고 시장 수익률을 압도하는 질적 우수 기업 선별 기준과<br class="hidden sm:inline">
+                4대 경제적 해자, 재무 건전성 및 잉여현금흐름(FCF) 완전 분석
+            </p>
+
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 w-full max-w-3xl mb-8">
+                <div class="glass-card p-4 rounded-xl text-center">
+                    <div class="text-2xl md:text-3xl font-extrabold text-brand-500 mb-1">284%</div>
+                    <div class="text-xs text-slate-400">퀄리티 지수 10년 수익률</div>
+                </div>
+                <div class="glass-card p-4 rounded-xl text-center">
+                    <div class="text-2xl md:text-3xl font-extrabold text-emerald-400 mb-1">4대</div>
+                    <div class="text-xs text-slate-400">독점적 경제적 해자</div>
+                </div>
+                <div class="glass-card p-4 rounded-xl text-center">
+                    <div class="text-2xl md:text-3xl font-extrabold text-purple-400 mb-1">15%+</div>
+                    <div class="text-xs text-slate-400">목표 ROE / ROCE</div>
+                </div>
+                <div class="glass-card p-4 rounded-xl text-center">
+                    <div class="text-2xl md:text-3xl font-extrabold text-amber-400 mb-1">FCF &gt; 0</div>
+                    <div class="text-xs text-slate-400">잉여현금흐름 창출력</div>
+                </div>
+            </div>
+
+            <div class="flex items-center space-x-3 text-xs text-slate-400 bg-slate-900/60 px-4 py-2 rounded-lg border border-slate-800">
+                <i class="fa-regular fa-user text-brand-500"></i>
+                <span>발표자: <strong>백찬규 Center Director</strong> (NH투자증권)</span>
+            </div>
+        </section>
+
+        <!-- SLIDE 2: Portfolio 4 Pillars -->
+        <section class="slide w-full max-w-5xl flex-col justify-center my-auto">
+            <div class="mb-6">
+                <span class="text-xs font-bold uppercase tracking-wider text-brand-500">Portfolio Strategy</span>
+                <h2 class="text-2xl md:text-4xl font-extrabold text-white mt-1">포트폴리오 4대 카테고리 구성 전략</h2>
+                <p class="text-slate-400 text-sm mt-1">성장성, 안정성, 수익성을 균형 있게 배치하는 승자의 자산 배분 구조</p>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <!-- Card 1 -->
+                <div class="glass-card glass-card-hover p-5 rounded-2xl border-l-4 border-l-cyan-500">
+                    <div class="flex justify-between items-start mb-3">
+                        <div class="flex items-center space-x-3">
+                            <div class="w-10 h-10 rounded-xl bg-cyan-500/10 text-cyan-400 flex items-center justify-center font-bold text-lg">
+                                <i class="fa-solid fa-rocket"></i>
+                            </div>
+                            <div>
+                                <h3 class="font-bold text-white text-base">구조적 성장 확신 기업</h3>
+                                <span class="text-xs text-cyan-400 font-medium">Conviction Stocks</span>
+                            </div>
+                        </div>
+                        <span class="bg-cyan-500/20 text-cyan-300 text-xs font-bold px-2.5 py-1 rounded-full">비중 ~30%</span>
+                    </div>
+                    <p class="text-slate-300 text-sm mb-2">소비자들의 삶과 생활 습관을 근본적으로 바꾸는 혁신 성장 기업.</p>
+                    <div class="text-xs text-slate-400 bg-slate-900/80 p-2.5 rounded-lg border border-slate-800">
+                        <i class="fa-solid fa-check text-cyan-400 mr-1"></i> 예시: Master Card, Align Technology (인비절라인)
+                    </div>
+                </div>
+
+                <!-- Card 2 -->
+                <div class="glass-card glass-card-hover p-5 rounded-2xl border-l-4 border-l-indigo-500">
+                    <div class="flex justify-between items-start mb-3">
+                        <div class="flex items-center space-x-3">
+                            <div class="w-10 h-10 rounded-xl bg-indigo-500/10 text-indigo-400 flex items-center justify-center font-bold text-lg">
+                                <i class="fa-solid fa-building-columns"></i>
+                            </div>
+                            <div>
+                                <h3 class="font-bold text-white text-base">대형 핵심 기업</h3>
+                                <span class="text-xs text-indigo-400 font-medium">Large Cap / Big Tech</span>
+                            </div>
+                        </div>
+                        <span class="bg-indigo-500/20 text-indigo-300 text-xs font-bold px-2.5 py-1 rounded-full">핵심 축</span>
+                    </div>
+                    <p class="text-slate-300 text-sm mb-2">시대정신(Zeitgeist)을 이끌며 높은 매출 증가율과 현금창출력을 보유한 대형주.</p>
+                    <div class="text-xs text-slate-400 bg-slate-900/80 p-2.5 rounded-lg border border-slate-800">
+                        <i class="fa-solid fa-check text-indigo-400 mr-1"></i> 예시: Big Tech / Magnificent 7 (M7)
+                    </div>
+                </div>
+
+                <!-- Card 3 -->
+                <div class="glass-card glass-card-hover p-5 rounded-2xl border-l-4 border-l-emerald-500 bg-emerald-950/10">
+                    <div class="flex justify-between items-start mb-3">
+                        <div class="flex items-center space-x-3">
+                            <div class="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center font-bold text-lg">
+                                <i class="fa-solid fa-anchor"></i>
+                            </div>
+                            <div>
+                                <h3 class="font-bold text-white text-base">재무·배당 우수 & 퀄리티 주식 ★</h3>
+                                <span class="text-xs text-emerald-400 font-medium">Dividend & Quality Stocks</span>
+                            </div>
+                        </div>
+                        <span class="bg-emerald-500/20 text-emerald-300 text-xs font-bold px-2.5 py-1 rounded-full">비중 ~30%</span>
+                    </div>
+                    <p class="text-slate-300 text-sm mb-2">하락장과 외풍 속에서 포트폴리오를 지켜주는 **'닻(Anchor)'** 역할 (오늘의 핵심 주제!).</p>
+                    <div class="text-xs text-slate-400 bg-slate-900/80 p-2.5 rounded-lg border border-slate-800">
+                        <i class="fa-solid fa-check text-emerald-400 mr-1"></i> 퀄리티 15~20% + 배당주 10~15% 구성
+                    </div>
+                </div>
+
+                <!-- Card 4 -->
+                <div class="glass-card glass-card-hover p-5 rounded-2xl border-l-4 border-l-amber-500">
+                    <div class="flex justify-between items-start mb-3">
+                        <div class="flex items-center space-x-3">
+                            <div class="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-400 flex items-center justify-center font-bold text-lg">
+                                <i class="fa-solid fa-bolt"></i>
+                            </div>
+                            <div>
+                                <h3 class="font-bold text-white text-base">모멘텀 보유 기업</h3>
+                                <span class="text-xs text-amber-400 font-medium">Momentum Play</span>
+                            </div>
+                        </div>
+                        <span class="bg-amber-500/20 text-amber-300 text-xs font-bold px-2.5 py-1 rounded-full">선택적 플레이</span>
+                    </div>
+                    <p class="text-slate-300 text-sm mb-2">시장 트렌드와 기술적/실적 모멘텀을 활용한 단기 전술적 트레이딩 영역.</p>
+                    <div class="text-xs text-slate-400 bg-slate-900/80 p-2.5 rounded-lg border border-slate-800">
+                        <i class="fa-solid fa-triangle-exclamation text-amber-400 mr-1"></i> 무분별한 매매 방지 및 계좌 보호 주의 필요
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- SLIDE 3: 10-Year Performance Comparison -->
+        <section class="slide w-full max-w-5xl flex-col justify-center my-auto">
+            <div class="mb-6">
+                <span class="text-xs font-bold uppercase tracking-wider text-brand-500">[장표 1] 복리의 마법</span>
+                <h2 class="text-2xl md:text-4xl font-extrabold text-white mt-1">반짝 급등주 vs 퀄리티 주식 (10년 성과)</h2>
+                <p class="text-slate-400 text-sm mt-1">하락장에서 덜 깨지는 자산이 결국 장기 복리 수익률을 지배한다</p>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- Left: Performance Bars -->
+                <div class="lg:col-span-2 glass-card p-6 rounded-2xl space-y-5 flex flex-col justify-center">
+                    <h3 class="text-sm font-semibold text-slate-300 mb-2 flex items-center justify-between">
+                        <span>10년간 누적 수익률 비교 (2014년 ~ 2023년)</span>
+                        <span class="text-xs text-slate-500">*MSCI & S&P Data 기준</span>
+                    </h3>
+
+                    <!-- Bar 1: MSCI World Quality -->
+                    <div>
+                        <div class="flex justify-between text-xs mb-1 font-bold">
+                            <span class="text-emerald-400 flex items-center"><i class="fa-solid fa-crown mr-1"></i> MSCI World Quality Index</span>
+                            <span class="text-emerald-400 text-base">+284%</span>
+                        </div>
+                        <div class="w-full bg-slate-800 h-6 rounded-full overflow-hidden p-1 border border-slate-700">
+                            <div class="bg-gradient-to-r from-emerald-500 to-teal-400 h-full rounded-full transition-all duration-1000" style="width: 95%;"></div>
+                        </div>
+                    </div>
+
+                    <!-- Bar 2: S&P 500 -->
+                    <div>
+                        <div class="flex justify-between text-xs mb-1 font-bold">
+                            <span class="text-brand-400"><i class="fa-solid fa-chart-simple mr-1"></i> S&P 500 Index</span>
+                            <span class="text-brand-400 text-base">+162%</span>
+                        </div>
+                        <div class="w-full bg-slate-800 h-6 rounded-full overflow-hidden p-1 border border-slate-700">
+                            <div class="bg-gradient-to-r from-brand-600 to-cyan-500 h-full rounded-full transition-all duration-1000" style="width: 55%;"></div>
+                        </div>
+                    </div>
+
+                    <!-- Bar 3: Theme Stocks -->
+                    <div>
+                        <div class="flex justify-between text-xs mb-1 font-bold">
+                            <span class="text-rose-400"><i class="fa-solid fa-arrow-trend-down mr-1"></i> 단기 테마주 지수 (Theme/Hype)</span>
+                            <span class="text-rose-400 text-base">원금 훼손 (손실)</span>
+                        </div>
+                        <div class="w-full bg-slate-800 h-6 rounded-full overflow-hidden p-1 border border-slate-700">
+                            <div class="bg-gradient-to-r from-rose-600 to-rose-400 h-full rounded-full transition-all duration-1000" style="width: 15%;"></div>
+                        </div>
+                    </div>
+
+                    <p class="text-xs text-slate-400 pt-2 border-t border-slate-800">
+                        *2022년 고금리/폭락장 등 외생 변수 악화 시, 퀄리티 주식의 방어력 및 빠른 회복력이 복리 차이를 크게 벌렸습니다.
+                    </p>
+                </div>
+
+                <!-- Right: Key Insight Box -->
+                <div class="glass-card p-6 rounded-2xl flex flex-col justify-between border-t-4 border-t-brand-500">
+                    <div>
+                        <div class="w-12 h-12 rounded-xl bg-brand-500/10 text-brand-400 flex items-center justify-center text-xl font-bold mb-4">
+                            <i class="fa-solid fa-lightbulb"></i>
+                        </div>
+                        <h4 class="text-lg font-bold text-white mb-2">백찬규 센터장의 Insight</h4>
+                        <p class="text-slate-300 text-xs leading-relaxed mb-4">
+                            "주식 시장에 외생 변수(전쟁, 유가 급등, 금리 쇼크 등)가 거세지고 흔들릴 때일수록 <strong>퀄리티 주식의 가치가 빛을 발합니다.</strong>"
+                        </p>
+                        <ul class="text-xs text-slate-400 space-y-2">
+                            <li class="flex items-start">
+                                <i class="fa-solid fa-circle-check text-brand-400 mr-2 mt-0.5"></i>
+                                <span>하락장에서 방어력이 뛰어나 원금 방어</span>
+                            </li>
+                            <li class="flex items-start">
+                                <i class="fa-solid fa-circle-check text-brand-400 mr-2 mt-0.5"></i>
+                                <span>상승장 회복기 진입 시 빠른 복리 실현</span>
+                            </li>
+                            <li class="flex items-start">
+                                <i class="fa-solid fa-circle-check text-brand-400 mr-2 mt-0.5"></i>
+                                <span>장기 보유 시 투자자의 심리적 안정감 제공</span>
+                            </li>
+                        </ul>
+                    </div>
+
+                    <div class="mt-6 pt-3 border-t border-slate-800 text-center">
+                        <span class="text-xs text-brand-400 font-semibold">포트폴리오 비중 15~20% 필수 편입</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- SLIDE 4: 3 Core Quality Stock Conditions -->
+        <section class="slide w-full max-w-5xl flex-col justify-center my-auto">
+            <div class="mb-6">
+                <span class="text-xs font-bold uppercase tracking-wider text-brand-500">[장표 2] 퀄리티 주식 선별 기준</span>
+                <h2 class="text-2xl md:text-4xl font-extrabold text-white mt-1">퀄리티 주식의 3대 핵심 조건</h2>
+                <p class="text-slate-400 text-sm mt-1">진정한 질적 우량 기업을 가려내기 위한 3가지 필터</p>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <!-- Condition 1 -->
+                <div class="glass-card p-6 rounded-2xl glass-card-hover border-t-4 border-t-cyan-500 relative overflow-hidden">
+                    <div class="absolute -right-4 -bottom-4 text-slate-800/40 text-8xl font-black">1</div>
+                    <div class="w-12 h-12 rounded-xl bg-cyan-500/10 text-cyan-400 flex items-center justify-center font-bold text-xl mb-4">
+                        <i class="fa-solid fa-shield-halved"></i>
+                    </div>
+                    <h3 class="text-lg font-bold text-white mb-2">1. 독점적 경제적 해자</h3>
+                    <p class="text-xs text-cyan-300 font-medium mb-3">Economic Moat</p>
+                    <p class="text-slate-300 text-xs leading-relaxed mb-4">
+                        경쟁사가 감히 침범할 수 없는 독보적인 진입 장벽을 갖고 있어 <strong>가격 결정권(Pricing Power)</strong>을 행사할 수 있는 기업.
+                    </p>
+                    <div class="bg-slate-900/80 p-3 rounded-lg text-xs text-slate-400 border border-slate-800">
+                        <strong class="text-white">특징:</strong> 남이 발을 붙이지 못하게 막고 자사 제품 가격을 주도함.
+                    </div>
+                </div>
+
+                <!-- Condition 2 -->
+                <div class="glass-card p-6 rounded-2xl glass-card-hover border-t-4 border-t-purple-500 relative overflow-hidden">
+                    <div class="absolute -right-4 -bottom-4 text-slate-800/40 text-8xl font-black">2</div>
+                    <div class="w-12 h-12 rounded-xl bg-purple-500/10 text-purple-400 flex items-center justify-center font-bold text-xl mb-4">
+                        <i class="fa-solid fa-chart-pie"></i>
+                    </div>
+                    <h3 class="text-lg font-bold text-white mb-2">2. 극대화된 자본 효율성</h3>
+                    <p class="text-xs text-purple-300 font-medium mb-3">Capital Efficiency</p>
+                    <p class="text-slate-300 text-xs leading-relaxed mb-4">
+                        주주 자본과 투입 자본을 활용해 끊임없이 높은 이익을 창출하는 능력. <strong>5~10년 이상 꾸준히 15%+ 지표 유지</strong>.
+                    </p>
+                    <div class="bg-slate-900/80 p-3 rounded-lg text-xs text-slate-400 border border-slate-800">
+                        <strong class="text-white">특징:</strong> 단발성 호황이 아닌, 지속 가능한 고효율 장사.
+                    </div>
+                </div>
+
+                <!-- Condition 3 -->
+                <div class="glass-card p-6 rounded-2xl glass-card-hover border-t-4 border-t-emerald-500 relative overflow-hidden">
+                    <div class="absolute -right-4 -bottom-4 text-slate-800/40 text-8xl font-black">3</div>
+                    <div class="w-12 h-12 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center font-bold text-xl mb-4">
+                        <i class="fa-solid fa-vault"></i>
+                    </div>
+                    <h3 class="text-lg font-bold text-white mb-2">3. 무차입급 재무 구조</h3>
+                    <p class="text-xs text-emerald-300 font-medium mb-3">Balance Sheet Strength</p>
+                    <p class="text-slate-300 text-xs leading-relaxed mb-4">
+                        부채 비율이 매우 낮고 현금이 넉넉하여, <strong>경기 침체기에도 도산 위험이 전무</strong>하고 오히려 위기를 기회로 삼는 기업.
+                    </p>
+                    <div class="bg-slate-900/80 p-3 rounded-lg text-xs text-slate-400 border border-slate-800">
+                        <strong class="text-white">특징:</strong> 위기 시 남들이 망할 때 경쟁사를 인수하여 시장 독점 강화.
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- SLIDE 5: 4 Types of Economic Moats -->
+        <section class="slide w-full max-w-5xl flex-col justify-center my-auto">
+            <div class="mb-6">
+                <span class="text-xs font-bold uppercase tracking-wider text-brand-500">[장표 3] 경쟁력의 근원</span>
+                <h2 class="text-2xl md:text-4xl font-extrabold text-white mt-1">경제적 해자의 4가지 핵심 유형</h2>
+                <p class="text-slate-400 text-sm mt-1">기업이 가격 결정권을 갖게 만드는 4가지 진입 장벽 구조</p>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <!-- Moat 1 -->
+                <div class="glass-card p-5 rounded-xl border border-slate-800 flex items-start space-x-4">
+                    <div class="w-12 h-12 rounded-xl bg-cyan-500/10 text-cyan-400 flex items-center justify-center font-bold text-xl shrink-0">
+                        <i class="fa-solid fa-arrow-right-arrow-left"></i>
+                    </div>
+                    <div>
+                        <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <h3 class="font-bold text-white text-base">1. 높은 전환 비용</h3>
+                            <span class="text-[10px] bg-cyan-500/20 text-cyan-300 px-2 py-0.5 rounded">Switching Costs</span>
+                        </div>
+                        <p class="text-slate-300 text-xs mt-1 leading-relaxed">
+                            경쟁사 제품으로 이동할 때 막대한 비용, 시간, 교육, 리스크가 발생해 고객이 절대 이탈하지 못하는 구조.
+                        </p>
+                        <div class="text-[11px] text-slate-400 mt-2 bg-slate-900/80 p-2 rounded border border-slate-800/80">
+                            💡 예시: 공장 생산 설비 시스템, 사내 ERP (SAP 등)
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Moat 2 -->
+                <div class="glass-card p-5 rounded-xl border border-slate-800 flex items-start space-x-4">
+                    <div class="w-12 h-12 rounded-xl bg-indigo-500/10 text-indigo-400 flex items-center justify-center font-bold text-xl shrink-0">
+                        <i class="fa-solid fa-diagram-project"></i>
+                    </div>
+                    <div>
+                        <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <h3 class="font-bold text-white text-base">2. 네트워크 효과</h3>
+                            <span class="text-[10px] bg-indigo-500/20 text-indigo-300 px-2 py-0.5 rounded">Network Effects</span>
+                        </div>
+                        <p class="text-slate-300 text-xs mt-1 leading-relaxed">
+                            사용자가 늘어날수록 플랫폼 전체의 가치와 독점력이 기하급수적으로 폭발하는 현상.
+                        </p>
+                        <div class="text-[11px] text-slate-400 mt-2 bg-slate-900/80 p-2 rounded border border-slate-800/80">
+                            💡 예시: 카카오톡, Visa/Mastercard 결제망, 주요 SNS
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Moat 3 -->
+                <div class="glass-card p-5 rounded-xl border border-slate-800 flex items-start space-x-4">
+                    <div class="w-12 h-12 rounded-xl bg-purple-500/10 text-purple-400 flex items-center justify-center font-bold text-xl shrink-0">
+                        <i class="fa-solid fa-copyright"></i>
+                    </div>
+                    <div>
+                        <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <h3 class="font-bold text-white text-base">3. 무형 자산</h3>
+                            <span class="text-[10px] bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded">Intangible Assets</span>
+                        </div>
+                        <p class="text-slate-300 text-xs mt-1 leading-relaxed">
+                            강력한 브랜드 프리미엄, 특허권, 독점 라이선스 등으로 타사가 대체할 수 없는 신뢰 보유.
+                        </p>
+                        <div class="text-[11px] text-slate-400 mt-2 bg-slate-900/80 p-2 rounded border border-slate-800/80">
+                            💡 예시: 코카콜라, 애플 브랜드, 제약회사 특허권
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Moat 4 -->
+                <div class="glass-card p-5 rounded-xl border border-slate-800 flex items-start space-x-4">
+                    <div class="w-12 h-12 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center font-bold text-xl shrink-0">
+                        <i class="fa-solid fa-boxes-packing"></i>
+                    </div>
+                    <div>
+                        <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <h3 class="font-bold text-white text-base">4. 구조적 원가 우위</h3>
+                            <span class="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded">Cost Advantage</span>
+                        </div>
+                        <p class="text-slate-300 text-xs mt-1 leading-relaxed">
+                            모방 불가능한 대규모 규모의 경제와 독점적 공급망으로 절대적인 원가 경쟁력을 확보.
+                        </p>
+                        <div class="text-[11px] text-slate-400 mt-2 bg-slate-900/80 p-2 rounded border border-slate-800/80">
+                            💡 예시: 빅테크 CAPEX 투자, 대형 반도체 제조 인프라
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- SLIDE 6: ROE vs ROCE -->
+        <section class="slide w-full max-w-5xl flex-col justify-center my-auto">
+            <div class="mb-6">
+                <span class="text-xs font-bold uppercase tracking-wider text-brand-500">[장표 4] 자본 효율성 검증</span>
+                <h2 class="text-2xl md:text-4xl font-extrabold text-white mt-1">ROE vs ROCE (사용자본이익률)</h2>
+                <p class="text-slate-400 text-sm mt-1">주주 관점과 기업 관점의 자본 효율성을 동시에 정밀 측정</p>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <!-- ROE Box -->
+                <div class="glass-card p-6 rounded-2xl border-t-4 border-t-brand-500">
+                    <div class="flex justify-between items-center mb-3">
+                        <h3 class="text-lg font-bold text-white">ROE (자기자본수익률)</h3>
+                        <span class="text-xs font-semibold text-brand-400 bg-brand-500/10 px-2.5 py-1 rounded">주주 관점 (Show Me The Money)</span>
+                    </div>
+
+                    <!-- Formula -->
+                    <div class="bg-slate-900/90 p-3 rounded-xl border border-slate-800 font-mono text-center mb-4">
+                        <span class="text-brand-400 font-bold">ROE</span> = <span class="text-white">당기순이익</span> / <span class="text-slate-400">자기자본</span>
+                    </div>
+
+                    <p class="text-slate-300 text-xs leading-relaxed mb-3">
+                        내가 주주로서 태운 돈(자기자본) 대비 회사에 내 손에 쥐어준 순이익 비율.
+                    </p>
+
+                    <div class="bg-slate-900/60 p-3 rounded-lg text-xs space-y-1.5 border border-slate-800">
+                        <div class="flex justify-between text-slate-300">
+                            <span>권장 기준:</span>
+                            <span class="text-emerald-400 font-bold">5~10년 연속 15% 이상</span>
+                        </div>
+                        <div class="text-[11px] text-slate-400">
+                            *단발성 1회성 이익에 혹하지 말고 5년 이상의 지속성을 확인해야함.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ROCE Box -->
+                <div class="glass-card p-6 rounded-2xl border-t-4 border-t-purple-500">
+                    <div class="flex justify-between items-center mb-3">
+                        <h3 class="text-lg font-bold text-white">ROCE (사용자본이익률) ★</h3>
+                        <span class="text-xs font-semibold text-purple-400 bg-purple-500/10 px-2.5 py-1 rounded">기업 관점 (진짜 영업 실력)</span>
+                    </div>
+
+                    <!-- Formula -->
+                    <div class="bg-slate-900/90 p-3 rounded-xl border border-slate-800 font-mono text-center mb-4">
+                        <span class="text-purple-400 font-bold">ROCE</span> = <span class="text-white">영업이익 (EBIT)</span> / <span class="text-slate-400">(총자산 - 유동부채)</span>
+                    </div>
+
+                    <p class="text-slate-300 text-xs leading-relaxed mb-3">
+                        단기 부채 흐름이나 회계적 착시를 걸러내고, <strong>기업이 실제로 사업에 쓴 사용자본(Capital) 대비 진짜 장사를 얼마나 잘했는지</strong> 평가하는 정교한 핵심 지표.
+                    </p>
+
+                    <div class="bg-slate-900/60 p-3 rounded-lg text-xs space-y-1.5 border border-slate-800">
+                        <div class="flex justify-between text-slate-300">
+                            <span>권장 기준:</span>
+                            <span class="text-purple-400 font-bold">5~10년 연속 15% 이상</span>
+                        </div>
+                        <div class="text-[11px] text-slate-400">
+                            *무형자산 자의적 평가 등 회계 왜곡을 최소화해 우버/워렌 버핏 스타일 기업 평가 가능.
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- SLIDE 7: Balance Sheet & FCF Standards -->
+        <section class="slide w-full max-w-5xl flex-col justify-center my-auto">
+            <div class="mb-6">
+                <span class="text-xs font-bold uppercase tracking-wider text-brand-500">[장표 5] 재무 건전성 & 현금흐름</span>
+                <h2 class="text-2xl md:text-4xl font-extrabold text-white mt-1">철벽 재무 구조 & 잉여현금흐름(FCF)</h2>
+                <p class="text-slate-400 text-sm mt-1">손익계산서 착시를 너머 진짜 현금이 곳간에 쌓이는가?</p>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <!-- Section 1: Financial Soundness -->
+                <div class="glass-card p-5 rounded-2xl space-y-4">
+                    <h3 class="font-bold text-white text-base flex items-center border-b border-slate-800 pb-2">
+                        <i class="fa-solid fa-shield text-cyan-400 mr-2"></i> 엄격한 재무 건전성 3대 스크리닝
+                    </h3>
+
+                    <div class="space-y-3">
+                        <div class="bg-slate-900/80 p-3 rounded-xl border border-slate-800">
+                            <div class="flex justify-between text-xs font-bold mb-1">
+                                <span class="text-slate-200">1. 부채 비율 (Debt / Equity)</span>
+                                <span class="text-cyan-400">80% 이하</span>
+                            </div>
+                            <p class="text-[11px] text-slate-400">권고 기준(200%)보다 훨씬 엄격하게 무리한 차입을 배제함.</p>
+                        </div>
+
+                        <div class="bg-slate-900/80 p-3 rounded-xl border border-slate-800">
+                            <div class="flex justify-between text-xs font-bold mb-1">
+                                <span class="text-slate-200">2. 이자보상배율 (Interest Coverage)</span>
+                                <span class="text-cyan-400">10배 이상</span>
+                            </div>
+                            <p class="text-[11px] text-slate-400">영업이익으로 이자 비용을 10배 이상 넉넉하게 갚을 수 있음.</p>
+                        </div>
+
+                        <div class="bg-slate-900/80 p-3 rounded-xl border border-slate-800">
+                            <div class="flex justify-between text-xs font-bold mb-1">
+                                <span class="text-slate-200">3. 순현금 (Net Cash) 상태</span>
+                                <span class="text-cyan-400">현금 &gt; 차입부채</span>
+                            </div>
+                            <p class="text-[11px] text-slate-400">총 현금성 자산이 이자 발생 부채보다 많은 넉넉한 곳간 보유.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Section 2: Cash Flow & FCF -->
+                <div class="glass-card p-5 rounded-2xl space-y-4 border-t-4 border-t-emerald-500">
+                    <h3 class="font-bold text-white text-base flex items-center border-b border-slate-800 pb-2">
+                        <i class="fa-solid fa-money-bill-wave text-emerald-400 mr-2"></i> 잉여현금흐름 (FCF) & 현금 전환율
+                    </h3>
+
+                    <div class="bg-slate-900/90 p-3 rounded-xl border border-slate-800 text-center font-mono text-xs">
+                        <span class="text-emerald-400 font-bold">FCF</span> = 영업활동현금흐름(OCF) - 설비투자(CAPEX)
+                    </div>
+
+                    <ul class="space-y-2.5 text-xs text-slate-300">
+                        <li class="flex items-start bg-slate-900/60 p-2.5 rounded-lg border border-slate-800">
+                            <i class="fa-solid fa-circle-check text-emerald-400 mr-2 mt-0.5"></i>
+                            <div>
+                                <strong class="text-white">5년 연속 FCF &gt; 0 :</strong>
+                                <p class="text-slate-400 text-[11px] mt-0.5">공장 증설 및 필수 CAPEX 투자를 다 하고도 주주에게 돌려줄 현금이 계속 남음.</p>
+                            </div>
+                        </li>
+
+                        <li class="flex items-start bg-slate-900/60 p-2.5 rounded-lg border border-slate-800">
+                            <i class="fa-solid fa-circle-check text-emerald-400 mr-2 mt-0.5"></i>
+                            <div>
+                                <strong class="text-white">현금 전환율 80% 이상 :</strong>
+                                <p class="text-slate-400 text-[11px] mt-0.5">당기순이익 대비 실제 현금 유입 비중이 80%+로 회계 장부 조작 및 부실 매출 완전 차단.</p>
+                            </div>
+                        </li>
+
+                        <li class="flex items-start bg-slate-900/60 p-2.5 rounded-lg border border-slate-800">
+                            <i class="fa-solid fa-circle-check text-emerald-400 mr-2 mt-0.5"></i>
+                            <div>
+                                <strong class="text-white">지속적인 주주환원 :</strong>
+                                <p class="text-slate-400 text-[11px] mt-0.5">남은 잉여 현금으로 꾸준한 배당 지급 및 자사주 매입 소각 수행.</p>
+                            </div>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </section>
+
+        <!-- SLIDE 8: 3-Step Screener & 3 Pitfalls -->
+        <section class="slide w-full max-w-5xl flex-col justify-center my-auto">
+            <div class="mb-6">
+                <span class="text-xs font-bold uppercase tracking-wider text-brand-500">[장표 6] 실전 투자 적용</span>
+                <h2 class="text-2xl md:text-4xl font-extrabold text-white mt-1">3단계 스크리너 & 투자 시 3대 함정</h2>
+                <p class="text-slate-400 text-sm mt-1">필터링 시스템과 정량 분석 시 반드시 피해야 할 리스크</p>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <!-- 3 Step Screener -->
+                <div class="glass-card p-5 rounded-2xl border-l-4 border-l-brand-500 space-y-3">
+                    <h3 class="font-bold text-white text-base text-brand-400 flex items-center">
+                        <i class="fa-solid fa-filter mr-2"></i> 퀄리티 스크리닝 3단계 필터
+                    </h3>
+
+                    <div class="space-y-2 text-xs">
+                        <div class="flex items-center p-2.5 bg-slate-900/80 rounded-lg border border-slate-800">
+                            <span class="w-6 h-6 rounded-full bg-brand-500 text-white font-bold flex items-center justify-center mr-3 text-[11px] shrink-0">1</span>
+                            <div>
+                                <strong class="text-white">수익성 (Profitability):</strong>
+                                <span class="text-slate-300">5년 평균 ROE, ROCE, 영업이익률 &ge; 15%</span>
+                            </div>
+                        </div>
+
+                        <div class="flex items-center p-2.5 bg-slate-900/80 rounded-lg border border-slate-800">
+                            <span class="w-6 h-6 rounded-full bg-brand-500 text-white font-bold flex items-center justify-center mr-3 text-[11px] shrink-0">2</span>
+                            <div>
+                                <strong class="text-white">건전성 (Soundness):</strong>
+                                <span class="text-slate-300">부채비율 &le; 80%, 이자보상배율 &ge; 10배</span>
+                            </div>
+                        </div>
+
+                        <div class="flex items-center p-2.5 bg-slate-900/80 rounded-lg border border-slate-800">
+                            <span class="w-6 h-6 rounded-full bg-brand-500 text-white font-bold flex items-center justify-center mr-3 text-[11px] shrink-0">3</span>
+                            <div>
+                                <strong class="text-white">현금성 (Cash Flow):</strong>
+                                <span class="text-slate-300">5년 연속 FCF &gt; 0, 현금전환율 &ge; 80%</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 3 Pitfalls to Avoid -->
+                <div class="glass-card p-5 rounded-2xl border-l-4 border-l-rose-500 space-y-3">
+                    <h3 class="font-bold text-white text-base text-rose-400 flex items-center">
+                        <i class="fa-solid fa-triangle-exclamation mr-2"></i> 조심해야 할 3대 함정 (Pitfalls)
+                    </h3>
+
+                    <div class="space-y-2 text-xs">
+                        <div class="p-2.5 bg-slate-900/80 rounded-lg border border-slate-800">
+                            <strong class="text-rose-400 block mb-0.5">1. 극단적 고평가 함정 (PER 50~100x+)</strong>
+                            <p class="text-slate-400 text-[11px]">아무리 우수한 퀄리티 주식이라도 터무니없이 비싸게 사면 수익률은 엉망이 됨 (고성장주 카테고리와 별도 분리 관리!).</p>
+                        </div>
+
+                        <div class="p-2.5 bg-slate-900/80 rounded-lg border border-slate-800">
+                            <strong class="text-rose-400 block mb-0.5">2. 일시적 호황의 착시 (Cyclical Illusion)</strong>
+                            <p class="text-slate-400 text-[11px]">원자재/시클리컬 단기 업황 호황으로 급증한 이익을 지속 가능한 '경제적 해자'로 오판하는 오류 경계.</p>
+                        </div>
+
+                        <div class="p-2.5 bg-slate-900/80 rounded-lg border border-slate-800">
+                            <strong class="text-rose-400 block mb-0.5">3. 경영진의 자본 배분 오판 (Misallocation)</strong>
+                            <p class="text-slate-400 text-[11px]">본업에서 번 잉여 현금을 본업과 상관없는 엉뚱한 분야(무리한 테마성 M&A)에 태워 기업 가치를 훼손하는 리스크.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- SLIDE 9: Interactive Screener & Summary -->
+        <section class="slide w-full max-w-5xl flex-col justify-center my-auto">
+            <div class="mb-4">
+                <span class="text-xs font-bold uppercase tracking-wider text-brand-500">Summary & Interactive Tool</span>
+                <h2 class="text-2xl md:text-3xl font-extrabold text-white mt-0.5">퀄리티 주식 진단 체크리스트 (Screener)</h2>
+                <p class="text-slate-400 text-xs mt-0.5">관심 종목이 백찬규 센터장의 퀄리티 조건에 부합하는지 실시간 진단해보세요.</p>
+            </div>
+
+            <!-- Interactive Checklist Tool -->
+            <div class="glass-card p-5 rounded-2xl border border-brand-500/30">
+                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center pb-3 border-b border-slate-800 gap-2 mb-3">
+                    <div class="flex items-center space-x-2 w-full sm:w-auto">
+                        <label class="text-xs text-slate-300 font-bold shrink-0">진단 종목명:</label>
+                        <input type="text" id="target-stock-name" value="Apple Inc. (AAPL)" class="min-w-0 flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-brand-500">
+                    </div>
+                    <div class="text-xs font-bold bg-slate-900 px-3 py-1 rounded-full text-brand-400 border border-slate-800" id="score-display">
+                        통과 항목: <span class="text-emerald-400 text-sm font-black" id="passed-count">0</span> / 6 개
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs mb-4">
+                    <label class="flex items-center p-2.5 bg-slate-900/80 rounded-lg cursor-pointer hover:bg-slate-800/80 transition border border-slate-800">
+                        <input type="checkbox" class="screener-check rounded border-slate-700 text-brand-500 focus:ring-0 mr-2.5 w-4 h-4" onchange="calculateScore()">
+                        <span>1. 4대 경제적 해자 중 1개 이상 보유 (가격결정권)</span>
+                    </label>
+
+                    <label class="flex items-center p-2.5 bg-slate-900/80 rounded-lg cursor-pointer hover:bg-slate-800/80 transition border border-slate-800">
+                        <input type="checkbox" class="screener-check rounded border-slate-700 text-brand-500 focus:ring-0 mr-2.5 w-4 h-4" onchange="calculateScore()">
+                        <span>2. 5년 평균 ROE 또는 ROCE &ge; 15%</span>
+                    </label>
+
+                    <label class="flex items-center p-2.5 bg-slate-900/80 rounded-lg cursor-pointer hover:bg-slate-800/80 transition border border-slate-800">
+                        <input type="checkbox" class="screener-check rounded border-slate-700 text-brand-500 focus:ring-0 mr-2.5 w-4 h-4" onchange="calculateScore()">
+                        <span>3. 부채비율 &le; 80% (또는 이자보상배율 &ge; 10배)</span>
+                    </label>
+
+                    <label class="flex items-center p-2.5 bg-slate-900/80 rounded-lg cursor-pointer hover:bg-slate-800/80 transition border border-slate-800">
+                        <input type="checkbox" class="screener-check rounded border-slate-700 text-brand-500 focus:ring-0 mr-2.5 w-4 h-4" onchange="calculateScore()">
+                        <span>4. 5년 연속 잉여현금흐름(FCF) &gt; 0</span>
+                    </label>
+
+                    <label class="flex items-center p-2.5 bg-slate-900/80 rounded-lg cursor-pointer hover:bg-slate-800/80 transition border border-slate-800">
+                        <input type="checkbox" class="screener-check rounded border-slate-700 text-brand-500 focus:ring-0 mr-2.5 w-4 h-4" onchange="calculateScore()">
+                        <span>5. 현금 전환율 &ge; 80% (부실 매출 차단)</span>
+                    </label>
+
+                    <label class="flex items-center p-2.5 bg-slate-900/80 rounded-lg cursor-pointer hover:bg-slate-800/80 transition border border-slate-800">
+                        <input type="checkbox" class="screener-check rounded border-slate-700 text-brand-500 focus:ring-0 mr-2.5 w-4 h-4" onchange="calculateScore()">
+                        <span>6. 극단적 고평가(PER 50~100x) 아님 & 본업 전념</span>
+                    </label>
+                </div>
+
+                <!-- Result Message Banner -->
+                <div id="screener-result-banner" class="p-3 rounded-xl bg-slate-900 border border-slate-800 text-center text-xs text-slate-400">
+                    체크리스트 항목을 선택하여 종목 적합도를 평가해보세요.
+                </div>
+            </div>
+
+            <!-- Conclusion Quote -->
+            <div class="mt-4 p-3 rounded-xl bg-gradient-to-r from-brand-900/40 via-slate-900 to-emerald-950/40 border border-slate-800 text-center text-xs text-slate-300">
+                <i class="fa-solid fa-quote-left text-brand-500 mr-2"></i>
+                "시장의 외풍과 악재 속에서도 마음이 편안한 투자를 원한다면, **복리의 마법을 부릴 퀄리티 주식**을 포트폴리오의 닻으로 삼으십시오."
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Bottom Navigation Footer Bar -->
+    <footer class="h-16 border-t border-slate-800/80 bg-slate-900/90 px-4 md:px-8 flex items-center justify-between z-30 shrink-0">
+        <!-- Previous Button -->
+        <button onclick="prevSlide()" id="btn-prev" class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed transition flex items-center space-x-2 text-xs font-bold">
+            <i class="fa-solid fa-chevron-left"></i>
+            <span class="hidden sm:inline">이전 장표</span>
+        </button>
+
+        <!-- Slide Indicators (Dots) -->
+        <div class="flex items-center space-x-1.5" id="dots-container">
+            <!-- Dots will be dynamically generated by JS -->
+        </div>
+
+        <!-- Next Button -->
+        <button onclick="nextSlide()" id="btn-next" class="px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 text-white disabled:opacity-40 disabled:cursor-not-allowed transition flex items-center space-x-2 text-xs font-bold shadow-lg shadow-brand-600/30">
+            <span class="hidden sm:inline">다음 장표</span>
+            <i class="fa-solid fa-chevron-right"></i>
+        </button>
+    </footer>
+
+    <!-- Table of Contents Modal -->
+    <div id="toc-modal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="glass-card max-w-lg w-full rounded-2xl p-4 sm:p-6 border border-slate-700 shadow-2xl space-y-4">
+            <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+                <h3 class="text-base font-bold text-white flex items-center">
+                    <i class="fa-solid fa-list-ul text-brand-500 mr-2"></i> 장표 목차 (Table of Contents)
+                </h3>
+                <button onclick="toggleTocModal()" class="text-slate-400 hover:text-white text-lg">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <div class="space-y-1.5 max-h-[60vh] overflow-y-auto text-xs pr-1" id="toc-list">
+                <!-- TOC list dynamically injected -->
+            </div>
+        </div>
+    </div>
+
+    <!-- JavaScript Presentation Logic -->
+    <script>
+        const slides = document.querySelectorAll('.slide');
+        const totalSlides = slides.length;
+        let currentSlide = 0;
+
+        const slideTitles = [
+            "표지: 복리의 마법을 부릴 수 있는 퀄리티 주식 찾는 법",
+            "포트폴리오 4대 카테고리 구성 전략",
+            "[장표 1] 반짝 급등주 vs 퀄리티 주식 (10년 성과)",
+            "[장표 2] 퀄리티 주식의 3대 핵심 조건",
+            "[장표 3] 경제적 해자의 4가지 핵심 유형",
+            "[장표 4] 자본 효율성 평가 지표 (ROE vs ROCE)",
+            "[장표 5] 재무 건전성 & 잉여현금흐름 (FCF)",
+            "[장표 6] 퀄리티 스크리너 & 투자 3대 함정",
+            "퀄리티 주식 실시간 진단 체크리스트"
+        ];
+
+        // Initialize indicator dots & TOC
+        function initNavigation() {
+            document.getElementById('total-slides-num').textContent = totalSlides;
+
+            const dotsContainer = document.getElementById('dots-container');
+            const tocList = document.getElementById('toc-list');
+            dotsContainer.innerHTML = '';
+            tocList.innerHTML = '';
+
+            slides.forEach((_, idx) => {
+                // Dots
+                const dot = document.createElement('button');
+                dot.className = `w-2 h-2 md:w-2.5 md:h-2.5 rounded-full transition-all ${idx === 0 ? 'bg-brand-500 w-5 md:w-6' : 'bg-slate-700 hover:bg-slate-500'}`;
+                dot.onclick = () => goToSlide(idx);
+                dotsContainer.appendChild(dot);
+
+                // TOC Items
+                const tocItem = document.createElement('button');
+                tocItem.className = `w-full text-left p-2.5 rounded-lg border transition flex items-center justify-between ${idx === 0 ? 'bg-brand-500/20 border-brand-500/50 text-white font-bold' : 'bg-slate-900/60 border-slate-800 text-slate-300 hover:bg-slate-800'}`;
+                tocItem.innerHTML = `
+                    <span><strong class="text-brand-400 mr-2">Slide ${idx + 1}.</strong> ${slideTitles[idx]}</span>
+                    <i class="fa-solid fa-chevron-right text-[10px] text-slate-500"></i>
+                `;
+                tocItem.onclick = () => {
+                    goToSlide(idx);
+                    toggleTocModal();
+                };
+                tocList.appendChild(tocItem);
+            });
+
+            updateSlideUI();
+        }
+
+        function updateSlideUI() {
+            slides.forEach((slide, idx) => {
+                slide.classList.toggle('active', idx === currentSlide);
+            });
+
+            // Update badge & buttons
+            document.getElementById('current-slide-num').textContent = currentSlide + 1;
+            document.getElementById('btn-prev').disabled = currentSlide === 0;
+            document.getElementById('btn-next').disabled = currentSlide === totalSlides - 1;
+
+            // Update dots
+            const dots = document.getElementById('dots-container').children;
+            Array.from(dots).forEach((dot, idx) => {
+                if (idx === currentSlide) {
+                    dot.className = 'w-5 md:w-6 h-2 md:h-2.5 rounded-full bg-brand-500 transition-all';
+                } else {
+                    dot.className = 'w-2 h-2 md:w-2.5 md:h-2.5 rounded-full bg-slate-700 hover:bg-slate-500 transition-all';
+                }
+            });
+
+            // Scroll view to top
+            document.getElementById('main-slide-view').scrollTop = 0;
+        }
+
+        function nextSlide() {
+            if (currentSlide < totalSlides - 1) {
+                currentSlide++;
+                updateSlideUI();
+            }
+        }
+
+        function prevSlide() {
+            if (currentSlide > 0) {
+                currentSlide--;
+                updateSlideUI();
+            }
+        }
+
+        function goToSlide(index) {
+            if (index >= 0 && index < totalSlides) {
+                currentSlide = index;
+                updateSlideUI();
+            }
+        }
+
+        function toggleTocModal() {
+            const modal = document.getElementById('toc-modal');
+            modal.classList.toggle('hidden');
+        }
+
+        function toggleFullScreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(err => {});
+                document.getElementById('fullscreen-icon').className = 'fa-solid fa-compress';
+            } else {
+                if (document.exitFullscreen) {
+                    document.exitFullscreen();
+                    document.getElementById('fullscreen-icon').className = 'fa-solid fa-expand';
+                }
+            }
+        }
+
+        // Keyboard navigation
+        document.addEventListener('keydown', (e) => {
+            if (e.target.matches && e.target.matches('input, textarea')) return;
+            if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') {
+                nextSlide();
+            } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
+                prevSlide();
+            } else if (e.key === 'Escape') {
+                const modal = document.getElementById('toc-modal');
+                if (!modal.classList.contains('hidden')) {
+                    toggleTocModal();
+                }
+            }
+        });
+
+        // Touch Swipe Navigation support for mobile
+        let touchStartX = 0;
+        let touchStartY = 0;
+        let touchEndX = 0;
+        let touchEndY = 0;
+        let touchIgnored = false;
+
+        const slideView = document.getElementById('main-slide-view');
+        slideView.addEventListener('touchstart', (e) => {
+            touchStartX = e.changedTouches[0].screenX;
+            touchStartY = e.changedTouches[0].screenY;
+            touchIgnored = !!e.target.closest('input, textarea, label');
+        }, { passive: true });
+
+        slideView.addEventListener('touchend', (e) => {
+            touchEndX = e.changedTouches[0].screenX;
+            touchEndY = e.changedTouches[0].screenY;
+            if (!touchIgnored) handleSwipe();
+        }, { passive: true });
+
+        function handleSwipe() {
+            const dx = touchEndX - touchStartX;
+            const dy = touchEndY - touchStartY;
+            // Only treat clearly horizontal gestures as swipes so vertical scrolling stays usable
+            if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+            if (dx < 0) {
+                nextSlide(); // Swipe Left
+            } else {
+                prevSlide(); // Swipe Right
+            }
+        }
+
+        // Interactive Quality Screener Checklist Score Calculation
+        function calculateScore() {
+            const checkboxes = document.querySelectorAll('.screener-check');
+            let passed = 0;
+            checkboxes.forEach(cb => {
+                if (cb.checked) passed++;
+            });
+
+            document.getElementById('passed-count').textContent = passed;
+            const stockName = document.getElementById('target-stock-name').value || '해당 종목';
+            const banner = document.getElementById('screener-result-banner');
+
+            if (passed === 6) {
+                banner.className = 'p-3 rounded-xl bg-emerald-950/80 border border-emerald-500/50 text-center text-xs text-emerald-300 font-bold animate-bounce';
+                banner.innerHTML = `<i class="fa-solid fa-circle-check mr-1 text-emerald-400"></i> [완벽한 퀄리티 주식] ${stockName}은(는) 백찬규 센터장의 6가지 퀄리티 스크리닝 기준을 모두 만족합니다!`;
+            } else if (passed >= 4) {
+                banner.className = 'p-3 rounded-xl bg-brand-950/80 border border-brand-500/50 text-center text-xs text-brand-300 font-bold';
+                banner.innerHTML = `<i class="fa-solid fa-thumbs-up mr-1 text-brand-400"></i> [우수 우량주] ${stockName}은(는) 핵심 퀄리티 조건을 대다수 충족합니다. (미충족 항목 추가 검토 권장)`;
+            } else if (passed >= 2) {
+                banner.className = 'p-3 rounded-xl bg-amber-950/80 border border-amber-500/50 text-center text-xs text-amber-300 font-bold';
+                banner.innerHTML = `<i class="fa-solid fa-triangle-exclamation mr-1 text-amber-400"></i> [주의 필요] ${stockName}은(는) 일부 우량 조건은 갖췄으나 퀄리티 주식 기준에 다소 미달합니다.`;
+            } else {
+                banner.className = 'p-3 rounded-xl bg-rose-950/80 border border-rose-500/50 text-center text-xs text-rose-300 font-bold';
+                banner.innerHTML = `<i class="fa-solid fa-circle-xmark mr-1 text-rose-400"></i> [고위험/일반주] ${stockName}은(는) 퀄리티 주식 기준을 충족하지 못합니다. 장기 포트폴리오 '닻' 역할에 미흡합니다.`;
+            }
+        }
+
+        // On Load
+        window.onload = function() {
+            initNavigation();
+            calculateScore();
+        };
+    </script>
+</body>
+</html>
