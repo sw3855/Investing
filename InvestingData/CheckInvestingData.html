@@ -103,6 +103,18 @@
   .warn { color:#9a6700; background:#fff8c5; border:1px solid #eac54f;
     border-radius:6px; padding:8px 10px; font-size:13px; margin:0 0 14px; }
   .hint { color:var(--mut); font-size:12px; margin-top:8px; }
+  .help-tip { position:relative; display:inline-flex; align-items:center;
+    justify-content:center; width:14px; height:14px; margin-left:3px;
+    vertical-align:-2px; border:1px solid var(--mut); border-radius:50%;
+    font-size:10px; font-weight:700; line-height:1; cursor:help; outline:none; }
+  .help-tip:hover, .help-tip:focus { color:var(--pri); border-color:var(--pri); }
+  .help-tip .help-pop { display:none; position:absolute; left:50%; bottom:calc(100% + 6px);
+    transform:translateX(-50%); width:max-content; max-width:min(360px, 80vw); z-index:20;
+    padding:8px 10px; border-radius:6px; background:#24292f; color:#fff;
+    font-size:12px; font-weight:400; line-height:1.5; text-align:left;
+    white-space:normal; box-shadow:0 4px 12px rgba(0,0,0,.18); }
+  .help-tip:hover .help-pop, .help-tip:focus .help-pop { display:block; }
+  .help-tip.left .help-pop { left:-8px; transform:none; }
   .mini-spin { display:inline-block; width:11px; height:11px; margin-right:6px;
     vertical-align:-1px; border:2px solid rgba(41,98,255,.25);
     border-top-color:var(--pri); border-radius:50%;
@@ -1416,6 +1428,9 @@ FIN_HISTORY_FIELDS = [
     "dps_common_stock_prim_issue_ttm",
     "total_assets_fq",
     "total_debt_fq",
+    # ROE/ROCE 현재값(%, TTM 이익 ÷ 1년 전·현재 분기말 평균 자본) - 환산 대상 아님
+    "return_on_equity_fq",
+    "return_on_capital_employed_fq",
     # 최신 분기(_fq_h[0])의 회계 기간 라벨(예: '2026-Q2')과 그 분기 종료일(unix 초).
     # 실적 발표 직후에는 컨센서스(실제 실적)보다 한 분기 늦을 수 있어 비교용으로 사용.
     "fiscal_period_current",
@@ -1903,6 +1918,64 @@ async def fetch_yahoo_quarterly(full_symbol):
         if rows:
             return [rows[k] for k in sorted(rows)]
     return []
+
+
+# ROE/ROCE 계산용 Yahoo 시계열(연간 약 4년, 분기 약 5개, 그 이전은 fetch_sec_returns 로 보충).
+# TradingView 는 ROE/ROCE 와
+# 자기자본·영업이익·유동부채의 히스토리 배열(_fy_h/_fq_h)을 제공하지 않는다.
+# 비율 지표라 분자·분모를 같은 출처(같은 통화)에서 가져오므로 환산하지 않는다.
+YF_RETURNS_TYPES = {
+    "ni": "NetIncomeCommonStockholders",
+    "op_inc": "OperatingIncome",   # TradingView ROCE 와 동일하게 영업이익 사용
+    "equity": "StockholdersEquity",
+    "assets": "TotalAssets",
+    "cur_liab": "CurrentLiabilities",
+}
+
+
+async def fetch_yahoo_returns(full_symbol):
+    """Yahoo 연간/분기 ROE·ROCE 재료. {"annual": [...], "quarterly": [...]} 또는 None.
+
+    각 목록은 [{"end": 기간말 ts, "ni", "op_inc", "equity", "assets", "cur_liab"}] (과거→최신).
+    """
+    now = int(time.time())
+    types = [p + t for p in ("annual", "quarterly") for t in YF_RETURNS_TYPES.values()]
+    params = {"type": ",".join(types),
+              "period1": str(now - 12 * 365 * 86400), "period2": str(now)}
+    rev_map = {t: k for k, t in YF_RETURNS_TYPES.items()}
+    for yf_sym in _yf_symbol_candidates(full_symbol):
+        p = dict(params, symbol=yf_sym)
+        data = None
+        for base in YF_TIMESERIES_HOSTS:
+            try:
+                data = await _get_json(base + yf_sym, p)
+                break
+            except InvestingApiError:
+                continue
+        results = (((data or {}).get("timeseries") or {}).get("result")) or []
+        out = {"annual": {}, "quarterly": {}}
+        for res in results:
+            types_ = (res.get("meta") or {}).get("type") or []
+            yf_type = types_[0] if types_ else ""
+            freq = "annual" if yf_type.startswith("annual") else "quarterly"
+            key = rev_map.get(yf_type[len(freq):])
+            if not key:
+                continue
+            for item in res.get(yf_type) or []:
+                if not item or not item.get("asOfDate"):
+                    continue
+                raw = (item.get("reportedValue") or {}).get("raw")
+                if not isinstance(raw, (int, float)):
+                    continue
+                try:
+                    end = int(datetime.strptime(item["asOfDate"], "%Y-%m-%d")
+                              .replace(tzinfo=timezone.utc).timestamp())
+                except ValueError:
+                    continue
+                out[freq].setdefault(end, {"end": end})[key] = raw
+        if out["annual"] or out["quarterly"]:
+            return {f: [out[f][k] for k in sorted(out[f])] for f in out}
+    return None
 
 
 def _next_quarter_end_ts(ts):
@@ -2873,8 +2946,23 @@ async def enrich_stock(full_symbol, payload):
         except Exception as exc:
             _warn("eps-basis", exc)
 
-    _q, sec_roic, _b = await asyncio.gather(
-        _quarters(), fetch_quarterly_roic(full_symbol), _eps_basis())
+    async def _returns():
+        if not financials:
+            return
+
+        async def _safe(coro, tag):
+            try:
+                return await coro
+            except Exception as exc:
+                _warn(tag, exc)
+                return None
+
+        financials["_yf_returns"], financials["_sec_returns"] = await asyncio.gather(
+            _safe(fetch_yahoo_returns(full_symbol), "yahoo-returns"),
+            _safe(fetch_sec_returns(full_symbol), "sec-returns"))
+
+    _q, sec_roic, _b, _r = await asyncio.gather(
+        _quarters(), fetch_quarterly_roic(full_symbol), _eps_basis(), _returns())
     payload["sec_roic"] = sec_roic
     payload["_enriching"] = False
     if consensus is not None:
@@ -3580,10 +3668,15 @@ def render_report(full_symbol, payload, keep_chart=False):
             tax_txt = ("%.0f%% = 실효세율" % (tax_rate * 100)
                        if tax_rate is not None else "%.0f%% 가정" % (_WACC_TAX * 100))
             html.append('<div class="hint" style="grid-column:1/-1">'
-                        'ROIC = 세후영업이익(NOPAT) ÷ 투하자본, SEC 분기 재무제표 '
-                        '기준 연율화(미국 종목만). WACC 는 CAPM 추정치'
-                        '(무위험 %.2f%% = 미 10년물 · 위험프리미엄 %.2f%% = '
-                        'S&P500 이익수익률 · 법인세 %s, 베타·시총·부채 기반).</div>'
+                        'ROIC·WACC 계산 기준<span class="help-tip left" tabindex="0" '
+                        'role="button" aria-label="ROIC·WACC 계산 기준">?'
+                        '<span class="help-pop">'
+                        'ROIC = 세후영업이익(NOPAT) ÷ 투하자본<br>'
+                        '· SEC 분기 재무제표 기준 연율화(미국 종목만)<br>'
+                        'WACC = CAPM 추정치(베타·시총·부채 기반)<br>'
+                        '· 무위험수익률 %.2f%% = 미 10년물<br>'
+                        '· 위험프리미엄 %.2f%% = S&amp;P500 이익수익률<br>'
+                        '· 법인세 %s</span></span></div>'
                         % (_current_rf() * 100, _current_erp() * 100, tax_txt))
         html.append('</div></div>')
 
@@ -4420,6 +4513,105 @@ def _quarter_labels(fin, n):
     return list(reversed(newest_first))
 
 
+def _month_end_shift_ts(ts, months):
+    """기간말 타임스탬프를 months 개월 옮긴 월말 타임스탬프(UTC 0시)."""
+    d = datetime.fromtimestamp(ts, timezone.utc)
+    t = d.year * 12 + (d.month - 1) + months
+    y, m = t // 12, t % 12 + 1
+    ny, nm = (y + 1, 1) if m == 12 else (y, m + 1)
+    return int(datetime(ny, nm, 1, tzinfo=timezone.utc).timestamp()) - 86400
+
+
+_RETURNS_END_TOL = 20 * 86400  # 52/53주 회계 등 기간말 차이 허용
+
+
+def _merge_return_rows(primary, secondary):
+    """기간말이 같은(허용 오차 이내) 행은 primary 값을 우선하고 빈 항목만 secondary 로
+    채우며, primary 에 없는 기간은 secondary 행을 추가한다. 과거→최신 정렬."""
+    out = [dict(r) for r in primary or []]
+    for s in secondary or []:
+        hit = next((r for r in out if abs(r["end"] - s["end"]) <= _RETURNS_END_TOL), None)
+        if hit is None:
+            out.append(dict(s))
+            continue
+        for k, v in s.items():
+            if hit.get(k) is None and v is not None:
+                hit[k] = v
+    return sorted(out, key=lambda r: r["end"])
+
+
+def _return_series(fin, labels, quarterly):
+    """기간별 ROE·ROCE(%) 를 계산해 labels(과거→최신) 순서로 반환.
+
+    재료는 Yahoo Finance(최근 연간 약 4년·분기 약 5개) 를 우선 쓰고, 그 밖의 기간·빈
+    항목은 SEC 10-K/10-Q(미국 상장 종목) 로 채운다.
+    TradingView 정의와 동일하게 분모는 기초·기말 평균(기초가 없으면 기말) 자본.
+      ROE  = 지배주주 순이익 ÷ 평균 자기자본
+      ROCE = 영업이익 ÷ 평균 투하자본(총자산 − 유동부채)
+    분기는 해당 분기 이익을 연율화(×4)한다. 자본이 0 이하이면 계산하지 않는다.
+    기간말은 TradingView 최신 분기(fiscal_period_current/_end_current)에서 역산한다.
+    """
+    n = len(labels)
+    empty = ([None] * n, [None] * n)
+    freq = "quarterly" if quarterly else "annual"
+    rows = _merge_return_rows((fin.get("_yf_returns") or {}).get(freq),
+                              (fin.get("_sec_returns") or {}).get(freq))
+    m = re.match(r"^(\d{4})-Q([1-4])$", str(fin.get("fiscal_period_current") or ""))
+    end_cur = fin.get("fiscal_period_end_current")
+    if not rows or not m or not isinstance(end_cur, (int, float)):
+        return empty
+
+    if quarterly:
+        targets = [_month_end_shift_ts(end_cur, -3 * (n - 1 - j)) for j in range(n)]
+    else:
+        fy, q = int(m.group(1)), int(m.group(2))
+        fy_end = _month_end_shift_ts(end_cur, 3 * (4 - q))
+        targets = []
+        for lbl in labels:
+            try:
+                targets.append(_month_end_shift_ts(fy_end, -12 * (fy - int(lbl))))
+            except (ValueError, TypeError):
+                targets.append(None)
+
+    step = (91 if quarterly else 365) * 86400
+    scale = 4.0 if quarterly else 1.0
+
+    def avg_base(k, f):
+        cur = f(rows[k])
+        if cur is None:
+            return None
+        if k > 0 and abs(rows[k]["end"] - rows[k - 1]["end"] - step) <= _RETURNS_END_TOL:
+            prev = f(rows[k - 1])
+            if prev is not None:
+                return (cur + prev) / 2.0
+        return cur
+
+    def cap_emp(r):
+        a, cl = r.get("assets"), r.get("cur_liab")
+        return None if a is None or cl is None else a - cl
+
+    def ret(k, num_key, base_f):
+        num = rows[k].get(num_key)
+        base = avg_base(k, base_f)
+        if num is None or base is None or base <= 0:
+            return None
+        return num * scale / base * 100.0
+
+    roe, roce = [], []
+    for t in targets:
+        k = None
+        if t is not None:
+            k = next((i for i, r in enumerate(rows)
+                      if abs(r["end"] - t) <= _RETURNS_END_TOL), None)
+        if k is None:
+            roe.append(None)
+            roce.append(None)
+            continue
+        roe.append(ret(k, "ni", lambda r: r.get("equity")))
+        roce.append(ret(k, "op_inc", cap_emp))
+    return roe, roce
+
+
 def _build_financial_metrics(fin, mode="annual"):
     """재무 히스토리 배열에서 지표 목록을 만든다. (periods, metrics) 반환.
 
@@ -4473,6 +4665,8 @@ def _build_financial_metrics(fin, mode="annual"):
         return out
 
     eps_label = "EPS (희석)" if quarterly else "EPS (기본)"
+    roe, roce = _return_series(fin, years, quarterly)
+    ret_sfx = " (%, 연율화)" if quarterly else " (%)"
     metrics = [
         {"key": "revenue", "label": "매출 (Revenue)", "kind": "money", "values": rev},
         {"key": "net_income", "label": "순이익 (Net Income)", "kind": "money", "values": ni},
@@ -4480,6 +4674,8 @@ def _build_financial_metrics(fin, mode="annual"):
         {"key": "ebitda", "label": "EBITDA", "kind": "money", "values": ebitda},
         {"key": "fcf", "label": "잉여현금흐름 (FCF)", "kind": "money", "values": fcf},
         {"key": "eps", "label": eps_label, "kind": "cur", "values": eps},
+        {"key": "roe", "label": "ROE" + ret_sfx, "kind": "pct", "values": roe},
+        {"key": "roce", "label": "ROCE" + ret_sfx, "kind": "pct", "values": roce},
         {"key": "dps", "label": "주당배당금 (DPS)", "kind": "cur", "values": dps},
         {"key": "assets", "label": "총자산 (Total Assets)", "kind": "money", "values": assets},
         {"key": "debt", "label": "총부채 (Total Debt)", "kind": "money", "values": debt},
@@ -4527,6 +4723,8 @@ def _build_financial_metrics(fin, mode="annual"):
         "ebitda_margin": rc(ebitda_c, rev_c, 100.0),
         "fcf_margin": rc(fcf_c, rev_c, 100.0),
         "debt_assets": rc(debt_c, assets_c, 100.0),
+        "roe": fin.get("return_on_equity_fq"),
+        "roce": fin.get("return_on_capital_employed_fq"),
         "rev_growth": gc(rev_c, ann_rev),
         "ni_growth": gc(ni_c, ann_ni),
     }
@@ -4826,6 +5024,15 @@ def refresh_financials():
             if quarterly else
             "출처: Investing · 연도별 재무 데이터에서 계산한 지표입니다. "
             "선택한 지표는 표에서 강조됩니다.")
+    note += (' ROE·ROCE 계산 기준<span class="help-tip" tabindex="0" role="button" '
+             'aria-label="ROE·ROCE 계산 기준">?<span class="help-pop">'
+             "ROE = 지배주주 순이익 ÷ 평균 자기자본<br>"
+             "ROCE = 영업이익 ÷ 평균 (총자산 − 유동부채)<br>"
+             "· 분모는 기초·기말 평균(기초가 없으면 기말) 자본%s<br>"
+             "· 출처: Yahoo Finance(최근 연간 약 4년·분기 약 5개), "
+             "그 이전 기간은 SEC 10-K/10-Q(미국 상장 종목만)<br>"
+             "· 현재 열은 TradingView 값(TTM)</span></span>"
+             % ("<br>· 분기는 연율화(×4)" if quarterly else ""))
     supp = (st.get("fin") or {}).get("_supplement")
     if quarterly and supp:
         note += (" ※ %s 분기는 TradingView 미반영으로 지표별로 Yahoo Finance → SEC 10-K/Q → "
@@ -9355,6 +9562,73 @@ async def fetch_quarterly_roic(full_symbol):
     r0, r1 = _roic(e0), _roic(e1)
     return {"roic": r0, "prev": r1, "incr": r0 - r1,
             "date": e0, "prev_date": e1, "tax_rate": _eff_tax(e0)}
+
+
+# ===== SEC EDGAR 재무제표 기반 연도/분기별 ROE·ROCE 재료 =====
+# Yahoo 시계열은 연간 약 4년·분기 약 5개뿐이므로, 미국 상장 종목은 그 이전 기간을
+# SEC 10-K/10-Q XBRL(companyfacts 공유 캐시)로 채운다. 키는 YF_RETURNS_TYPES 와 동일.
+_SEC_RETURNS_TAGS = {
+    "ni": ["NetIncomeLossAvailableToCommonStockholdersBasic", "NetIncomeLoss"],
+    "op_inc": ["OperatingIncomeLoss"],
+    "equity": ["StockholdersEquity"],
+    "assets": ["Assets"],
+    "cur_liab": ["LiabilitiesCurrent"],
+}
+
+
+async def _sec_concept_annual_flow(cik, tags):
+    """손익 항목의 '회계연도(12개월)' 값 {기말일: 값}. 10-K 만 사용."""
+    out = {}
+    for tag in tags:
+        for it in (await _sec_concept_units(cik, tag)).get("USD") or []:
+            if "10-K" not in (it.get("form") or ""):
+                continue
+            end, start, val = it.get("end") or "", it.get("start") or "", it.get("val")
+            if val is None or len(end) < 10 or len(start) < 10:
+                continue
+            days = _days_between(start, end)
+            if days is not None and 350 <= days <= 380:
+                out.setdefault(end, val)
+    return out
+
+
+async def fetch_sec_returns(full_symbol):
+    """SEC 재무로 ROE·ROCE 재료를 만든다. {"annual": [...], "quarterly": [...]} 또는 None.
+
+    각 목록은 fetch_yahoo_returns 와 같은 형식(과거→최신). 미국 상장 종목만.
+    """
+    exch = full_symbol.split(":")[0].upper() if ":" in full_symbol else ""
+    if exch not in _YF_US_EXCH:
+        return None
+    cik = await _sec_cik_for_symbol(full_symbol)
+    if cik is None:
+        return None
+    t = _SEC_RETURNS_TAGS
+    (ni_a, op_a, ni_q, op_q, equity, assets, cur_liab) = await asyncio.gather(
+        _sec_concept_annual_flow(cik, t["ni"]),
+        _sec_concept_annual_flow(cik, t["op_inc"]),
+        _sec_concept_quarterly_flow(cik, t["ni"]),
+        _sec_concept_quarterly_flow(cik, t["op_inc"]),
+        _sec_concept_quarter_end(cik, t["equity"]),
+        _sec_concept_quarter_end(cik, t["assets"]),
+        _sec_concept_quarter_end(cik, t["cur_liab"]),
+    )
+
+    def rows(ni, op):
+        out = []
+        for end in sorted(set(ni) | set(op)):
+            try:
+                ts = int(datetime.strptime(end[:10], "%Y-%m-%d")
+                         .replace(tzinfo=timezone.utc).timestamp())
+            except ValueError:
+                continue
+            out.append({"end": ts, "ni": ni.get(end), "op_inc": op.get(end),
+                        "equity": equity.get(end), "assets": assets.get(end),
+                        "cur_liab": cur_liab.get(end)})
+        return out
+
+    res = {"annual": rows(ni_a, op_a), "quarterly": rows(ni_q, op_q)}
+    return res if res["annual"] or res["quarterly"] else None
 
 
 def _parse_info_table(xml_text):
