@@ -108,7 +108,7 @@
  *    DELETE /macro-doc?account=<admin>&id=<id> → 자료 삭제
  *
  *  시세 일괄 조회(헤더 지수·즐겨찾기 가격):
- *    GET    /quotes?symbols=NASDAQ:AAPL,KRX:005930  → { quotes:{SYMBOL:{close,change,change_abs}}, at }
+ *    GET    /quotes?symbols=NASDAQ:AAPL,KRX:005930  → { quotes:{SYMBOL:{close,change,change_abs,premarket_*,postmarket_* (close,change,open,high,low)}}, at }
  *    (최대 300개, 대문자로 정규화. 없는 심볼은 결과에서 빠짐)
  *
  *  미국 시가총액 순위:
@@ -272,6 +272,8 @@ const ALLOWED_HOSTS = [
   "www.multpl.com",
   // 네이버 증권 자동완성: 한글 회사명 -> KRX 종목코드(예: 삼성전자 -> 005930)
   "ac.stock.naver.com",
+  // 네이버 증권 실시간 시세: TradingView 비로그인 시세가 KRX 20분·미국 15분 지연이라 현재가에 사용
+  "polling.finance.naver.com",
   // Yahoo Finance: 지수 일봉 OHLC 시계열(캔들 차트용, v8 chart API)
   "query1.finance.yahoo.com",
   "query2.finance.yahoo.com",
@@ -472,6 +474,9 @@ async function fetchMcapScan(n) {
     filter: [
       { left: "type", operation: "in_range", right: ["stock", "dr"] },
       { left: "is_primary", operation: "equal", right: true },
+      // 장외(OTC) 우선주 예탁증권(MTPDL 등)이 기업 전체 시총으로 잡혀 섞이는 것을 제외
+      { left: "typespecs", operation: "has_none_of", right: ["preferred"] },
+      { left: "exchange", operation: "not_in_range", right: ["OTC"] },
     ],
     markets: ["america"],
     columns: MCAP_COLUMNS,
@@ -490,7 +495,10 @@ async function fetchMcapScan(n) {
 
 // ===================== 시세 일괄 조회 (/quotes) =====================
 
-const QUOTE_COLUMNS = ["close", "change", "change_abs"];
+const QUOTE_COLUMNS = ["close", "change", "change_abs",
+  "premarket_close", "premarket_change", "postmarket_close", "postmarket_change",
+  "premarket_open", "premarket_high", "premarket_low",
+  "postmarket_open", "postmarket_high", "postmarket_low"];
 const QUOTE_MAX_SYMBOLS = 300;
 const QUOTE_CACHE_TTL = 20; // 초
 const QUOTE_SYMBOL_RE = /^[A-Z0-9_.!&-]{1,32}:[A-Z0-9_.!&\/-]{1,48}$/;
@@ -533,7 +541,9 @@ async function handleQuotes(request, ctx, reqUrl) {
   for (const it of Array.isArray(data && data.data) ? data.data : []) {
     const d = (it && it.d) || [];
     if (!it.s || typeof d[0] !== "number") continue;
-    quotes[it.s] = { close: d[0], change: d[1] ?? null, change_abs: d[2] ?? null };
+    const q = {};
+    QUOTE_COLUMNS.forEach((c, i) => { q[c] = d[i] ?? null; });
+    quotes[it.s] = q;
   }
   const resp = jsonResponse({ quotes, at: Date.now() });
   resp.headers.set("Cache-Control", "public, max-age=" + QUOTE_CACHE_TTL);
@@ -631,7 +641,7 @@ async function handleMcapHistory(request, env, reqUrl) {
 
   const cache = caches.default;
   // 응답 형식이 바뀔 때 v 를 올려 배포 전 캐시를 무효화
-  const cacheKey = new Request("https://cache.local/mcap-history?v=2&weeks=" + weeks);
+  const cacheKey = new Request("https://cache.local/mcap-history?v=3&weeks=" + weeks);
   const hit = await cache.match(cacheKey);
   if (hit) return hit;
 
@@ -657,7 +667,9 @@ async function handleMcapHistory(request, env, reqUrl) {
         const td = new Date(v.t).toISOString().slice(0, 10);
         if (td < d) shown = td;
       }
-      list.push({ d: shown, f: !!v.f, r: v.r });
+      // 필터 추가 전 기록된 OTC 우선주(MTPDL 등)는 읽을 때 제외
+      const rows = v.r.filter((r) => Array.isArray(r) && !String(r[0]).startsWith("OTC:"));
+      list.push({ d: shown, f: !!v.f, r: rows });
     }
   }
   list.sort((a, b) => (a.d < b.d ? -1 : a.d > b.d ? 1 : 0));

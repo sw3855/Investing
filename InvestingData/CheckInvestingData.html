@@ -64,6 +64,8 @@
   .idx-cell .pv { display:block; font-size:15px; font-weight:700;
     color:#e6e8eb; margin-top:3px; white-space:nowrap; }
   .idx-cell .chg { display:block; font-size:12px; font-weight:600; margin-top:2px; }
+  .px-toggle { position:absolute; right:16px; bottom:10px; font-size:12px;
+    color:#aeb4bd; display:flex; align-items:center; gap:4px; cursor:pointer; }
   .idx-cell .up { color:#3fd1a2; }
   .idx-cell .down { color:#ff6b6b; }
   .idx-cell.skeleton { pointer-events:none; }
@@ -852,6 +854,8 @@
       <div class="idx-cell skeleton"><span class="sk nm"></span><span class="sk pv"></span><span class="sk chg"></span></div>
       <div class="idx-cell skeleton"><span class="sk nm"></span><span class="sk pv"></span><span class="sk chg"></span></div>
     </div>
+    <label class="px-toggle" title="끄면 미국 장외 시간에 프리/애프터장 가격 표시">
+      <input type="checkbox" id="regularOnly"> 정규장 기준</label>
   </fieldset>
   <script>
   // Pyodide 부팅(수 초)을 기다리지 않도록 지수바는 순수 JS 로 먼저 그린다. 이후 갱신은 Python update_indices 담당.
@@ -862,23 +866,45 @@
     ["비트코인", "BITSTAMP:BTCUSD"], ["달러인덱스", "TVC:DXY"], ["원/달러", "FX_IDC:USDKRW"],
     ["VIX", "TVC:VIX"], ["MOVE", "TVC:MOVE"],
   ];
+  window.IDX_EXT_PROXY = {
+    "NASDAQ:NDX": "NASDAQ:QQQ", "SP:SPX": "AMEX:SPY", "DJ:DJI": "AMEX:DIA",
+    "TVC:RUT": "AMEX:IWM", "NASDAQ:SOX": "NASDAQ:SOXX",
+  };
   (function () {
     const CACHE_KEY = "idx_cache_v1";
     const box = document.getElementById("indices");
+    let regOnly = false;
+    try { regOnly = localStorage.getItem("px_regular_only") === "1"; } catch (e) {}
+    document.getElementById("regularOnly").checked = regOnly;
+    const usSession = () => {
+      const p = {};
+      for (const x of new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short",
+        hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date())) p[x.type] = x.value;
+      if (p.weekday === "Sat" || p.weekday === "Sun") return "post";
+      const m = Number(p.hour) * 60 + Number(p.minute);
+      return m >= 240 && m < 570 ? "pre" : (m >= 570 && m < 960 ? "regular" : "post");
+    };
     const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
     const num = (v) => v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const paint = (qm) => {
       if (window.__idxPyReady) return;
+      const sess = regOnly ? "regular" : usSession();
       box.innerHTML = window.IDX_LIST.map(([name, sym]) => {
         const d = qm[sym];
         const head = `<div class="idx-cell idx-link" data-idxsym="${esc(sym)}"><span class="nm">${esc(name)}</span>`;
         if (!d || typeof d.close !== "number") return head + '<span class="pv">-</span></div>';
-        let chg = "";
-        if (typeof d.change === "number") {
-          const up = d.change >= 0;
-          chg = `<span class="chg ${up ? "up" : "down"}">${up ? "▲" : "▼"}${up ? "+" : ""}${d.change.toFixed(2)}%</span>`;
+        let px = d.close, c = d.change;
+        const pr = qm[window.IDX_EXT_PROXY[sym]];
+        const ec = sess !== "regular" && pr ? pr[sess + "market_change"] : null;
+        if (typeof ec === "number") {
+          px = d.close * (1 + ec / 100); c = ec;
         }
-        return head + `<span class="pv">${num(d.close)}</span>${chg}</div>`;
+        let chg = "";
+        if (typeof c === "number") {
+          const up = c >= 0;
+          chg = `<span class="chg ${up ? "up" : "down"}">${up ? "▲" : "▼"}${up ? "+" : ""}${c.toFixed(2)}%</span>`;
+        }
+        return head + `<span class="pv">${num(px)}</span>${chg}</div>`;
       }).join("");
     };
     try {
@@ -887,13 +913,15 @@
     } catch (e) {}
     const base = (document.getElementById("proxy").value || "").split("?")[0].replace(/\/+$/, "");
     if (!base.startsWith("http")) return;
-    const syms = window.IDX_LIST.map((x) => x[1].toUpperCase()).join(",");
+    const syms = window.IDX_LIST.map((x) => x[1]).concat(Object.values(window.IDX_EXT_PROXY))
+      .map((s) => s.toUpperCase()).join(",");
     fetch(`${base}/quotes?symbols=${encodeURIComponent(syms)}`, { signal: AbortSignal.timeout(15000) })
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => {
         if (!j || !j.quotes) return;
         const qm = {};
-        for (const [, sym] of window.IDX_LIST) if (j.quotes[sym.toUpperCase()]) qm[sym] = j.quotes[sym.toUpperCase()];
+        for (const sym of window.IDX_LIST.map((x) => x[1]).concat(Object.values(window.IDX_EXT_PROXY)))
+          if (j.quotes[sym.toUpperCase()]) qm[sym] = j.quotes[sym.toUpperCase()];
         paint(qm);
         try { localStorage.setItem(CACHE_KEY, JSON.stringify({ at: Date.now(), quotes: qm })); } catch (e) {}
       })
@@ -1330,6 +1358,16 @@ FIELDS = [
     "currency",
     "fundamental_currency_code",
     "close",
+    "premarket_close",
+    "premarket_change",
+    "postmarket_close",
+    "postmarket_change",
+    "premarket_open",
+    "premarket_high",
+    "premarket_low",
+    "postmarket_open",
+    "postmarket_high",
+    "postmarket_low",
     "recommendation_mark",
     "recommendation_total",
     "recommendation_buy",
@@ -1695,6 +1733,67 @@ async def _naver_kr_name(code):
         return None
     _KR_NAME_CACHE[code] = name
     return name
+
+
+# TradingView 비로그인 시세는 KRX 20분·미국 15분 지연(delayed_streaming_*)이라 네이버 실시간 시세로 덮어쓴다.
+NAVER_RT_KR_URL = "https://polling.finance.naver.com/api/realtime/domestic/stock/"
+NAVER_RT_US_URL = "https://polling.finance.naver.com/api/realtime/worldstock/stock/"
+# 네이버 해외주식은 로이터 코드(AAPL.O, JPM, SPY, BRKb)를 쓴다.
+_NAVER_US_SUFFIX = {"NASDAQ": ".O", "NYSE": "", "AMEX": ""}
+
+
+def _naver_code(sym):
+    ex, _, t = (sym or "").upper().partition(":")
+    if ex == "KRX":
+        return t if re.fullmatch(r"[0-9A-Z]{6}", t) else None
+    suf = _NAVER_US_SUFFIX.get(ex)
+    if suf is None or not re.fullmatch(r"[A-Z]{1,6}(\.[A-Z])?", t):
+        return None
+    base, _, cls = t.partition(".")
+    return base + cls.lower() + suf
+
+
+def _naver_num(v):
+    return float(str(v).replace(",", ""))
+
+
+async def _naver_quotes(syms):
+    """KRX·미국 심볼의 실시간 시세 {심볼: {close, change, change_abs[, 장외]}}. 실패분은 빠진다."""
+    groups = {NAVER_RT_KR_URL: {}, NAVER_RT_US_URL: {}}
+    for s in syms:
+        code = _naver_code(s)
+        if code:
+            url = NAVER_RT_KR_URL if s.upper().startswith("KRX:") else NAVER_RT_US_URL
+            groups[url].setdefault(code, []).append(s)
+    out = {}
+    for url, by_code in groups.items():
+        codes = list(by_code)
+        for i in range(0, len(codes), 50):
+            try:
+                data = await _get_json(url + ",".join(codes[i:i + 50]), {})
+            except InvestingApiError as exc:
+                _warn("naver-rt", exc)
+                continue
+            for it in (data.get("datas") or []) if isinstance(data, dict) else []:
+                key = it.get("reutersCode") or it.get("itemCode") or ""
+                try:
+                    q = {"close": _naver_num(it["closePriceRaw"]),
+                         "change": _naver_num(it["fluctuationsRatioRaw"]),
+                         "change_abs": _naver_num(it["compareToPreviousClosePriceRaw"])}
+                except (KeyError, TypeError, ValueError):
+                    continue
+                om = it.get("overMarketPriceInfo") or {}
+                pfx = {"PRE_MARKET": "premarket", "AFTER_MARKET": "postmarket"}.get(
+                    om.get("tradingSessionType"))
+                if pfx and url == NAVER_RT_US_URL:
+                    try:
+                        q[pfx + "_close"] = _naver_num(om["overPrice"])
+                        q[pfx + "_change"] = _naver_num(om["fluctuationsRatio"])
+                    except (KeyError, TypeError, ValueError):
+                        pass
+                for s in by_code.get(key, []):
+                    out[s] = q
+    return out
 
 
 async def search_symbol(ticker, lang="en"):
@@ -2769,7 +2868,10 @@ async def fetch_symbol_meta(full_symbol):
     """
     params = {
         "symbol": full_symbol,
-        "fields": "type,typespecs,description,close,currency",
+        "fields": ("type,typespecs,description,close,currency,"
+                   "premarket_close,premarket_change,postmarket_close,postmarket_change,"
+                   "premarket_open,premarket_high,premarket_low,"
+                   "postmarket_open,postmarket_high,postmarket_low"),
         "no_404": "true",
     }
     try:
@@ -3358,6 +3460,103 @@ _CMP_HOVER = {"cols": [], "W": 0.0, "H": 0.0, "y1": 0.0, "y2": 0.0, "ndots": 0}
 _USD_RATES = {"USD": 1.0}
 
 
+_US_EXCHANGES = {"NASDAQ", "NYSE", "AMEX", "NYSE ARCA", "ARCA", "CBOE", "BATS", "OTC"}
+
+
+def _nth_sunday_utc(year, month, n):
+    d = datetime(year, month, 1, tzinfo=timezone.utc)
+    d += timedelta(days=(6 - d.weekday()) % 7)
+    return d + timedelta(weeks=n - 1)
+
+
+def _now_us_eastern():
+    now = datetime.now(timezone.utc)
+    # 미국 서머타임: 3월 둘째 일요일 2시 ~ 11월 첫째 일요일 2시(현지)
+    dst_start = _nth_sunday_utc(now.year, 3, 2) + timedelta(hours=7)
+    dst_end = _nth_sunday_utc(now.year, 11, 1) + timedelta(hours=6)
+    off = -4 if dst_start <= now < dst_end else -5
+    return now + timedelta(hours=off)
+
+
+def _us_session():
+    """현재 미국 세션: 'pre'(04:00~09:30) / 'regular' / 'post'(그 외 시간·주말=최근 애프터장)."""
+    et = _now_us_eastern()
+    if et.weekday() >= 5:
+        return "post"
+    m = et.hour * 60 + et.minute
+    if 240 <= m < 570:
+        return "pre"
+    if 570 <= m < 960:
+        return "regular"
+    return "post"
+
+
+def _px_regular_saved():
+    try:
+        return window.localStorage.getItem("px_regular_only") == "1"
+    except Exception:
+        return False
+
+
+# 헤더 "정규장 기준" 체크박스. 켜면 장외 가격 대신 정규장 종가만 표시.
+_PX_REGULAR = {"on": _px_regular_saved()}
+
+
+def _ext_quote(sym, d, proxy=None):
+    """장외 시간이면 (가격, 변동률%, 'pre'|'post'), 아니면 None.
+
+    proxy 가 주어지면(지수→대표 ETF) ETF 장외 변동률을 지수 종가에 적용한 추정치."""
+    if _PX_REGULAR["on"] or not d or not isinstance(d.get("close"), (int, float)):
+        return None
+    if proxy is None and (sym or "").split(":", 1)[0].upper() not in _US_EXCHANGES:
+        return None
+    sess = _us_session()
+    if sess == "regular":
+        return None
+    src = proxy if proxy is not None else d
+    chg = src.get(sess + "market_change") if src else None
+    if proxy is not None:
+        if not isinstance(chg, (int, float)):
+            return None
+        return d["close"] * (1 + chg / 100.0), chg, sess
+    px = d.get(sess + "market_close")
+    if not isinstance(px, (int, float)):
+        return None
+    return px, (chg if isinstance(chg, (int, float)) else None), sess
+
+
+_LAST_HEAD = {"args": None}
+
+
+def _head_price_html(full_symbol, data, close, cur):
+    """카드 헤더 가격. 미국 종목이 장외 시간이면 프리/애프터장 가격을 주 가격으로 표시."""
+    _LAST_HEAD["args"] = (full_symbol, data, close, cur)
+    if close is None:
+        return '<div class="px-head"></div>'
+    if _naver_code(full_symbol) and not (data or {}).get("_live"):
+        asyncio.ensure_future(_refresh_head_price())
+    ext = _ext_quote(full_symbol, data)
+    px = ext[0] if ext else close
+    return ('<div class="px-head"><div class="price">현재가 %s %s</div></div>'
+            % (_esc(fmt_num(px)), _esc(cur)))
+
+
+async def _refresh_head_price():
+    """종목 탭 헤더 현재가를 최신 시세로 다시 그린다."""
+    args = _LAST_HEAD["args"]
+    if not args or args[2] is None:
+        return
+    sym = args[0]
+    d = (await _fetch_quotes([sym])).get(sym)
+    head = document.querySelector("#result .px-head")
+    if not d or head is None or _LAST_HEAD["args"] is None \
+            or _LAST_HEAD["args"][0] != sym:
+        return
+    data = dict(_LAST_HEAD["args"][1] or {}, **d)
+    data["_live"] = True
+    head.outerHTML = _head_price_html(sym, data, d["close"], args[3])
+
+
 def render_report(full_symbol, payload, keep_chart=False):
     if isinstance(payload, dict) and "forecast" in payload:
         data = payload.get("forecast") or {}
@@ -3410,9 +3609,7 @@ def render_report(full_symbol, payload, keep_chart=False):
     html.append('<div class="card-head">')
     html.append('<div><span class="name">%s</span>'
                 '<span class="sym">[%s]</span></div>' % (_esc(desc), _esc(full_symbol)))
-    if close is not None:
-        html.append('<div class="price">현재가 %s %s</div>'
-                    % (_esc(fmt_num(close)), _esc(cur)))
+    html.append(_head_price_html(full_symbol, data, close, cur))
     html.append('</div>')
 
     # 애널리스트 추천 등급
@@ -4359,9 +4556,7 @@ def render_holdings(full_symbol, meta, holdings, report_ts, tech=None):
                 '<span class="sym">[%s]</span>'
                 '<span class="badge">ETF</span></div>'
                 % (_esc(desc), _esc(full_symbol)))
-    if close is not None:
-        html.append('<div class="price">현재가 %s %s</div>'
-                    % (_esc(fmt_num(close)), _esc(cur)))
+    html.append(_head_price_html(full_symbol, meta, close, cur))
     html.append('</div>')
 
     # 테크니컬 레이팅 - TradingView 기술적 분석 게이지(타임프레임 선택)
@@ -6209,7 +6404,10 @@ INDEX_LIST = [tuple(p) for p in window.IDX_LIST.to_py()]
 
 async def _fetch_index(sym):
     """지수 심볼의 종가·변동을 조회. 실패 시 None."""
-    params = {"symbol": sym, "fields": "close,change,change_abs", "no_404": "true"}
+    params = {"symbol": sym, "no_404": "true",
+              "fields": ("close,change,change_abs,premarket_close,premarket_change,"
+                         "postmarket_close,postmarket_change,premarket_open,premarket_high,"
+                         "premarket_low,postmarket_open,postmarket_high,postmarket_low")}
     try:
         d = await _get_json(SCANNER_SYMBOL_URL, params)
     except InvestingApiError:
@@ -6258,15 +6456,38 @@ async def _fetch_quotes(syms):
         for s, d in zip(missing, results):
             if d:
                 out[s] = d
+    live = await _naver_quotes(syms)
+    for s, nv in live.items():
+        out[s] = dict(out.get(s) or {}, **nv)
     return out
+
+
+# 지수는 장외 가격이 없어 대표 ETF 의 장외 변동률로 추정한다(원본은 인라인 JS window.IDX_EXT_PROXY).
+IDX_EXT_PROXY = json.loads(str(js.JSON.stringify(window.IDX_EXT_PROXY)))
+_IDX_LAST_QM = {"qm": None}
 
 
 async def update_indices():
     """나스닥100·S&P500·다우·러셀2000 지수값과 변동률을 헤더에 그리드 카드로 표시."""
+    if document.querySelector("#indices") is None:
+        return
+    syms = [s for _, s in INDEX_LIST]
+    syms += [p for p in IDX_EXT_PROXY.values() if p not in syms]
+    qm = await _fetch_quotes(syms)
+    _IDX_LAST_QM["qm"] = qm
+    _paint_indices(qm)
+    if qm:
+        try:
+            window.localStorage.setItem("idx_cache_v1", json.dumps(
+                {"at": int(time.time() * 1000), "quotes": qm}))
+        except Exception:
+            pass
+
+
+def _paint_indices(qm):
     el = document.querySelector("#indices")
     if el is None:
         return
-    qm = await _fetch_quotes([s for _, s in INDEX_LIST])
     results = [qm.get(s) for _, s in INDEX_LIST]
     cells = []
     for (name, sym), d in zip(INDEX_LIST, results):
@@ -6286,7 +6507,11 @@ async def update_indices():
                          '<span class="pv">-</span></div>'
                          % (cell_cls, attr, _esc(name)))
             continue
-        chg = d.get("change")
+        price, chg = d["close"], d.get("change")
+        proxy = IDX_EXT_PROXY.get(sym)
+        ext = _ext_quote(sym, d, qm.get(proxy) or {}) if proxy else None
+        if ext:
+            price, chg = ext[0], ext[1]
         chg_html = ""
         if isinstance(chg, (int, float)):
             cls = "up" if chg >= 0 else "down"
@@ -6294,15 +6519,30 @@ async def update_indices():
             chg_html = '<span class="chg %s">%s%+.2f%%</span>' % (cls, arrow, chg)
         cells.append('<div class="%s"%s><span class="nm">%s</span>'
                     '<span class="pv">%s</span>%s</div>'
-                    % (cell_cls, attr, _esc(name), fmt_num(d["close"], 2), chg_html))
+                    % (cell_cls, attr, _esc(name), fmt_num(price, 2), chg_html))
     window.__idxPyReady = True
     el.innerHTML = "".join(cells)
-    if qm:
-        try:
-            window.localStorage.setItem("idx_cache_v1", json.dumps(
-                {"at": int(time.time() * 1000), "quotes": qm}))
-        except Exception:
-            pass
+
+
+@when("change", "#regularOnly")
+def on_regular_only_change(event):
+    on = bool(event.target.checked)
+    _PX_REGULAR["on"] = on
+    try:
+        window.localStorage.setItem("px_regular_only", "1" if on else "0")
+    except Exception:
+        pass
+    if _IDX_LAST_QM["qm"]:
+        _paint_indices(_IDX_LAST_QM["qm"])
+    _paint_fav_prices({s: v[1] for s, v in _FAV_PRICE_CACHE.items()})
+    head = document.querySelector("#result .px-head")
+    if head is not None and _LAST_HEAD["args"]:
+        head.outerHTML = _head_price_html(*_LAST_HEAD["args"])
+    if _STOCKCHART_STATE.get("rows"):
+        _rerender_stock_chart()
+    ra = _IDXCHART_STATE.get("render_args")
+    if ra and document.querySelector("#idxchart-result .candle-svg") is not None:
+        _render_idxchart(*ra)
 
 
 # ===================== 지수 일봉 캔들 차트 (Yahoo Finance) =====================
@@ -7183,6 +7423,8 @@ def _pan_window(prefix, n):
 def _candle_body_html(prefix, rows, dec, hover, trend_key, bench=None, vol=None,
                       overlay_fn=None):
     s0, lead, e, extra = _pan_window(prefix, len(rows))
+    if extra == 0 and e == len(rows) and (_CHART_EXT.get(prefix) or {}).get("bar"):
+        extra = 1       # 최신 봉 오른쪽에 장외 캔들 자리
     w = rows[s0:e]
 
     def cut(a):
@@ -7616,6 +7858,73 @@ def _recov_help_popup():
         '</div>')
 
 
+_CHART_EXT = {}   # prefix -> {"last": 최신 종가, "up": 상승 여부, "ext": 장외 가격 또는 None}
+
+
+def _chart_ext_bar(prefix, last_c):
+    """미국 장외 시간이면 차트용 장외 세션 (시, 고, 저, 종), 아니면 None."""
+    if prefix == "stockchart":
+        args = _LAST_HEAD["args"]
+        if not args or args[0] != _STOCKCHART_STATE.get("symbol"):
+            return None
+        d = args[1]
+        ext = _ext_quote(args[0], d)
+        if not ext:
+            return None
+        c, k = ext[0], 1.0
+    else:
+        sel = document.querySelector("#idxChartSel")
+        sym = sel.value if sel is not None else None
+        proxy = IDX_EXT_PROXY.get(sym)
+        qm = _IDX_LAST_QM["qm"] or {}
+        d = qm.get(proxy) if proxy else None
+        if not d or not qm.get(sym) or not d.get("close"):
+            return None
+        ext = _ext_quote(sym, qm[sym], d)
+        if not ext or ext[1] is None:
+            return None
+        # ETF 장외 시·고·저를 ETF 종가 대비 비율로 지수에 환산
+        c, k = last_c * (1 + ext[1] / 100.0), last_c / d["close"]
+    sess = ext[2]
+
+    def pick(key):
+        v = d.get(sess + "market_" + key)
+        return v * k if isinstance(v, (int, float)) else None
+    o = pick("open") or last_c
+    h = max(v for v in (pick("high"), o, c) if v is not None)
+    lo = min(v for v in (pick("low"), o, c) if v is not None)
+    return o, h, lo, c
+
+
+def _chart_head_html(prefix, name, rows, dec, disp_c=None):
+    """차트 상단 요약. 장외 시간이면 장외 가격과 (최신 종가 대비) 변동을 표시."""
+    last = rows[-1]
+    prev = rows[-2] if len(rows) >= 2 else last
+    last_c, prev_c = last[4], prev[4]
+    state = _STOCKCHART_STATE if prefix == "stockchart" else _IDXCHART_STATE
+    bar = _chart_ext_bar(prefix, last_c)
+    ext_px = bar[3] if bar else None
+    # 주봉·월봉은 장외가 진행 중인 봉에 속해 별도 캔들로 그리지 않는다
+    _CHART_EXT[prefix] = {"last": last_c, "up": last_c >= prev_c, "ext": ext_px,
+                          "bar": bar if state.get("interval") == "1d" else None}
+    if ext_px is not None:
+        disp_c, base = ext_px, last_c
+    else:
+        disp_c, base = (disp_c if disp_c else last_c), prev_c
+    chg = disp_c - base
+    pct = (chg / base * 100.0) if base else 0.0
+    cls = "up" if chg >= 0 else "down"
+    arrow = "▲" if chg >= 0 else "▼"
+    d = datetime.fromtimestamp(last[0], tz=timezone.utc).strftime("%Y-%m-%d")
+    return ('<div class="idx-chart-head"><span class="nm">%s</span>'
+            '<span class="pv">%s</span>'
+            '<span class="%s">%s%+.2f (%+.2f%%)</span>'
+            '<span class="dt">%s 기준 · 최근 %d%s</span></div>') % (
+        _esc(name), fmt_num(disp_c, dec), cls, arrow, chg, pct, d,
+        (_PAN_VIEW.get(prefix) or {}).get("count", len(rows)),
+        _bar_unit(state.get("interval")))
+
+
 def _candle_svg(rows, dec=2, prefix="idxchart", hover=None, overlay=None,
                 trend_key=None, lead=0, extra=0):
     """일봉 OHLC 를 캔들스틱 SVG 로 렌더링. rows=[(ts,o,h,l,c)].
@@ -7630,6 +7939,19 @@ def _candle_svg(rows, dec=2, prefix="idxchart", hover=None, overlay=None,
         return '<div class="hint">차트를 표시할 데이터가 없습니다.</div>'
     highs = [r[2] for r in rows]
     lows = [r[3] for r in rows]
+    cext = _CHART_EXT.get(prefix) or {}
+    pv_view = _PAN_VIEW.get(prefix)
+    # 장외 캔들은 최신 봉 바로 오른쪽 빈 칸이 보일 때만 그린다
+    ext_bar = cext.get("bar") if (extra >= 1 and len(full) and (
+        not pv_view or pv_view["end"] >= pv_view["n"])) else None
+    # 최신 구간을 볼 때만 장외 가격을 가격 범위에 포함(과거로 이동 시 축이 눌리지 않게)
+    if isinstance(cext.get("ext"), (int, float)) and (
+            not pv_view or pv_view["end"] >= pv_view["n"]):
+        highs.append(cext["ext"])
+        lows.append(cext["ext"])
+    if ext_bar:
+        highs.append(ext_bar[1])
+        lows.append(ext_bar[2])
     vmax = max(highs)
     vmin = min(lows)
     if vmax == vmin:
@@ -7752,6 +8074,17 @@ def _candle_svg(rows, dec=2, prefix="idxchart", hover=None, overlay=None,
         bh = max(abs(yo - yc), 1.0)
         parts.append('<rect x="%g" y="%g" width="%g" height="%g" fill="%s"/>'
                      % (cx - body_w / 2, top, body_w, bh, col))
+    if ext_bar:
+        o, h, lo, c = ext_bar
+        cx = X(n)
+        col = "#089981" if c >= o else "#f23645"
+        yo, yc = Y(o), Y(c)
+        parts.append('<g opacity="0.75"><line x1="%g" y1="%g" x2="%g" y2="%g" '
+                     'stroke="%s" stroke-width="1" stroke-dasharray="2 2"/>'
+                     '<rect x="%g" y="%g" width="%g" height="%g" fill="%s" '
+                     'fill-opacity="0.35" stroke="%s" stroke-dasharray="2 2"/></g>'
+                     % (cx, Y(h), cx, Y(lo), col, cx - body_w / 2, min(yo, yc),
+                        body_w, max(abs(yo - yc), 1.0), col, col))
 
     for period, color, vals in ma_series:
         ma_pts = ["%g,%g" % (X(i), Y(v))
@@ -7760,7 +8093,31 @@ def _candle_svg(rows, dec=2, prefix="idxchart", hover=None, overlay=None,
             parts.append('<polyline points="%s" fill="none" stroke="%s" '
                          'stroke-width="1.3" stroke-linejoin="round" '
                          'stroke-linecap="round"/>' % (" ".join(ma_pts), color))
+
+    # 최신 종가·장외 가격 가로선 + 우측 가격 태그
+    price_lines = []
+    if isinstance(cext.get("last"), (int, float)):
+        price_lines.append((cext["last"], "#089981" if cext.get("up") else "#f23645"))
+    if isinstance(cext.get("ext"), (int, float)):
+        price_lines.append((cext["ext"], "#7048e8"))
+    for v, col in price_lines:
+        parts.append('<line x1="%g" y1="%g" x2="%g" y2="%g" stroke="%s" '
+                     'stroke-width="1" stroke-dasharray="3 3" opacity="0.85"/>'
+                     % (padL, Y(v), W - padR, Y(v), col))
     parts.append('</g>')
+    prev_ty = None
+    for v, col in price_lines:
+        ty = min(max(Y(v), padT + 8), padT + plot_h - 8)
+        if prev_ty is not None and abs(ty - prev_ty) < 16:
+            ty = prev_ty + (16 if ty >= prev_ty else -16)
+        prev_ty = ty
+        txt = axfmt(v)
+        # 최신 봉을 가리지 않도록 왼쪽 가격축 위에 표시(마우스 가격 라벨과 같은 위치)
+        parts.append('<g pointer-events="none"><rect x="2" y="%g" width="%g" '
+                     'height="16" rx="3" fill="%s"/><text x="%g" y="%g" '
+                     'text-anchor="end" style="fill:#fff;font-size:10px;'
+                     'font-weight:700">%s</text></g>'
+                     % (ty - 8, padL - 6, col, padL - 7, ty + 4, _esc(txt)))
 
     # 사용자 추세선(캔들 영역으로 클리핑)
     tss = [r[0] for r in rows]
@@ -7958,27 +8315,15 @@ def _render_idxchart(name, rows, bench_closes=None, vol_aligned=None):
     if not rows:
         el.innerHTML = '<div class="hint">표시할 데이터가 없습니다.</div>'
         return
-    last = rows[-1]
-    prev = rows[-2] if len(rows) >= 2 else last
-    last_c, prev_c = last[4], prev[4]
-    chg = last_c - prev_c
-    pct = (chg / prev_c * 100.0) if prev_c else 0.0
+    _IDXCHART_STATE["render_args"] = (name, rows, bench_closes, vol_aligned)
+    last_c = rows[-1][4]
     sel = document.querySelector("#idxChartSel")
     is_fx = sel is not None and sel.value == "FX_IDC:USDKRW"
     # 원/달러는 헤더 그리드와 동일한 실시간 환율을 우선 사용(없으면 일봉 종가).
     fx_live = _FX_RATE.get("rate") if is_fx else None
     disp_c = fx_live if fx_live else last_c
     dec = 2 if (last_c < 1000 or is_fx) else 0
-    cls = "up" if chg >= 0 else "down"
-    arrow = "▲" if chg >= 0 else "▼"
-    d = datetime.fromtimestamp(last[0], tz=timezone.utc).strftime("%Y-%m-%d")
-    head = ('<div class="idx-chart-head"><span class="nm">%s</span>'
-            '<span class="pv">%s</span>'
-            '<span class="%s">%s%+.2f (%+.2f%%)</span>'
-            '<span class="dt">%s 기준 · 최근 %d%s</span></div>') % (
-        _esc(name), fmt_num(disp_c, dec), cls, arrow, chg, pct, d,
-        (_PAN_VIEW.get("idxchart") or {}).get("count", len(rows)),
-        _bar_unit(_IDXCHART_STATE.get("interval")))
+    head = _chart_head_html("idxchart", name, rows, dec, disp_c)
     fx_html = ""
     if is_fx:
         fx_html = _fx_converter_html(disp_c)
@@ -8840,22 +9185,8 @@ def _render_stock_chart(name, rows):
                          '있습니다.)</div></div></div>' % (top, controls))
         _bind_stockchart_controls()
         return
-    last = rows[-1]
-    prev = rows[-2] if len(rows) >= 2 else last
-    last_c, prev_c = last[4], prev[4]
-    chg = last_c - prev_c
-    pct = (chg / prev_c * 100.0) if prev_c else 0.0
-    dec = 2 if last_c < 1000 else 0
-    cls = "up" if chg >= 0 else "down"
-    arrow = "▲" if chg >= 0 else "▼"
-    d = datetime.fromtimestamp(last[0], tz=timezone.utc).strftime("%Y-%m-%d")
-    head = ('<div class="idx-chart-head"><span class="nm">%s</span>'
-            '<span class="pv">%s</span>'
-            '<span class="%s">%s%+.2f (%+.2f%%)</span>'
-            '<span class="dt">%s 기준 · 최근 %d%s</span></div>') % (
-        _esc(name), fmt_num(last_c, dec), cls, arrow, chg, pct, d,
-        (_PAN_VIEW.get("stockchart") or {}).get("count", len(rows)),
-        _bar_unit(_STOCKCHART_STATE.get("interval")))
+    dec = 2 if rows[-1][4] < 1000 else 0
+    head = _chart_head_html("stockchart", name, rows, dec)
     overlay_fn = None
     if fin and _STOCKCHART_STATE.get("overlay"):
         annual = _STOCKCHART_STATE.get("range") == "10y"
@@ -10706,10 +11037,13 @@ def _paint_fav_prices(price_map):
             if chg_el is not None:
                 chg_el.textContent = ""
             continue
+        price, chg = d["close"], d.get("change")
+        ext = _ext_quote(sym, d)
+        if ext:
+            price, chg = ext[0], ext[1]
         if pv is not None:
-            is_kr = (cell.getAttribute("data-symbol") or "").upper().startswith("KRX:")
-            pv.textContent = fmt_num(d["close"], 0 if is_kr else 2)
-        chg = d.get("change")
+            is_kr = (sym or "").upper().startswith("KRX:")
+            pv.textContent = fmt_num(price, 0 if is_kr else 2)
         if chg_el is not None:
             if isinstance(chg, (int, float)):
                 cls = "up" if chg >= 0 else "down"
@@ -12985,7 +13319,7 @@ async def _load_mcap_hist():
         return
     _MCAP_HIST["busy"] = True
     try:
-        payload = await _mcap_get("/mcap-history?weeks=520&v=2")
+        payload = await _mcap_get("/mcap-history?weeks=520&v=3")
         _MCAP_HIST["weeks"] = payload.get("weeks") or []
         _MCAP_HIST["err"] = ""
         _MCAP_HIST["at"] = time.time()
@@ -14494,6 +14828,9 @@ def _refresh_header(*_args):
         return
     _HEADER_REFRESH["at"] = time.time()
     asyncio.ensure_future(update_indices())
+    asyncio.ensure_future(_refresh_fav_prices())
+    if document.querySelector("#result .px-head") is not None:
+        asyncio.ensure_future(_refresh_head_price())
 
 
 def _on_header_visibility(*_args):
