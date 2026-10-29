@@ -188,6 +188,21 @@
   .mcap-svg.has-sel .mc-line.sel, .mcap-svg .mc-line:hover { opacity:1; }
   .mcap-svg .mc-line.sel path { stroke-width:4; }
   .mcap-svg .mc-line.sel text { font-size:13px; }
+  #mcap-heat { margin-top:18px; }
+  #mcap-heat .mcap-chart-head { font-size:13px; color:var(--mut); margin-bottom:6px; }
+  .heat-folder { margin-bottom:14px; }
+  .heat-folder-head { font-size:13px; font-weight:600; margin-bottom:4px; display:flex; gap:8px; align-items:baseline; }
+  .heat-folder-head .up, .heat-folder-head .down { font-weight:600; }
+  .heat-folder-head .sub { color:var(--mut); font-weight:400; font-size:12px; }
+  .heat-map { position:relative; width:100%; background:#262931; border-radius:4px; overflow:hidden;
+              container-type:inline-size; }
+  .heat-cell { position:absolute; box-sizing:border-box; border:1px solid #262931; color:#fff;
+               display:flex; flex-direction:column; align-items:center; justify-content:center;
+               text-align:center; overflow:hidden; cursor:pointer; line-height:1.15;
+               text-shadow:0 1px 2px rgba(0,0,0,.45); }
+  .heat-cell:hover { outline:2px solid #fff; outline-offset:-2px; z-index:1; }
+  .heat-cell .t { font-weight:700; white-space:nowrap; max-width:100%; overflow:hidden; text-overflow:ellipsis; padding:0 2px; }
+  .heat-cell .c { opacity:.95; white-space:nowrap; }
   .table-wrap { overflow:auto; max-height:520px; border:1px solid var(--bd);
     border-radius:8px; }
   .fin-controls { display:flex; gap:16px; align-items:center; flex-wrap:wrap;
@@ -1119,6 +1134,7 @@
       </div>
       <div id="mcap-result"></div>
       <div id="mcap-chart"></div>
+      <div id="mcap-heat"></div>
     </fieldset>
   </div>
 
@@ -6535,6 +6551,8 @@ def on_regular_only_change(event):
     if _IDX_LAST_QM["qm"]:
         _paint_indices(_IDX_LAST_QM["qm"])
     _paint_fav_prices({s: v[1] for s, v in _FAV_PRICE_CACHE.items()})
+    if _HEAT_STATE["last"]:
+        _render_mcap_heat(*_HEAT_STATE["last"])
     head = document.querySelector("#result .px-head")
     if head is not None and _LAST_HEAD["args"]:
         head.outerHTML = _head_price_html(*_LAST_HEAD["args"])
@@ -10945,6 +10963,8 @@ def render_favorites(favs):
     _bind_favorites()
     _populate_rrg_folders()
     asyncio.ensure_future(_refresh_fav_prices())
+    if _mcap_tab_active():
+        asyncio.ensure_future(_load_mcap_heat())
 
 
 _FAV_PRICE_CACHE = {}      # symbol -> (조회 시각, 데이터 또는 None)
@@ -13384,6 +13404,230 @@ def on_mcap_chart_click(event):
         _mcap_select(_MCAP_HIST["sel"])
 
 
+# ===================== 즐겨찾기 폴더별 히트맵 (시총 순위 탭) =====================
+
+_HEAT_CAP_TTL = 600
+_HEAT_CAPS = {}   # symbol -> (조회 시각, USD 시총 또는 None)
+_HEAT_STATE = {"busy": False, "again": False, "last": None}
+# finviz 톤: 변동률 -3% ~ +3% 구간 색
+_HEAT_STOPS = [(-3, (246, 53, 56)), (-2, (191, 64, 69)), (-1, (139, 68, 78)),
+               (0, (65, 69, 84)), (1, (53, 118, 78)), (2, (47, 158, 79)), (3, (48, 204, 90))]
+
+
+def _mcap_tab_active():
+    panel = document.querySelector("#tab-mcap")
+    return panel is not None and panel.classList.contains("active")
+
+
+def _heat_color(chg):
+    if not isinstance(chg, (int, float)):
+        return "#4a4e5a"
+    v = max(-3.0, min(3.0, chg))
+    for (a, ca), (b, cb) in zip(_HEAT_STOPS, _HEAT_STOPS[1:]):
+        if v <= b:
+            t = (v - a) / (b - a)
+            return "rgb(%d,%d,%d)" % tuple(round(ca[k] + (cb[k] - ca[k]) * t) for k in range(3))
+    return "rgb(%d,%d,%d)" % _HEAT_STOPS[-1][1]
+
+
+def _squarify(vals, x, y, w, h):
+    """내림차순 값 목록을 (x,y,w,h) 사각형에 squarified 트리맵으로 배치."""
+    total = sum(vals)
+    if total <= 0:
+        return []
+    scale = w * h / total
+    vals = [v * scale for v in vals]
+    out, i = [], 0
+
+    def worst(row, side):
+        s = sum(row)
+        return max(side * side * max(row) / (s * s), s * s / (side * side * min(row)))
+
+    while i < len(vals):
+        side = min(w, h)
+        if side <= 0:
+            break
+        row, j = [vals[i]], i + 1
+        while j < len(vals) and worst(row + [vals[j]], side) <= worst(row, side):
+            row.append(vals[j])
+            j += 1
+        s = sum(row)
+        if w >= h:
+            cw, yy = s / h, y
+            for v in row:
+                out.append((x, yy, cw, v / cw))
+                yy += v / cw
+            x, w = x + cw, w - cw
+        else:
+            rh, xx = s / w, x
+            for v in row:
+                out.append((xx, y, v / rh, rh))
+                xx += v / rh
+            y, h = y + rh, h - rh
+        i = j
+    return out
+
+
+async def _fetch_heat_cap(sym):
+    """종목 시가총액(USD 환산). 실패 시 None."""
+    async with _QUOTE_LIMIT:
+        try:
+            d = await _get_json(SCANNER_SYMBOL_URL, {"symbol": sym, "no_404": "true",
+                                                     "fields": "market_cap_basic,fundamental_currency_code"})
+        except InvestingApiError:
+            return None
+    if not isinstance(d, dict) or not isinstance(d.get("market_cap_basic"), (int, float)):
+        return None
+    # market_cap_basic 은 거래통화(currency)가 아니라 재무 보고통화 기준(해외 종목도 대개 USD)
+    ccy = d.get("fundamental_currency_code") or "USD"
+    if ccy == "KRW" and _FX_RATE.get("rate"):
+        return d["market_cap_basic"] / _FX_RATE["rate"]
+    try:
+        await _ensure_usd_rate(ccy)
+    except Exception as exc:
+        _warn("heat fx", exc)
+    rate = _USD_RATES.get(ccy)
+    return d["market_cap_basic"] * rate if rate else None
+
+
+def _heat_groups():
+    """[(폴더, [즐겨찾기 dict...])] — 즐겨찾기 탭과 같은 폴더 순서, 빈 폴더 제외."""
+    groups = {}
+    for f in (_FAV_LAST.get("list") or []):
+        if f.get("symbol"):
+            folder = (f.get("folder") or "Default").strip() or "Default"
+            groups.setdefault(folder, []).append(f)
+    ordered = ["Default"] if "Default" in groups else []
+    ordered += [n for n in _FAV_FOLDERS if n in groups and n not in ordered]
+    ordered += sorted((n for n in groups if n not in ordered), key=str.lower)
+    return [(n, groups[n]) for n in ordered]
+
+
+def _render_mcap_heat(groups, quotes):
+    box = document.querySelector("#mcap-heat")
+    if box is None:
+        return
+    _HEAT_STATE["last"] = (groups, quotes)
+    W = 1000.0
+    parts = ['<div class="mcap-chart-head">즐겨찾기 폴더별 히트맵 '
+             '(크기=시가총액 USD 환산, 색=등락률 ±3%)</div>']
+    for folder, items in groups:
+        cells = []
+        for f in items:
+            sym = f["symbol"]
+            d = quotes.get(sym)
+            chg = d.get("change") if d else None
+            if d:
+                ext = _ext_quote(sym, d)
+                if ext:
+                    chg = ext[1]
+            cap = (_HEAT_CAPS.get(sym) or (0, None))[1]
+            tkr = sym.split(":", 1)[-1]
+            if sym.upper().startswith("KRX:"):
+                tkr = _KR_NAME_CACHE.get(tkr.upper()) or (
+                    f.get("name") if _has_hangul(f.get("name") or "") else tkr)
+            cells.append({"sym": sym, "tkr": tkr, "name": f.get("name") or sym,
+                          "chg": chg, "cap": cap})
+        known = sorted(c["cap"] for c in cells if c["cap"])
+        filler = known[len(known) // 2] if known else 1.0
+        for c in cells:
+            c["w"] = c["cap"] or filler
+        cells.sort(key=lambda c: -c["w"])
+        n = len(cells)
+        H = min(520.0, 220.0 + 18.0 * n)
+        rects = _squarify([c["w"] for c in cells], 0.0, 0.0, W, H)
+        tot_w = sum(c["w"] for c in cells if isinstance(c["chg"], (int, float)))
+        avg = (sum(c["w"] * c["chg"] for c in cells if isinstance(c["chg"], (int, float))) / tot_w
+               if tot_w else None)
+        avg_html = ('<span class="%s">%+.2f%%</span>' % ("up" if avg >= 0 else "down", avg)
+                    if avg is not None else "")
+        parts.append('<div class="heat-folder"><div class="heat-folder-head">📁 %s'
+                     '<span class="sub">%d종목 · 시총가중</span>%s</div>'
+                     '<div class="heat-map" style="aspect-ratio:%d/%d">'
+                     % (_esc(folder), n, avg_html, int(W), int(H)))
+        for c, (x, y, w, h) in zip(cells, rects):
+            m = min(w, h)
+            fs = max(9, min(24, m / 4.5))
+            label = ""
+            if w >= 34 and h >= 18:
+                chg_txt = ("%+.2f%%" % c["chg"]) if isinstance(c["chg"], (int, float)) else "-"
+                label = '<span class="t" style="font-size:clamp(8px,%.2fcqw,%.0fpx)">%s</span>' % (
+                    fs / 10, fs, _esc(c["tkr"]))
+                if h >= 36:
+                    label += '<span class="c" style="font-size:clamp(8px,%.2fcqw,%.0fpx)">%s</span>' % (
+                        max(9, fs * 0.7) / 10, max(9, fs * 0.7), chg_txt)
+            tip = "%s\n%s · 시총 %s · %s" % (
+                c["name"], c["sym"],
+                fmt_large(c["cap"], "USD") if c["cap"] else "정보 없음",
+                ("%+.2f%%" % c["chg"]) if isinstance(c["chg"], (int, float)) else "-")
+            parts.append('<div class="heat-cell" data-go="%s" title="%s" style="left:%.3f%%;'
+                         'top:%.3f%%;width:%.3f%%;height:%.3f%%;background:%s">%s</div>'
+                         % (_esc(c["sym"]), _esc(tip), x / W * 100, y / H * 100,
+                            w / W * 100, h / H * 100, _heat_color(c["chg"]), label))
+        parts.append("</div></div>")
+    box.innerHTML = "".join(parts)
+
+
+async def _load_mcap_heat():
+    box = document.querySelector("#mcap-heat")
+    if box is None:
+        return
+    if _HEAT_STATE["busy"]:
+        _HEAT_STATE["again"] = True
+        return
+    groups = _heat_groups()
+    if not groups:
+        box.innerHTML = ('<div class="mcap-chart-head">즐겨찾기 폴더별 히트맵</div>'
+                         '<div class="hint">로그인 후 즐겨찾기에 종목을 추가하면 폴더별 히트맵이 표시됩니다.</div>')
+        return
+    _HEAT_STATE["busy"] = True
+    try:
+        syms = list(dict.fromkeys(f["symbol"] for _, items in groups for f in items))
+        now = time.time()
+        quotes = {s: _FAV_PRICE_CACHE[s][1] for s in syms
+                  if s in _FAV_PRICE_CACHE and _FAV_PRICE_CACHE[s][1]}
+        if quotes or all(s in _HEAT_CAPS for s in syms):
+            _render_mcap_heat(groups, quotes)
+        else:
+            box.innerHTML = '<div class="hint"><span class="mini-spin"></span></div>'
+        stale = [s for s in syms if s not in _FAV_PRICE_CACHE
+                 or now - _FAV_PRICE_CACHE[s][0] >= _FAV_PRICE_TTL]
+        pending = [s for s in stale if s not in _FAV_PRICE_INFLIGHT]
+        if pending:
+            task = asyncio.ensure_future(_fetch_fav_batch(pending))
+            for s in pending:
+                _FAV_PRICE_INFLIGHT[s] = task
+        tasks = list({id(t): t for t in (_FAV_PRICE_INFLIGHT[s] for s in stale
+                                         if s in _FAV_PRICE_INFLIGHT)}.values())
+        cap_syms = [s for s in syms if s not in _HEAT_CAPS
+                    or now - _HEAT_CAPS[s][0] >= _HEAT_CAP_TTL]
+        batches, caps = await asyncio.gather(
+            asyncio.gather(*tasks),
+            asyncio.gather(*[_fetch_heat_cap(s) for s in cap_syms]))
+        for s, c in zip(cap_syms, caps):
+            _HEAT_CAPS[s] = (now, c)
+        for qm in batches:
+            quotes.update({k: v for k, v in qm.items() if v})
+        _render_mcap_heat(groups, quotes)
+    except Exception as exc:
+        _warn("mcap heat", exc)
+    finally:
+        _HEAT_STATE["busy"] = False
+    if _HEAT_STATE["again"]:
+        _HEAT_STATE["again"] = False
+        await _load_mcap_heat()
+
+
+@when("click", "#mcap-heat")
+def on_mcap_heat_click(event):
+    cell = event.target.closest(".heat-cell[data-go]")
+    if cell is None:
+        return
+    document.querySelector("#ticker").value = cell.getAttribute("data-go")
+    document.querySelector('.tab-btn[data-tab="stock"]').click()
+    document.querySelector("#lookupBtn").click()
+
+
 @when("click", ".tab-btn")
 def on_tab(event):
     name = event.target.getAttribute("data-tab")
@@ -13447,6 +13691,8 @@ def on_tab(event):
     if name == "mcap" and (not _MCAP_STATE["at"] or
                             time.time() - _MCAP_STATE["at"] >= _MCAP_TTL):
         asyncio.ensure_future(_load_mcap_top())
+    if name == "mcap":
+        asyncio.ensure_future(_load_mcap_heat())
 
 
 @when("mousemove", "#idxchart-result")
