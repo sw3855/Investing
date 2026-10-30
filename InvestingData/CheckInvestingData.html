@@ -912,7 +912,9 @@
         const pr = qm[window.IDX_EXT_PROXY[sym]];
         const ec = sess !== "regular" && pr ? pr[sess + "market_change"] : null;
         if (typeof ec === "number") {
-          px = d.close * (1 + ec / 100); c = ec;
+          px = d.close * (1 + ec / 100);
+          c = sess === "post" && typeof d.change === "number"
+            ? ((1 + d.change / 100) * (1 + ec / 100) - 1) * 100 : ec;
         }
         let chg = "";
         if (typeof c === "number") {
@@ -970,7 +972,7 @@
     <div class="tab-group" data-group="macro">
       <button class="tab-btn" data-tab="macro">경제지표</button>
       <button class="tab-btn" data-tab="liquidity">유동성</button>
-      <button class="tab-btn" data-tab="macrodoc">거시경제</button>
+      <button class="tab-btn" data-tab="macrodoc">자료실</button>
     </div>
     <div class="tab-group" data-group="tools">
       <button class="tab-btn" data-tab="compound">복리계산기</button>
@@ -1231,7 +1233,7 @@
 
   <div class="tab-panel" id="tab-macrodoc">
     <fieldset>
-      <legend>거시경제 자료실</legend>
+      <legend>자료실</legend>
       <div class="row">
         <button id="macroDocRefreshBtn" type="button">목록 새로고침</button>
         <span id="macrodoc-status"></span>
@@ -1241,7 +1243,7 @@
     </fieldset>
 
     <fieldset id="macrodoc-admin" class="fav-fieldset" style="display:none">
-      <legend>거시경제 자료 등록 (관리자 전용)</legend>
+      <legend>자료 등록 (관리자 전용)</legend>
       <div id="macrodoc-admin-body">
       <div class="row">
         <input type="text" id="macroDocTitle" class="grow"
@@ -3534,11 +3536,18 @@ def _ext_quote(sym, d, proxy=None):
     if proxy is not None:
         if not isinstance(chg, (int, float)):
             return None
-        return d["close"] * (1 + chg / 100.0), chg, sess
-    px = d.get(sess + "market_close")
-    if not isinstance(px, (int, float)):
-        return None
-    return px, (chg if isinstance(chg, (int, float)) else None), sess
+        px = d["close"] * (1 + chg / 100.0)
+    else:
+        px = d.get(sess + "market_close")
+        if not isinstance(px, (int, float)):
+            return None
+        if not isinstance(chg, (int, float)):
+            chg = None
+    # 애프터장 변동률은 정규장 종가 대비 → 정규장 등락률과 합산해 전일 종가 대비로 표시
+    day = d.get("change")
+    if sess == "post" and chg is not None and isinstance(day, (int, float)):
+        chg = ((1 + day / 100.0) * (1 + chg / 100.0) - 1) * 100.0
+    return px, chg, sess
 
 
 _LAST_HEAD = {"args": None}
@@ -5379,7 +5388,7 @@ def _set_busy(busy):
 
 FRED_OBS_URL = "https://api.stlouisfed.org/fred/series/observations"
 
-# DBnomics: ISM PMI 등 거시경제 지표 시계열 (API 키 불필요, 무료).
+# DBnomics: ISM PMI 등 매크로 경제지표 시계열 (API 키 불필요, 무료).
 # CORS 프록시(investing-proxy-worker.js)가 api.db.nomics.world 도 허용해야 한다.
 DBNOMICS_BASE = "https://api.db.nomics.world/v22"
 
@@ -7899,10 +7908,10 @@ def _chart_ext_bar(prefix, last_c):
         if not d or not qm.get(sym) or not d.get("close"):
             return None
         ext = _ext_quote(sym, qm[sym], d)
-        if not ext or ext[1] is None:
+        if not ext or not qm[sym].get("close"):
             return None
         # ETF 장외 시·고·저를 ETF 종가 대비 비율로 지수에 환산
-        c, k = last_c * (1 + ext[1] / 100.0), last_c / d["close"]
+        c, k = last_c * ext[0] / qm[sym]["close"], last_c / d["close"]
     sess = ext[2]
 
     def pick(key):
@@ -8143,6 +8152,8 @@ def _candle_svg(rows, dec=2, prefix="idxchart", hover=None, overlay=None,
         "key": trend_key, "ts": tss, "n": slots, "W": W, "H": H,
         "padL": padL, "padT": padT, "plot_w": plot_w, "plot_h": plot_h,
         "vmax": vmax, "vmin": vmin, "dec": dec,
+        "cur": cext["ext"] if isinstance(cext.get("ext"), (int, float)) else (
+            full[-1][4] if len(full) else None),
         "step": ((tss[-1] - tss[0]) / (n - 1)) if n > 1 and tss[-1] > tss[0] else 86400.0}
     if trend_key:
         parts.append('<clipPath id="%s-trend-clip"><rect x="%g" y="%g" '
@@ -8205,11 +8216,13 @@ def _candle_svg(rows, dec=2, prefix="idxchart", hover=None, overlay=None,
     # 마우스 y 위치의 가격(가로 점선 + 왼쪽 축 라벨)
     parts.append('<g id="%s-ycur" pointer-events="none" style="display:none">'
                  '<line class="guide-line" x1="%g" y1="0" x2="%g" y2="0"/>'
-                 '<rect x="2" y="-8" width="%g" height="16" rx="3" '
+                 '<rect x="2" y="-14" width="%g" height="28" rx="3" '
                  'fill="#2962ff"/>'
-                 '<text id="%s-ycur-val" x="%g" y="4" text-anchor="end" '
-                 'style="fill:#fff;font-size:10px;font-weight:600"></text></g>'
-                 % (prefix, padL, W - padR, padL - 6, prefix, padL - 7))
+                 '<text id="%s-ycur-val" x="%g" y="-2" text-anchor="end" '
+                 'style="fill:#fff;font-size:10px;font-weight:600"></text>'
+                 '<text id="%s-ycur-pct" x="%g" y="10" text-anchor="end" '
+                 'style="fill:#dbe4ff;font-size:9px;font-weight:600"></text></g>'
+                 % (prefix, padL, W - padR, padL - 6, prefix, padL - 7, prefix, padL - 7))
     # 마우스 x 위치의 날짜(x축 라벨)
     parts.append('<g id="%s-xcur" pointer-events="none" style="display:none">'
                  '<rect x="-36" y="%g" width="72" height="16" rx="3" fill="#2962ff"/>'
@@ -8972,6 +8985,10 @@ def _price_cursor(prefix, sy):
     txt = document.querySelector("#%s-ycur-val" % prefix)
     if txt is not None:
         txt.textContent = "{:,.{d}f}".format(price, d=g.get("dec", 2))
+    pct_el = document.querySelector("#%s-ycur-pct" % prefix)
+    if pct_el is not None:
+        cur = g.get("cur")
+        pct_el.textContent = ("%+.2f%%" % ((price - cur) / cur * 100.0)) if cur else ""
     grp.style.display = ""
 
 
@@ -10984,6 +11001,23 @@ async def _fetch_fav_batch(syms):
             _FAV_PRICE_INFLIGHT.pop(s, None)
 
 
+async def _fav_quote_data(syms):
+    """즐겨찾기 일괄 시세 {심볼: 데이터}. 캐시(만료 무관)·진행 중 요청을 공유한다."""
+    out = {s: _FAV_PRICE_CACHE[s][1] for s in syms
+           if s in _FAV_PRICE_CACHE and _FAV_PRICE_CACHE[s][1]}
+    missing = [s for s in syms if s not in out]
+    pending = [s for s in missing if s not in _FAV_PRICE_INFLIGHT]
+    if pending:
+        task = asyncio.ensure_future(_fetch_fav_batch(pending))
+        for s in pending:
+            _FAV_PRICE_INFLIGHT[s] = task
+    tasks = list({id(t): t for t in (_FAV_PRICE_INFLIGHT[s] for s in missing
+                                     if s in _FAV_PRICE_INFLIGHT)}.values())
+    for qm in await asyncio.gather(*tasks):
+        out.update({k: v for k, v in qm.items() if v and k in missing})
+    return out
+
+
 async def _fetch_fav_kr_name(sym):
     async with _QUOTE_LIMIT:
         return await _naver_kr_name(sym.split(":", 1)[-1])
@@ -11649,9 +11683,14 @@ async def _load_earncal(force=False):
     _apply_status("#earncal-status", "실적 발표일 조회 중...")
     sem = asyncio.Semaphore(_EARNCAL_LIMIT)
     kr_syms = [s for s in syms if s.upper().startswith("KRX:")]
-    results, kr_names = await asyncio.gather(
-        asyncio.gather(*[_fetch_earn_dates(s, sem) for s in syms]),
+    qd, kr_names = await asyncio.gather(
+        _fav_quote_data(syms),
         asyncio.gather(*[_naver_kr_name(s.split(":", 1)[-1]) for s in kr_syms]))
+    # 일괄 시세에 실적일 필드가 없는 종목(구버전 워커·개별 폴백)만 개별 조회
+    fb = [s for s in syms if "earnings_release_date" not in (qd.get(s) or {})]
+    for s, d in zip(fb, await asyncio.gather(*[_fetch_earn_dates(s, sem) for s in fb])):
+        qd[s] = d
+    results = [qd.get(s) for s in syms]
     labels = {s: s.split(":", 1)[-1] for s in syms}
     for s, kr in zip(kr_syms, kr_names):
         if kr:
@@ -13476,6 +13515,10 @@ async def _fetch_heat_cap(sym):
                                                      "fields": "market_cap_basic,fundamental_currency_code"})
         except InvestingApiError:
             return None
+    return await _heat_cap_usd(d)
+
+
+async def _heat_cap_usd(d):
     if not isinstance(d, dict) or not isinstance(d.get("market_cap_basic"), (int, float)):
         return None
     # market_cap_basic 은 거래통화(currency)가 아니라 재무 보고통화 기준(해외 종목도 대개 USD)
@@ -13488,6 +13531,16 @@ async def _fetch_heat_cap(sym):
         _warn("heat fx", exc)
     rate = _USD_RATES.get(ccy)
     return d["market_cap_basic"] * rate if rate else None
+
+
+async def _heat_caps_from_quotes(quotes, now):
+    """일괄 시세(/quotes)에 포함된 시총으로 _HEAT_CAPS 를 채운다(개별 요청 생략)."""
+    syms = [s for s, d in quotes.items()
+            if d and "market_cap_basic" in d
+            and (s not in _HEAT_CAPS or now - _HEAT_CAPS[s][0] >= _HEAT_CAP_TTL)]
+    caps = await asyncio.gather(*[_heat_cap_usd(quotes[s]) for s in syms])
+    for s, c in zip(syms, caps):
+        _HEAT_CAPS[s] = (now, c)
 
 
 def _heat_groups():
@@ -13586,6 +13639,7 @@ async def _load_mcap_heat():
         now = time.time()
         quotes = {s: _FAV_PRICE_CACHE[s][1] for s in syms
                   if s in _FAV_PRICE_CACHE and _FAV_PRICE_CACHE[s][1]}
+        await _heat_caps_from_quotes(quotes, now)
         if quotes or all(s in _HEAT_CAPS for s in syms):
             _render_mcap_heat(groups, quotes)
         else:
@@ -13599,15 +13653,17 @@ async def _load_mcap_heat():
                 _FAV_PRICE_INFLIGHT[s] = task
         tasks = list({id(t): t for t in (_FAV_PRICE_INFLIGHT[s] for s in stale
                                          if s in _FAV_PRICE_INFLIGHT)}.values())
+        for qm in await asyncio.gather(*tasks):
+            quotes.update({k: v for k, v in qm.items() if v})
+        await _heat_caps_from_quotes(quotes, now)
+        # 일괄 시세에 시총이 없던 종목(구버전 워커·개별 폴백)만 개별 조회
         cap_syms = [s for s in syms if s not in _HEAT_CAPS
                     or now - _HEAT_CAPS[s][0] >= _HEAT_CAP_TTL]
-        batches, caps = await asyncio.gather(
-            asyncio.gather(*tasks),
-            asyncio.gather(*[_fetch_heat_cap(s) for s in cap_syms]))
-        for s, c in zip(cap_syms, caps):
-            _HEAT_CAPS[s] = (now, c)
-        for qm in batches:
-            quotes.update({k: v for k, v in qm.items() if v})
+        if cap_syms:
+            _render_mcap_heat(groups, quotes)
+            caps = await asyncio.gather(*[_fetch_heat_cap(s) for s in cap_syms])
+            for s, c in zip(cap_syms, caps):
+                _HEAT_CAPS[s] = (now, c)
         _render_mcap_heat(groups, quotes)
     except Exception as exc:
         _warn("mcap heat", exc)
@@ -13676,7 +13732,7 @@ def on_tab(event):
     elif name == "rrg":
         _populate_rrg_folders()
         render_rrg_chips()
-    # 거시경제 탭: 처음 열면 등록된 자료 목록을 불러온다.
+    # 자료실 탭: 처음 열면 등록된 자료 목록을 불러온다.
     if name == "macrodoc":
         if not _MACRODOC_LOADED["done"]:
             asyncio.ensure_future(_load_macrodoc_list())
@@ -14735,7 +14791,7 @@ def on_fav_key_enter(event):
         btn.click()
 
 
-# ===================== 거시경제 자료실 (Cloudflare KV · 관리자 등록) =====================
+# ===================== 자료실 (Cloudflare KV · 관리자 등록) =====================
 # 관리자 계정(ai_admin)만 HTML 리포트를 등록/삭제할 수 있고, 누구나 열람만 가능하다.
 
 _MACRODOC_LIST = {"docs": []}
@@ -14767,7 +14823,7 @@ def _set_macrodoc_admin_status(msg):
 
 
 async def _macrodoc_list():
-    """등록된 거시경제 자료 목록을 서버에서 가져온다(인증 불필요)."""
+    """등록된 자료 목록을 서버에서 가져온다(인증 불필요)."""
     base = _macrodoc_base()
     if not base:
         return None, "Worker(프록시) 주소가 설정돼 있어야 합니다."

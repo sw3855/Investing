@@ -108,7 +108,7 @@
  *    DELETE /macro-doc?account=<admin>&id=<id> → 자료 삭제
  *
  *  시세 일괄 조회(헤더 지수·즐겨찾기 가격):
- *    GET    /quotes?symbols=NASDAQ:AAPL,KRX:005930  → { quotes:{SYMBOL:{close,change,change_abs,premarket_*,postmarket_* (close,change,open,high,low)}}, at }
+ *    GET    /quotes?symbols=NASDAQ:AAPL,KRX:005930  → { quotes:{SYMBOL:{close,change,change_abs,premarket_*,postmarket_* (close,change,open,high,low),market_cap_basic,fundamental_currency_code,earnings_release_*}}, at }
  *    (최대 300개, 대문자로 정규화. 없는 심볼은 결과에서 빠짐)
  *
  *  미국 시가총액 순위:
@@ -498,7 +498,10 @@ async function fetchMcapScan(n) {
 const QUOTE_COLUMNS = ["close", "change", "change_abs",
   "premarket_close", "premarket_change", "postmarket_close", "postmarket_change",
   "premarket_open", "premarket_high", "premarket_low",
-  "postmarket_open", "postmarket_high", "postmarket_low"];
+  "postmarket_open", "postmarket_high", "postmarket_low",
+  // 히트맵 시총·실적 달력용(종목별 개별 스캐너 요청을 없애기 위해 함께 조회)
+  "market_cap_basic", "fundamental_currency_code",
+  "earnings_release_next_date", "earnings_release_date", "earnings_publication_type_fq"];
 const QUOTE_MAX_SYMBOLS = 300;
 const QUOTE_CACHE_TTL = 20; // 초
 const QUOTE_SYMBOL_RE = /^[A-Z0-9_.!&-]{1,32}:[A-Z0-9_.!&\/-]{1,48}$/;
