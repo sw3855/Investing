@@ -59,6 +59,7 @@
  *    POST   https://<worker>/favorites?account=<id>&guru_op=add → 본문 {cik,ko,name,firm} 13F 대가 즐겨찾기 등록
  *    POST   https://<worker>/favorites?account=<id>&pref_op=set → 본문 {earncal_folder} 사용자 설정 저장
  *    POST   https://<worker>/favorites?account=<id>&trend_op=set → 본문 {trends:{key:[[ts1,p1,ts2,p2],...]}} 차트 추세선 저장(빈 배열=삭제)
+ *    POST   https://<worker>/favorites?account=<id>&d1f_op=set|del → 본문 {name, flt, sort} 종목 DB 필터 저장/삭제
  *    DELETE https://<worker>/favorites?account=<id>&guru=<cik>  → 13F 대가 즐겨찾기 삭제
  *    DELETE https://<worker>/favorites?account=<id>&symbol=..  → 해당 심볼 삭제
  *    DELETE https://<worker>/favorites?account=<id>&folder=..  → 폴더와 그 안의 종목 삭제
@@ -117,6 +118,13 @@
  *  주간 스냅샷(TOP 50)은 FAVORITES KV 의 'mcaphist:<연도>' 키에 주(금요일 날짜) 단위로 쌓인다.
  *    - Cron Trigger '0 22 * * 5'(금요일 장마감 후)를 등록하면 매주 확정 스냅샷을 기록한다.
  *    - /mcap-top 조회 시 이번 주 스냅샷이 없거나 미확정이면 보충 기록한다.
+ *
+ * ── 종목 데이터 (D1) ──────────────────────────────────────
+ *  1) Workers & Pages → D1 → Create database (예: investing_stocks)
+ *  2) npx wrangler d1 execute investing_stocks --remote --file=d1/stocks_sample.sql
+ *  3) 이 Worker → Settings → Bindings → D1 database, Variable name: STOCKS_DB
+ *    GET /stocks                → {symbols:[{symbol,name}]}
+ *    GET /stocks?symbol=GOOGL   → {stock:{...}, op_income:[{fiscal_year,operating_income}]}
  */
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -333,6 +341,11 @@ export default {
       return handleMcapHistory(request, env, reqUrl);
     }
 
+    // ── 종목 데이터 (D1 바인딩 STOCKS_DB) ──
+    if (reqUrl.pathname === "/stocks") {
+      return handleStocks(request, env, reqUrl);
+    }
+
     if (request.method !== "GET") {
       return new Response("Only GET is allowed", {
         status: 405,
@@ -440,6 +453,91 @@ function jsonResponse(obj, status = 200) {
   const headers = new Headers(CORS_HEADERS);
   headers.set("Content-Type", "application/json; charset=utf-8");
   return new Response(JSON.stringify(obj), { status, headers });
+}
+
+// ===================== 종목 데이터 (D1) =====================
+
+// GET /stocks → {symbols:[...]}, GET /stocks?symbol=GOOGL → {stock, op_income:[...]}
+// 주 1회 갱신 데이터라 캐시. 키에 데이터 버전(최신 updated_at·행 수)을 넣어 적재 직후엔 자동 무효화
+const STOCKS_ALL_TTL = 6 * 3600; // 초
+let stocksAllMem = null; // { ver, at, body }
+
+async function stocksAll(db) {
+  const v = await db
+    .prepare("SELECT MAX(updated_at) AS u, COUNT(*) AS n FROM stocks")
+    .first();
+  const ver = (v && v.u ? v.u : "") + "_" + (v ? v.n : 0);
+  const fresh = (body) =>
+    new Response(body, {
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
+        ...CORS_HEADERS,
+      },
+    });
+
+  if (stocksAllMem && stocksAllMem.ver === ver && Date.now() - stocksAllMem.at < STOCKS_ALL_TTL * 1000) {
+    return fresh(stocksAllMem.body);
+  }
+  const cache = caches.default;
+  const cacheKey = new Request("https://cache.local/stocks-all-v3?v=" + encodeURIComponent(ver));
+  const hit = await cache.match(cacheKey);
+  let body;
+  if (hit) {
+    body = await hit.text();
+  } else {
+    // op_last·op_yoy는 수집 스크립트가 미리 계산해 저장, 히스토리는 상세 조회(?symbol=)에서 받음
+    const { results } = await db
+      .prepare("SELECT * FROM stocks ORDER BY market_cap DESC")
+      .all();
+    body = JSON.stringify({ rows: results });
+    await cache.put(
+      cacheKey,
+      new Response(body, { headers: { "Cache-Control": "public, max-age=" + STOCKS_ALL_TTL } })
+    );
+  }
+  stocksAllMem = { ver, at: Date.now(), body };
+  return fresh(body);
+}
+
+// GET /stocks?all=1 → {rows:[...전 종목 + op_last, op_yoy]}
+async function handleStocks(request, env, reqUrl) {
+  if (request.method !== "GET") {
+    return jsonResponse({ error: "method not allowed" }, 405);
+  }
+  const db = env && env.STOCKS_DB;
+  if (!db) {
+    return jsonResponse({ error: "D1 바인딩(STOCKS_DB)이 설정되지 않았습니다." }, 500);
+  }
+  const symbol = (reqUrl.searchParams.get("symbol") || "").trim().toUpperCase();
+  try {
+    if (reqUrl.searchParams.get("all") === "1") {
+      return await stocksAll(db);
+    }
+    if (!symbol) {
+      const { results } = await db
+        .prepare("SELECT symbol, name FROM stocks ORDER BY symbol")
+        .all();
+      return jsonResponse({ symbols: results });
+    }
+    if (!/^[A-Z0-9.\-]{1,12}$/.test(symbol)) {
+      return jsonResponse({ error: "invalid symbol" }, 400);
+    }
+    const [stock, hist] = await db.batch([
+      db.prepare("SELECT * FROM stocks WHERE symbol = ?1").bind(symbol),
+      db
+        .prepare(
+          "SELECT fiscal_year, operating_income FROM op_income_history WHERE symbol = ?1 ORDER BY fiscal_year"
+        )
+        .bind(symbol),
+    ]);
+    if (!stock.results.length) {
+      return jsonResponse({ error: "not found" }, 404);
+    }
+    return jsonResponse({ stock: stock.results[0], op_income: hist.results });
+  } catch (e) {
+    return jsonResponse({ error: "D1 조회 실패: " + (e && e.message) }, 500);
+  }
 }
 
 // ===================== 미국 시가총액 순위 =====================
@@ -1280,6 +1378,25 @@ function cleanTrendLines(v) {
   return out;
 }
 
+// 종목 DB 저장 필터: [{name, flt:{열:식}, sort:[열, 1|-1]}]
+const D1F_MAX = 30;
+
+function cleanD1Filter(p) {
+  const name = cleanStr(p && p.name).slice(0, 40);
+  if (!name) return null;
+  const flt = {};
+  const src = p && p.flt && typeof p.flt === "object" ? p.flt : {};
+  for (const [k, v] of Object.entries(src).slice(0, 80)) {
+    if (!/^[a-z0-9_]{1,40}$/.test(k)) continue;
+    const expr = cleanStr(v).slice(0, 100);
+    if (expr) flt[k] = expr;
+  }
+  const s = Array.isArray(p && p.sort) ? p.sort : [];
+  const sort =
+    typeof s[0] === "string" && /^[a-z0-9_]{1,40}$/.test(s[0]) ? [s[0], s[1] === 1 ? 1 : -1] : null;
+  return { name, flt, sort };
+}
+
 // 공유 키를 솔트와 함께 SHA-256 해시(16진수)로 변환한다.
 async function sha256Hex(text) {
   const data = new TextEncoder().encode(text);
@@ -1397,16 +1514,20 @@ async function handleFavorites(request, env, reqUrl) {
     record && record.trends && typeof record.trends === "object" && !Array.isArray(record.trends)
       ? record.trends
       : {};
+  const d1_filters =
+    record && Array.isArray(record.d1_filters) ? record.d1_filters : [];
   // 현재 레코드 필드를 모두 보존하며 일부만 덮어써 저장한다.
   const save = (over = {}) =>
     env.FAVORITES.put(
       kvKey,
-      JSON.stringify({ keyHash: record.keyHash, favorites, folders, gurus, prefs, trends, ...over })
+      JSON.stringify({
+        keyHash: record.keyHash, favorites, folders, gurus, prefs, trends, d1_filters, ...over,
+      })
     );
 
   if (request.method === "GET") {
     const token = record ? await makeSessionToken(env, account, record.keyHash) : undefined;
-    return jsonResponse({ favorites, folders, gurus, prefs, trends, exists: !!record, token });
+    return jsonResponse({ favorites, folders, gurus, prefs, trends, d1_filters, exists: !!record, token });
   }
 
   if (request.method === "POST") {
@@ -1461,6 +1582,25 @@ async function handleFavorites(request, env, reqUrl) {
       }
       await save();
       return jsonResponse({ prefs });
+    }
+
+    // 종목 DB 필터: ?d1f_op=set 본문 {name, flt, sort}(같은 이름=덮어쓰기) / ?d1f_op=del 본문 {name}
+    const d1fOp = reqUrl.searchParams.get("d1f_op");
+    if (d1fOp === "set" || d1fOp === "del") {
+      const name = cleanStr(payload && payload.name).slice(0, 40);
+      const idx = d1_filters.findIndex((f) => f && f.name === name);
+      if (d1fOp === "del") {
+        if (idx >= 0) d1_filters.splice(idx, 1);
+      } else {
+        const f = cleanD1Filter(payload);
+        if (!f) return jsonResponse({ error: "필터 이름을 입력하세요.", d1_filters }, 400);
+        if (idx >= 0) d1_filters[idx] = f;
+        else if (d1_filters.length >= D1F_MAX) {
+          return jsonResponse({ error: `필터는 최대 ${D1F_MAX}개까지 저장할 수 있습니다.`, d1_filters }, 400);
+        } else d1_filters.push(f);
+      }
+      await save();
+      return jsonResponse({ d1_filters });
     }
 
     // 차트 추세선 저장: ?trend_op=set, 본문 {trends:{key: lines}}. 종목은 즐겨찾기에 있어야 함.

@@ -168,6 +168,39 @@
   table.mcap-table td.rank { font-weight:700; color:var(--mut); }
   table.mcap-table td .sub { color:var(--mut); font-size:12px; margin-left:6px; }
   table.mcap-table .mcap-go { font-size:12px; padding:2px 8px; cursor:pointer; }
+  .d1-wrap { max-height:70vh; overflow:auto; margin-top:12px; border:1px solid var(--bd);
+    border-radius:6px; }
+  .d1-wrap:empty { display:none; }
+  main:has(#tab-d1.active) { max-width:none; padding-left:12px; padding-right:12px; }
+  #d1-result { max-width:860px; margin-left:auto; margin-right:auto; }
+  main:has(#tab-d1.active) > :is(.index-box, .tab-groups, .tabs) { box-sizing:border-box;
+    max-width:860px; margin-left:auto; margin-right:auto; }
+  #d1-result .card-head .mcap-go { margin-left:8px; vertical-align:middle; }
+  .d1-active { margin-top:6px; font-size:.85em; }
+  .d1-active:empty { display:none; }
+  .d1-chip { display:inline-block; padding:1px 8px; margin:2px 4px 0 0; border:1px solid var(--bd); border-radius:10px; cursor:pointer; }
+  .d1-chip:hover { border-color:#4a7bd8; }
+  .d1-chip.bad { border-color:#d33; color:#d33; }
+  .d1-help { font-size:.85em; opacity:.75; cursor:help; border-bottom:1px dotted currentColor; }
+  .d1-saved { display:inline-flex; flex-wrap:wrap; align-items:center; gap:6px; }
+  .d1-saved input { width:140px; }
+  table.d1-grid { border-collapse:separate; border-spacing:0; font-size:12px; }
+  table.d1-grid th, table.d1-grid td { padding:4px 8px; white-space:nowrap;
+    border-right:1px solid var(--bd); border-bottom:1px solid var(--bd); }
+  table.d1-grid td { max-width:220px; overflow:hidden; text-overflow:ellipsis; }
+  table.d1-grid th { position:sticky; top:0; z-index:2; background:#f6f8fa;
+    vertical-align:top; text-align:left; font-weight:600; }
+  table.d1-grid .num { text-align:right; }
+  table.d1-grid .c0 { position:sticky; left:0; z-index:1; background:var(--bg); font-weight:600;
+    box-shadow:inset -1px 0 0 var(--bd); }
+  table.d1-grid th.c0 { z-index:3; background:#f6f8fa; }
+  table.d1-grid .d1-sort { cursor:pointer; user-select:none; margin-bottom:3px; }
+  table.d1-grid .d1-flt { width:100%; min-width:64px; box-sizing:border-box; font-size:11px;
+    padding:2px 4px; font-weight:400; }
+  table.d1-grid .d1-flt.bad { border-color:#d1242f; background:#fff0f0; }
+  table.d1-grid tbody tr { cursor:pointer; }
+  table.d1-grid tbody tr:hover td { background:#f0f4ff; }
+  table.d1-grid tbody tr.sel td { background:#dce6ff; }
   @media (max-width:600px) {
     table.mcap-table { font-size:12px; }
     table.mcap-table th, table.mcap-table td { padding:5px 4px; }
@@ -749,6 +782,10 @@
     .fav-folder .fav-folder-ren:hover { background:#18243c; }
     table.holdings tbody tr.macro-sel:hover { background:#1e2c48; }
     table.holdings tbody tr:hover { background:#1a212b; }
+    table.d1-grid th, table.d1-grid th.c0 { background:#161c24; }
+    table.d1-grid tbody tr:hover td { background:#1a212b; }
+    table.d1-grid tbody tr.sel td { background:#1e2c48; }
+    table.d1-grid .d1-flt.bad { background:#3a1d22; }
 
     /* 위험(삭제) 호버 */
     .cmp-remove:hover, #favDeleteBtn:hover, .fav-folder .fav-folder-del:hover,
@@ -950,7 +987,7 @@
     <button class="group-btn active" data-group="analysis">종목 분석</button>
     <button class="group-btn" data-group="market">시장 지표</button>
     <button class="group-btn" data-group="macro">거시 경제</button>
-    <button class="group-btn" data-group="tools">계산기</button>
+    <button class="group-btn" data-group="tools">도구·데이터</button>
   </div>
 
   <div class="tabs">
@@ -975,6 +1012,7 @@
       <button class="tab-btn" data-tab="macrodoc">자료실</button>
     </div>
     <div class="tab-group" data-group="tools">
+      <button class="tab-btn" data-tab="d1">종목 DB</button>
       <button class="tab-btn" data-tab="compound">복리계산기</button>
     </div>
   </div>
@@ -1138,6 +1176,27 @@
       <div id="mcap-chart"></div>
       <div id="mcap-heat"></div>
     </fieldset>
+  </div>
+
+  <div class="tab-panel" id="tab-d1">
+    <fieldset>
+      <legend>S&amp;P 500 종목 DB</legend>
+      <div class="row">
+        <button id="d1ReloadBtn" type="button">새로고침</button>
+        <button id="d1ResetBtn" type="button">필터 초기화</button>
+        <button id="d1LeftBtn" type="button" title="표의 맨 왼쪽으로 이동">⏮ 맨 왼쪽</button>
+        <span id="d1-saved" class="d1-saved" style="display:none">
+          <select id="d1SavedSel"><option value="">저장된 필터</option></select>
+          <input id="d1SaveName" type="text" maxlength="40" placeholder="필터 이름">
+          <button id="d1SaveBtn" type="button">필터 저장</button>
+          <button id="d1DelBtn" type="button">삭제</button>
+        </span>
+        <span class="d1-help" tabindex="0" title="숫자 열:  >10  >=10  <5  <=5  =3  (기호 없으면 >=)&#10;범위:  5~20  (양끝 포함)&#10;문자 열:  포함 검색, 쉼표로 여러 개(OR)  예) tech,health&#10;%·$·쉼표·공백은 무시됨 · 여러 열 조건은 AND&#10;열 제목 클릭: 정렬 전환">ⓘ 필터 문법</span>
+      </div>
+      <div id="d1-active" class="d1-active"></div>
+    </fieldset>
+    <div id="d1-grid" class="d1-wrap"></div>
+    <div id="d1-result"></div>
   </div>
 
   <div class="tab-panel" id="tab-earncal">
@@ -11514,6 +11573,7 @@ def _update_fav_login_ui():
     _update_fav_add_btn()
     _update_ai_admin_ui()
     _update_login_tabs()
+    _d1_update_saved_ui()
     asyncio.ensure_future(refresh_guru_favorites())
 
 
@@ -11586,6 +11646,8 @@ def _apply_fav_prefs(data):
     prefs = (data or {}).get("prefs") if isinstance(data, dict) else None
     prefs = prefs if isinstance(prefs, dict) else {}
     _EARNCAL_STATE["folder"] = prefs.get("earncal_folder") or ""
+    flts = (data or {}).get("d1_filters") if isinstance(data, dict) else None
+    _D1_SAVED["list"] = flts if isinstance(flts, list) else []
     _apply_fav_trends(data)
 
 
@@ -13178,6 +13240,480 @@ def on_group(event):
         target.click()
 
 
+# ===================== 종목 데이터 (워커 /stocks → D1) =====================
+
+_D1_STATE = {"rows": [], "ops": {}, "flt": {}, "sort": ("market_cap", -1),
+             "sel": None, "loaded": False}
+# (섹션, [(라벨, 키, 형식)]) — 형식: usd($M) / pct / pctc(색상) / int / px / ratio / text
+_D1_SECTIONS = [
+    ("1. 기본 식별 및 기업 규모", [
+        ("거래소", "exchange", "text"), ("섹터", "sector", "text"),
+        ("산업", "industry", "text"), ("시가총액 ($M)", "market_cap", "usd")]),
+    ("2. 실적 및 성장성", [
+        ("매출 추정치 FY0 ($M)", "rev_est_0y", "usd"),
+        ("매출 추정치 FY+1 ($M)", "rev_est_1y", "usd"),
+        ("매출 증감률 FY0", "rev_growth_0y", "pctc"),
+        ("매출 증감률 FY+1", "rev_growth_1y", "pctc"),
+        ("EPS 증감률 FY0", "eps_growth_0y", "pctc"),
+        ("EPS 증감률 FY+1", "eps_growth_1y", "pctc")]),
+    ("3. 수익성 (Quality)", [
+        ("ROE (TTM)", "roe_ttm", "pct"), ("추정 ROE FY0", "roe_est_0y", "pct"),
+        ("추정 ROE FY+1", "roe_est_1y", "pct")]),
+    ("4. 추정치 변동 (Revision)", [
+        ("EPS 추정치 FY0", "eps_est_0y", "px"), ("EPS 추정치 FY+1", "eps_est_1y", "px"),
+        ("EPS 1M 변동률", "eps_rev_1m", "pctc"), ("EPS 3M 변동률", "eps_rev_3m", "pctc"),
+        ("30일 상향 / 하향", "_updown", "text")]),
+    ("5. 밸류에이션", [
+        ("Forward PER", "forward_pe", "ratio"), ("Trailing PBR", "pbr", "ratio")]),
+    ("6. 주가 및 가격 위치", [
+        ("현재가", "price", "px"), ("52주 최고가", "high_52w", "px"),
+        ("52주 최저가", "low_52w", "px"), ("52주 최고가 대비", "chg_from_high", "pctc"),
+        ("52주 최저가 대비", "chg_from_low", "pctc"), ("1개월 등락률", "chg_1m", "pctc")]),
+    ("7. 거래량 및 수급", [
+        ("현재 거래량", "volume", "int"), ("1년 평균 거래량", "avg_vol_1y", "int"),
+        ("1주 평균 거래량", "avg_vol_1w", "int"), ("거래량 변화율", "vol_chg", "pctc"),
+        ("기관 보유 비율", "inst_pct", "pct"), ("내부자 순매수 6M (주)", "insider_net_6m", "int"),
+        ("공매도 비율", "short_pct", "pct")]),
+    ("8. 주주환원", [("배당수익률", "div_yield", "pct")]),
+]
+
+
+def _d1_fmt(v, kind):
+    if v is None or v == "":
+        return "-"
+    if kind == "text" or not isinstance(v, (int, float)):
+        return _esc(v)
+    if kind in ("usd", "int"):
+        return "{:,.0f}".format(v)
+    if kind == "px":
+        return "${:,.2f}".format(v)
+    if kind == "ratio":
+        return "{:,.2f}x".format(v)
+    if kind == "pct":
+        return "{:,.2f}%".format(v)
+    cls = "up" if v > 0 else ("down" if v < 0 else "")
+    return '<span class="%s">%+.2f%%</span>' % (cls, v)
+
+
+def _d1_kv(label, val_html):
+    return ('<div class="kv"><span class="k">%s</span><span class="v">%s</span></div>'
+            % (_esc(label), val_html))
+
+
+def _render_d1(payload):
+    s = dict(payload.get("stock") or {})
+    s["_updown"] = "%s / %s" % (
+        s.get("eps_up_30d") if s.get("eps_up_30d") is not None else "-",
+        s.get("eps_down_30d") if s.get("eps_down_30d") is not None else "-")
+    secs = []
+    for title, rows in _D1_SECTIONS:
+        kvs = "".join(_d1_kv(lb, _d1_fmt(s.get(key), kind)) for lb, key, kind in rows)
+        secs.append('<div class="sec"><h3>%s</h3><div class="grid">%s</div></div>'
+                    % (_esc(title), kvs))
+    hist = payload.get("op_income")
+    hkv = [] if hist is not None else ['<span class="hint">불러오는 중...</span>']
+    prev = None
+    for h in hist or []:
+        cur = h.get("operating_income")
+        g = ((cur / prev - 1) * 100
+             if isinstance(cur, (int, float)) and isinstance(prev, (int, float)) and prev
+             else None)
+        hkv.append(_d1_kv("FY%s" % h.get("fiscal_year"),
+                          "%s <small>(%s)</small>" % (_d1_fmt(cur, "usd"),
+                                                      _d1_fmt(g, "pctc"))))
+        prev = cur
+    secs.insert(2, '<div class="sec"><h3>영업이익 히스토리 ($M / YoY)</h3>'
+                   '<div class="grid">%s</div></div>' % ("".join(hkv) or "-"))
+    document.querySelector("#d1-result").innerHTML = (
+        '<div class="card"><div class="card-head"><span class="name">%s</span>'
+        '<span class="sym">%s</span>'
+        '<button type="button" class="mcap-go" data-go="%s">검색</button>'
+        '<div class="price">%s · 기준일 %s · FY0 = %s</div>'
+        '</div>%s</div>') % (
+        _esc(s.get("name") or ""), _esc(s.get("symbol") or ""), _esc(_d1_tv_symbol(s)),
+        _d1_fmt(s.get("price"), "px"), _esc(s.get("updated_at") or "-"),
+        _esc(s.get("fy0") or "-"), "".join(secs))
+
+
+_D1_TV_EXCH = {"NASDAQ": "NASDAQ", "NYSE": "NYSE", "NYSE American": "AMEX",
+               "NYSE Arca": "AMEX", "Cboe": "CBOE"}
+
+
+def _d1_tv_symbol(s):
+    sym = (s.get("symbol") or "").replace("-", ".")
+    ex = _D1_TV_EXCH.get(s.get("exchange") or "")
+    return "%s:%s" % (ex, sym) if ex else sym
+
+
+@when("click", "#d1-result")
+def on_d1_result_click(event):
+    go = event.target.closest("button[data-go]")
+    if go is None:
+        return
+    document.querySelector("#ticker").value = go.getAttribute("data-go")
+    document.querySelector('.tab-btn[data-tab="stock"]').click()
+    document.querySelector("#lookupBtn").click()
+
+
+def _d1_columns():
+    cols = [("symbol", "티커", "text"), ("name", "종목명", "text")]
+    for _title, rows in _D1_SECTIONS:
+        for label, key, kind in rows:
+            if key == "_updown":
+                cols += [("eps_up_30d", "30일 상향", "int"), ("eps_down_30d", "30일 하향", "int")]
+            else:
+                cols.append((key, label, kind))
+            if key == "eps_growth_1y":
+                cols += [("op_last", "최근 영업이익 ($M)", "usd"), ("op_yoy", "영업이익 YoY", "pctc")]
+    return cols
+
+
+_D1_COLS = _d1_columns()
+_D1_KIND = {k: kind for k, _l, kind in _D1_COLS}
+_D1_NUM_RE = re.compile(r"^(>=|<=|>|<|=)?(-?\d+(?:\.\d+)?)$")
+_D1_RANGE_RE = re.compile(r"^(-?\d+(?:\.\d+)?)~(-?\d+(?:\.\d+)?)$")
+_D1_OPS = {">=": lambda v, x: v >= x, "<=": lambda v, x: v <= x,
+           ">": lambda v, x: v > x, "<": lambda v, x: v < x, "=": lambda v, x: v == x}
+
+
+def _d1_pred(kind, expr):
+    """None = 조건 없음, False = 잘못된 식, 그 외 판정 함수."""
+    e = (expr or "").strip()
+    if not e:
+        return None
+    if kind == "text":
+        terms = [t.strip().lower() for t in e.split(",") if t.strip()]
+        return lambda v: v is not None and any(t in str(v).lower() for t in terms)
+    e = e.replace(" ", "").replace(",", "").replace("%", "").replace("$", "")
+    m = _D1_RANGE_RE.match(e)
+    if m:
+        lo, hi = sorted((float(m.group(1)), float(m.group(2))))
+        return lambda v: isinstance(v, (int, float)) and lo <= v <= hi
+    m = _D1_NUM_RE.match(e)
+    if not m:
+        return False
+    fn, x = _D1_OPS[m.group(1) or ">="], float(m.group(2))
+    return lambda v: isinstance(v, (int, float)) and fn(v, x)
+
+
+def _d1_build_grid():
+    key, d = _D1_STATE["sort"]
+    ths = []
+    for i, (k, label, kind) in enumerate(_D1_COLS):
+        arrow = (" ▲" if d > 0 else " ▼") if k == key else ""
+        cls = ("c0 " if i == 0 else "") + ("" if kind == "text" else "num")
+        ths.append(
+            '<th class="%s" data-key="%s"><div class="d1-sort">%s%s</div>'
+            '<input type="text" class="d1-flt" data-key="%s" value="%s" placeholder="%s"></th>'
+            % (cls, k, _esc(label), arrow, k, _esc(_D1_STATE["flt"].get(k, "")),
+               "포함" if kind == "text" else "&gt;0"))
+    document.querySelector("#d1-grid").innerHTML = (
+        '<table class="d1-grid"><thead><tr>%s</tr></thead><tbody></tbody></table>'
+        % "".join(ths))
+    _d1_render_body()
+
+
+def _d1_render_body():
+    preds, bad = [], set()
+    for k, _l, kind in _D1_COLS:
+        p = _d1_pred(kind, _D1_STATE["flt"].get(k))
+        if p is False:
+            bad.add(k)
+        elif p:
+            preds.append((k, p))
+    rows = [r for r in _D1_STATE["rows"] if all(p(r.get(k)) for k, p in preds)]
+    key, d = _D1_STATE["sort"]
+    has = [r for r in rows if r.get(key) is not None]
+    has.sort(key=lambda r: str(r[key]).lower() if _D1_KIND.get(key) == "text" else r[key],
+             reverse=d < 0)
+    rows = has + [r for r in rows if r.get(key) is None]
+    sel = _D1_STATE["sel"]
+    out = []
+    for r in rows:
+        sym = r.get("symbol") or ""
+        tds = "".join(
+            '<td class="%s">%s</td>' % ("c0" if i == 0 else ("" if kind == "text" else "num"),
+                                        _d1_fmt(r.get(k), kind))
+            for i, (k, _l, kind) in enumerate(_D1_COLS))
+        out.append('<tr data-sym="%s"%s>%s</tr>'
+                   % (_esc(sym), ' class="sel"' if sym == sel else "", tds))
+    tbody = document.querySelector("#d1-grid tbody")
+    if tbody is not None:
+        tbody.innerHTML = "".join(out) or (
+            '<tr><td colspan="%d" class="hint">조건에 맞는 종목이 없습니다.</td></tr>'
+            % len(_D1_COLS))
+    inputs = document.querySelectorAll("#d1-grid .d1-flt")
+    for i in range(inputs.length):
+        el = inputs.item(i)
+        el.classList.toggle("bad", el.getAttribute("data-key") in bad)
+    count = document.querySelector("#d1-count")
+    if count is not None:
+        count.textContent = "%d / %d 종목" % (len(rows), len(_D1_STATE["rows"]))
+    _d1_render_active(bad)
+
+
+def _d1_render_active(bad=()):
+    chips = []
+    for k, label, _kind in _D1_COLS:
+        v = (_D1_STATE["flt"].get(k) or "").strip()
+        if v:
+            chips.append('<span class="d1-chip%s" data-key="%s" title="클릭하면 해당 필터로 이동">%s: %s</span>'
+                         % (" bad" if k in bad else "", k, _esc(label), _esc(v)))
+    key, d = _D1_STATE["sort"]
+    label = next((l for k, l, _x in _D1_COLS if k == key), key)
+    document.querySelector("#d1-active").innerHTML = (
+        "적용 필터: %s &nbsp;·&nbsp; 정렬: %s %s"
+        % ("".join(chips) or "없음", _esc(label), "▲" if d > 0 else "▼"))
+
+
+@when("click", "#d1LeftBtn")
+def on_d1_left(event):
+    document.querySelector("#d1-grid").scrollLeft = 0
+
+
+@when("click", "#d1-active")
+def on_d1_active_click(event):
+    chip = event.target.closest(".d1-chip[data-key]")
+    if chip is None:
+        return
+    el = document.querySelector('#d1-grid .d1-flt[data-key="%s"]' % chip.getAttribute("data-key"))
+    if el is None:
+        return
+    wrap = document.querySelector("#d1-grid")
+    th = el.closest("th")
+    wrap.scrollTop = 0
+    wrap.scrollLeft = max(0, th.offsetLeft - (wrap.clientWidth - th.offsetWidth) / 2)
+    el.focus()
+    el.select()
+
+
+_D1_LS_KEY = "d1_all_cache_v2"
+
+
+def _d1_apply_payload(payload):
+    rows = payload.get("rows") or []
+    if "op_income" in payload:
+        # 구버전 Worker 응답 호환: 히스토리로 최근 영업이익·YoY 계산
+        ops = {}
+        for h in payload.get("op_income") or []:
+            ops.setdefault(h.get("symbol"), []).append(h)
+        for r in rows:
+            hist = ops.get(r.get("symbol")) or []
+            last = hist[-1].get("operating_income") if hist else None
+            prev = hist[-2].get("operating_income") if len(hist) > 1 else None
+            r["op_last"] = last
+            r["op_yoy"] = ((last / prev - 1) * 100
+                           if isinstance(last, (int, float)) and isinstance(prev, (int, float))
+                           and prev > 0 else None)
+        _D1_STATE["ops"] = ops
+    else:
+        _D1_STATE["ops"] = {}
+    _D1_STATE.update(rows=rows, loaded=True)
+    upd = max((r.get("updated_at") or "" for r in rows), default="")
+    _apply_status("#d1-status", ("기준일 %s" % upd) if upd else "")
+    _d1_build_grid()
+
+
+async def _load_d1_all():
+    cached = None
+    try:
+        cached = window.localStorage.getItem(_D1_LS_KEY)
+    except Exception:
+        pass
+    if cached and not _D1_STATE["loaded"]:
+        try:
+            _d1_apply_payload(json.loads(cached))
+        except Exception:
+            cached = None
+    if not _D1_STATE["loaded"]:
+        _apply_status("#d1-status", "불러오는 중...")
+    try:
+        payload = await _mcap_get("/stocks?all=1")
+    except InvestingApiError as exc:
+        _apply_status("#d1-status", "조회 실패: %s" % exc)
+        return
+    text = json.dumps(payload, separators=(",", ":"))
+    if text == cached:
+        return
+    _d1_apply_payload(payload)
+    try:
+        window.localStorage.setItem(_D1_LS_KEY, text)
+    except Exception:
+        pass
+
+
+@when("click", "#d1ReloadBtn")
+def on_d1_reload(event):
+    asyncio.ensure_future(_load_d1_all())
+
+
+@when("click", "#d1ResetBtn")
+def on_d1_reset(event):
+    _D1_STATE["flt"] = {}
+    document.querySelector("#d1SavedSel").value = ""
+    document.querySelector("#d1SaveName").value = ""
+    document.querySelector("#d1-grid").scrollLeft = 0
+    if _D1_STATE["loaded"]:
+        _d1_build_grid()
+    else:
+        _d1_render_active()
+
+
+@when("input", "#d1-grid")
+def on_d1_filter(event):
+    el = event.target
+    if not el.classList.contains("d1-flt"):
+        return
+    _D1_STATE["flt"][el.getAttribute("data-key")] = el.value
+    _D1_DEBOUNCE["seq"] += 1
+    asyncio.ensure_future(_d1_render_later(_D1_DEBOUNCE["seq"]))
+
+
+_D1_DEBOUNCE = {"seq": 0}
+
+
+async def _d1_render_later(seq):
+    await asyncio.sleep(0.2)
+    if seq == _D1_DEBOUNCE["seq"]:
+        _d1_render_body()
+
+
+@when("click", "#d1-grid")
+def on_d1_grid_click(event):
+    t = event.target
+    head = t.closest(".d1-sort")
+    if head is not None:
+        key = head.parentElement.getAttribute("data-key")
+        cur, d = _D1_STATE["sort"]
+        if key == cur:
+            d = -d
+        else:
+            d = 1 if _D1_KIND.get(key) == "text" else -1
+        _D1_STATE["sort"] = (key, d)
+        _d1_build_grid()
+        return
+    tr = t.closest("tbody tr[data-sym]")
+    if tr is None:
+        return
+    sym = tr.getAttribute("data-sym")
+    row = next((r for r in _D1_STATE["rows"] if r.get("symbol") == sym), None)
+    if row is None:
+        return
+    _D1_STATE["sel"] = sym
+    prev = document.querySelector("#d1-grid tbody tr.sel")
+    if prev is not None:
+        prev.classList.remove("sel")
+    tr.classList.add("sel")
+    _render_d1({"stock": row, "op_income": _D1_STATE["ops"].get(sym)})
+    document.querySelector("#d1-result").scrollIntoView()
+    if sym not in _D1_STATE["ops"]:
+        asyncio.ensure_future(_d1_load_ops(sym))
+
+
+async def _d1_load_ops(sym):
+    try:
+        payload = await _mcap_get("/stocks?symbol=%s" % sym)
+        ops = payload.get("op_income") or []
+    except InvestingApiError:
+        ops = []
+    _D1_STATE["ops"][sym] = ops
+    row = next((r for r in _D1_STATE["rows"] if r.get("symbol") == sym), None)
+    if _D1_STATE["sel"] == sym and row is not None:
+        _render_d1({"stock": row, "op_income": ops})
+
+
+_D1_SAVED = {"list": []}
+
+
+def _d1_update_saved_ui():
+    box = document.querySelector("#d1-saved")
+    if box is None:
+        return
+    if not _fav_logged_in():
+        _D1_SAVED["list"] = []
+    box.style.display = "" if _fav_logged_in() else "none"
+    sel = document.querySelector("#d1SavedSel")
+    cur = sel.value
+    names = [f.get("name") for f in _D1_SAVED["list"] if f.get("name")]
+    sel.innerHTML = '<option value="">저장된 필터</option>' + "".join(
+        '<option value="%s"%s>%s</option>' % (_esc(n), " selected" if n == cur else "", _esc(n))
+        for n in names)
+
+
+def _d1_apply_saved(name):
+    f = next((x for x in _D1_SAVED["list"] if x.get("name") == name), None)
+    if f is None:
+        return
+    _D1_STATE["flt"] = {k: v for k, v in (f.get("flt") or {}).items() if k in _D1_KIND}
+    sort = f.get("sort")
+    if isinstance(sort, list) and len(sort) == 2 and sort[0] in _D1_KIND:
+        _D1_STATE["sort"] = (sort[0], 1 if sort[1] == 1 else -1)
+    document.querySelector("#d1SaveName").value = name
+    document.querySelector("#d1-grid").scrollLeft = 0
+    if _D1_STATE["loaded"]:
+        _d1_build_grid()
+    else:
+        _d1_render_active()
+
+
+async def _d1_saved_op(op, body):
+    acct, key = _fav_creds()
+    if not (acct and key):
+        return False
+    data, err, _ = await _fav_api("POST", acct, key, extra_query="&d1f_op=" + op,
+                                  body=json.dumps(body))
+    if err:
+        window.alert("필터 %s 실패: %s" % ("저장" if op == "set" else "삭제", err))
+        return False
+    _D1_SAVED["list"] = data.get("d1_filters") or []
+    _d1_update_saved_ui()
+    return True
+
+
+async def _d1_save_current():
+    name = document.querySelector("#d1SaveName").value.strip()
+    if not name:
+        window.alert("필터 이름을 입력하세요.")
+        return
+    flt = {k: v.strip() for k, v in _D1_STATE["flt"].items() if v and v.strip()}
+    if not flt:
+        window.alert("적용된 필터가 없습니다.")
+        return
+    if any(f.get("name") == name for f in _D1_SAVED["list"]) and not window.confirm(
+            "'%s' 필터를 현재 조건으로 덮어쓸까요?" % name):
+        return
+    key, d = _D1_STATE["sort"]
+    if await _d1_saved_op("set", {"name": name, "flt": flt, "sort": [key, d]}):
+        document.querySelector("#d1SavedSel").value = name
+
+
+@when("change", "#d1SavedSel")
+def on_d1_saved_select(event):
+    if event.target.value:
+        _d1_apply_saved(event.target.value)
+
+
+@when("click", "#d1SaveBtn")
+def on_d1_save(event):
+    asyncio.ensure_future(_d1_save_current())
+
+
+@when("keydown", "#d1SaveName")
+def on_d1_save_name_key(event):
+    if _is_enter(event):
+        asyncio.ensure_future(_d1_save_current())
+
+
+@when("click", "#d1DelBtn")
+def on_d1_saved_delete(event):
+    name = document.querySelector("#d1SavedSel").value
+    if not name:
+        window.alert("삭제할 필터를 선택하세요.")
+        return
+    if window.confirm("'%s' 필터를 삭제할까요?" % name):
+        asyncio.ensure_future(_d1_saved_op("del", {"name": name}))
+
+
 # ===================== 미국 시가총액 순위 (워커 /mcap-top) =====================
 
 _MCAP_TOP_N = 20
@@ -13749,6 +14285,8 @@ def on_tab(event):
         asyncio.ensure_future(_load_mcap_top())
     if name == "mcap":
         asyncio.ensure_future(_load_mcap_heat())
+    if name == "d1" and not _D1_STATE["loaded"]:
+        asyncio.ensure_future(_load_d1_all())
 
 
 @when("mousemove", "#idxchart-result")
