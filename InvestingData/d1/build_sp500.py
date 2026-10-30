@@ -7,8 +7,8 @@
        python build_sp500.py --symbols AAPL MSFT GOOGL
 적재:  npx wrangler d1 execute investing_stocks --remote --file=sp500_data.sql
        또는 python build_sp500.py --upload   (수집 후 바로 D1 적재)
-       wrangler로 직접 적재할 땐 최초 1회:
-       npx wrangler d1 execute investing_stocks --remote --command "ALTER TABLE stocks ADD COLUMN indices TEXT"
+       wrangler로 직접 적재할 땐 최초 1회 ADDED_COLS 열을 ALTER TABLE 로 추가해야 함
+코스피 종목(currency='KRW')은 build_kospi.py 가 관리하며 여기서는 건드리지 않는다.
 """
 import argparse
 import io
@@ -17,6 +17,7 @@ import math
 import os
 import re
 import shutil
+import sqlite3
 import ssl
 import subprocess
 import sys
@@ -37,6 +38,8 @@ EXCHANGES = {"NMS": "NASDAQ", "NGM": "NASDAQ", "NCM": "NASDAQ", "NYQ": "NYSE",
              "ASE": "NYSE American", "PCX": "NYSE Arca", "BTS": "Cboe"}
 # 한 회사가 두 클래스로 편입된 경우 제외할 쪽 (GOOGL·FOXA·NWSA만 유지)
 SECONDARY_CLASSES = {"GOOG", "FOX", "NWS"}
+# 워커 /stocks?all=1 캐시 버전이 MAX(updated_at)이라 같은 날 재적재도 구분되도록 시각 포함
+RUN_AT = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 # 값이 없는 항목의 404 등은 None 으로 처리하므로 yfinance 자체 오류 로그는 숨김
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
@@ -69,17 +72,20 @@ def _ticker(symbol):
     return yf.Ticker(symbol, session=YF_SESSION) if YF_SESSION else yf.Ticker(symbol)
 
 STOCK_COLS = [
-    "symbol", "name", "exchange", "indices", "sector", "industry", "market_cap", "fy0",
+    "symbol", "name", "exchange", "indices", "currency", "sector", "industry", "market_cap", "fy0",
     "rev_est_0y", "rev_est_1y", "rev_growth_0y", "rev_growth_1y",
     "eps_growth_0y", "eps_growth_1y", "roe_ttm", "roe_est_0y", "roe_est_1y",
     "eps_est_0y", "eps_est_1y", "eps_rev_1m", "eps_rev_3m", "eps_up_30d", "eps_down_30d",
     "forward_pe", "pbr", "price", "high_52w", "low_52w",
     "chg_from_high", "chg_from_low", "chg_1m",
     "volume", "avg_vol_1y", "avg_vol_1w", "vol_chg",
-    "inst_pct", "insider_net_6m", "short_pct", "div_yield", "op_last", "op_yoy", "updated_at",
+    "inst_pct", "frgn_net_1m", "inst_net_1m", "frgn_net_3m", "inst_net_3m",
+    "insider_net_6m", "short_pct", "div_yield", "op_last", "op_yoy", "updated_at",
 ]
-COL_TYPES = {c: "TEXT" for c in ("name", "exchange", "indices", "sector", "industry",
-                                   "updated_at")}
+# 최초 스키마 이후 추가된 열 (기존 D1 테이블에 ALTER TABLE 로 추가)
+ADDED_COLS = ["indices", "currency", "frgn_net_1m", "inst_net_1m", "frgn_net_3m", "inst_net_3m"]
+COL_TYPES = {c: "TEXT" for c in ("name", "exchange", "indices", "currency", "sector",
+                                   "industry", "updated_at")}
 COL_TYPES.update({c: "INTEGER" for c in ("fy0", "eps_up_30d", "eps_down_30d", "volume",
                                           "avg_vol_1y", "avg_vol_1w", "insider_net_6m")})
 
@@ -186,6 +192,7 @@ def collect(symbol):
         "symbol": symbol,
         "name": info.get("longName") or info.get("shortName"),
         "exchange": EXCHANGES.get(info.get("exchange"), info.get("exchange")),
+        "currency": "USD",
         "sector": info.get("sector"),
         "industry": info.get("industry"),
         "market_cap": num(info.get("marketCap"), 1e-6),
@@ -221,7 +228,7 @@ def collect(symbol):
         "insider_net_6m": insider,
         "short_pct": num(info.get("shortPercentOfFloat"), 100),
         "div_yield": num(info.get("trailingAnnualDividendYield"), 100),
-        "updated_at": date.today().isoformat(),
+        "updated_at": RUN_AT,
     }
 
     ops = []
@@ -277,12 +284,12 @@ def fetch_with_retry(symbol, tries=5):
     raise err
 
 
-def main():
+def parse_args(default_out, workers=4):
     ap = argparse.ArgumentParser()
     ap.add_argument("--symbols", nargs="*")
     ap.add_argument("--limit", type=int)
-    ap.add_argument("--workers", type=int, default=4)
-    ap.add_argument("--out", default=str(HERE / "sp500_data.sql"))
+    ap.add_argument("--workers", type=int, default=workers)
+    ap.add_argument("--out", default=str(HERE / default_out))
     ap.add_argument("--upload", action="store_true", help="저장 후 wrangler로 원격 D1에 적재")
     ap.add_argument("--log", help="콘솔 출력을 이 파일에도 덧붙임")
     args = ap.parse_args()
@@ -290,19 +297,11 @@ def main():
         logf = open(args.log, "a", encoding="utf-8")
         sys.stdout = _Tee(sys.__stdout__, logf)
         sys.stderr = _Tee(sys.__stderr__, logf)
+    return args
 
-    members, n_sp, n_r1 = index_members()
-    symbols = [s.upper() for s in args.symbols] if args.symbols else sorted(members)
-    if args.limit:
-        symbols = symbols[: args.limit]
-    print("대상 %d종목 (S&P500 %d, R1000 %d, 합집합 %d)" % (len(symbols), n_sp, n_r1, len(members)))
 
-    def build(s, tries=5):
-        row, ops = fetch_with_retry(s, tries)
-        row["indices"] = members.get(s)
-        return to_sql(row, ops)
-
-    schema = "\n".join(
+def schema_sql():
+    return "\n".join(
         ["CREATE TABLE IF NOT EXISTS stocks (",
          "  symbol TEXT PRIMARY KEY,",
          ",\n".join("  %s %s" % (c, COL_TYPES.get(c, "REAL")) for c in STOCK_COLS[1:]),
@@ -311,17 +310,13 @@ def main():
          "  symbol TEXT NOT NULL, fiscal_year INTEGER NOT NULL, operating_income REAL,",
          "  PRIMARY KEY (symbol, fiscal_year)",
          ");"])
-    dup = ", ".join(sql_val(s) for s in sorted(SECONDARY_CLASSES))
-    schema += "\nDELETE FROM stocks WHERE symbol IN (%s);" % dup
-    schema += "\nDELETE FROM op_income_history WHERE symbol IN (%s);" % dup
-    if not args.symbols and not args.limit and n_sp >= 450 and n_r1 >= 900:
-        # 전체 수집일 때만 지수에서 빠진 종목 정리 (목록 파싱 이상 시 대량 삭제 방지)
-        keep = ", ".join(sql_val(s) for s in symbols)
-        schema += "\nDELETE FROM stocks WHERE symbol NOT IN (%s);" % keep
-        schema += "\nDELETE FROM op_income_history WHERE symbol NOT IN (%s);" % keep
+
+
+def run_all(symbols, build, workers, retry_wait=30):
+    """build(심볼, tries) -> SQL 문자열을 병렬 실행하고 실패분은 단일 작업으로 재시도."""
     results, failed = {}, []
     n, t0 = len(symbols), time.time()
-    with ThreadPoolExecutor(max_workers=args.workers) as ex:
+    with ThreadPoolExecutor(max_workers=workers) as ex:
         futs = {ex.submit(build, s): s for s in symbols}
         for i, f in enumerate(as_completed(futs), 1):
             s = futs[f]
@@ -337,7 +332,7 @@ def main():
 
     if failed:
         print("실패 %d종목 재시도 (단일 작업)" % len(failed))
-        time.sleep(30)
+        time.sleep(retry_wait)
         retry, failed = failed, []
         for i, s in enumerate(retry, 1):
             try:
@@ -346,14 +341,50 @@ def main():
             except Exception as exc:
                 failed.append(s)
                 print("[재시도 %d/%d] %s 실패: %s" % (i, len(retry), s, exc), file=sys.stderr)
+    return results, failed
 
+
+def finish(args, schema, results, failed):
     body = "\n\n".join(results[s] for s in sorted(results))
     Path(args.out).write_text(schema.rstrip() + "\n\n" + body + "\n", encoding="utf-8")
     print("저장: %s (성공 %d, 실패 %d)" % (args.out, len(results), len(failed)))
     if failed:
         print("실패 종목:", " ".join(failed))
     if args.upload:
+        # D1은 SQL 오류를 D1_RESET_DO로만 알려주므로 로컬 SQLite로 먼저 검증
+        try:
+            sqlite3.connect(":memory:").executescript(Path(args.out).read_text(encoding="utf-8"))
+        except sqlite3.Error as exc:
+            print("SQL 검증 실패, 적재 중단: %s" % exc, file=sys.stderr)
+            sys.exit(1)
         sys.exit(upload(args.out))
+
+
+def main():
+    args = parse_args("sp500_data.sql")
+    members, n_sp, n_r1 = index_members()
+    symbols = [s.upper() for s in args.symbols] if args.symbols else sorted(members)
+    if args.limit:
+        symbols = symbols[: args.limit]
+    print("대상 %d종목 (S&P500 %d, R1000 %d, 합집합 %d)" % (len(symbols), n_sp, n_r1, len(members)))
+
+    def build(s, tries=5):
+        row, ops = fetch_with_retry(s, tries)
+        row["indices"] = members.get(s)
+        return to_sql(row, ops)
+
+    schema = schema_sql()
+    dup = ", ".join(sql_val(s) for s in sorted(SECONDARY_CLASSES))
+    schema += "\nDELETE FROM stocks WHERE symbol IN (%s);" % dup
+    schema += "\nDELETE FROM op_income_history WHERE symbol IN (%s);" % dup
+    if not args.symbols and not args.limit and n_sp >= 450 and n_r1 >= 900:
+        # 전체 수집일 때만 지수에서 빠진 미국 종목 정리 (목록 파싱 이상 시 대량 삭제 방지)
+        keep = ", ".join(sql_val(s) for s in symbols)
+        schema += ("\nDELETE FROM stocks WHERE COALESCE(currency, 'USD') = 'USD'"
+                   " AND symbol NOT IN (%s);" % keep)
+        schema += "\nDELETE FROM op_income_history WHERE symbol NOT IN (SELECT symbol FROM stocks);"
+    results, failed = run_all(symbols, build, args.workers)
+    finish(args, schema, results, failed)
 
 
 def upload(sql_path):
@@ -365,9 +396,11 @@ def upload(sql_path):
     # 회사망 SSL 검사 루트를 Node가 신뢰하도록
     env["NODE_OPTIONS"] = (env.get("NODE_OPTIONS", "") + " --use-system-ca").strip()
     base = [npx, "wrangler", "d1", "execute", "investing_stocks", "--remote", "--yes"]
-    # 기존 테이블에 indices 열 추가 (이미 있으면 duplicate column 오류 → 무시)
-    subprocess.run(base + ["--command=ALTER TABLE stocks ADD COLUMN indices TEXT"],
-                   cwd=str(HERE.parent), env=env, capture_output=True)
+    # 기존 테이블에 추가 열 생성 (이미 있으면 duplicate column 오류 → 무시)
+    for c in ADDED_COLS:
+        subprocess.run(base + ["--command=ALTER TABLE stocks ADD COLUMN %s %s"
+                               % (c, COL_TYPES.get(c, "REAL"))],
+                       cwd=str(HERE.parent), env=env, capture_output=True)
     cmd = base + ["--file=%s" % sql_path]
     print("적재:", " ".join(cmd[1:]))
     # wrangler 출력도 로그에 남도록 직접 중계

@@ -1183,13 +1183,13 @@
 
   <div class="tab-panel" id="tab-d1">
     <fieldset>
-      <legend>미국 종목 DB (S&amp;P 500 · 러셀 1000)</legend>
+      <legend>종목 DB (S&amp;P 500 · 러셀 1000 · 코스피)</legend>
       <div class="row">
         <span id="d1Mkt" class="fin-period">
-          <button type="button" data-mkt="all" class="on">전체</button>
-          <button type="button" data-mkt="sp">S&amp;P 500</button>
+          <button type="button" data-mkt="sp" class="on">S&amp;P 500</button>
           <button type="button" data-mkt="r1">러셀 1000</button>
           <button type="button" data-mkt="r1only" title="러셀 1000 중 S&amp;P 500이 아닌 종목">러셀 1000 전용</button>
+          <button type="button" data-mkt="kospi" title="코스피 보통주 ($M 열은 달러 환산, 주가·EPS는 원화)">코스피</button>
         </span>
         <button id="d1ReloadBtn" type="button">새로고침</button>
         <button id="d1ResetBtn" type="button">필터 초기화</button>
@@ -13252,13 +13252,18 @@ def on_group(event):
 # ===================== 종목 데이터 (워커 /stocks → D1) =====================
 
 _D1_STATE = {"rows": [], "ops": {}, "flt": {}, "sort": ("market_cap", -1),
-             "sel": None, "loaded": False, "mkt": "all"}
+             "sel": None, "loaded": False, "mkt": "sp"}
 _D1_MKTS = {
     "sp": ("S&P 500", lambda v: "S&P500" in v),
     "r1": ("러셀 1000", lambda v: "R1000" in v),
     "r1only": ("러셀 1000 전용", lambda v: "R1000" in v and "S&P500" not in v),
+    "kospi": ("코스피", lambda v: "KOSPI" in v),
 }
-# (섹션, [(라벨, 키, 형식)]) — 형식: usd($M) / pct / pctc(색상) / int / px / ratio / text
+# 코스피는 기관 보유 비율 대신 외국인/기관 순매수, 미국 시장은 그 반대
+_D1_NETS = {"frgn_net_1m", "inst_net_1m", "frgn_net_3m", "inst_net_3m"}
+_D1_HIDE = {"kospi": {"symbol", "sector", "short_pct", "inst_pct", "insider_net_6m",
+                       "_updown", "eps_up_30d", "eps_down_30d"}, "sp": _D1_NETS, "r1": _D1_NETS, "r1only": _D1_NETS}
+# (섹션, [(라벨, 키, 형식)]) — 형식: usd($M) / pct / pctc(색상) / int / px / ratio / eok(억원, 색상) / text
 _D1_SECTIONS = [
     ("1. 기본 식별 및 기업 규모", [
         ("지수", "indices", "text"),
@@ -13287,13 +13292,16 @@ _D1_SECTIONS = [
     ("7. 거래량 및 수급", [
         ("현재 거래량", "volume", "int"), ("1년 평균 거래량", "avg_vol_1y", "int"),
         ("1주 평균 거래량", "avg_vol_1w", "int"), ("거래량 변화율", "vol_chg", "pctc"),
-        ("기관 보유 비율", "inst_pct", "pct"), ("내부자 순매수 6M (주)", "insider_net_6m", "int"),
+        ("기관 보유 비율", "inst_pct", "pct"),
+        ("외국인 순매수 1M", "frgn_net_1m", "eok"), ("기관 순매수 1M", "inst_net_1m", "eok"),
+        ("외국인 순매수 3M", "frgn_net_3m", "eok"), ("기관 순매수 3M", "inst_net_3m", "eok"),
+        ("내부자 순매수 6M (주)", "insider_net_6m", "int"),
         ("공매도 비율", "short_pct", "pct")]),
     ("8. 주주환원", [("배당수익률", "div_yield", "pct")]),
 ]
 
 
-def _d1_fmt(v, kind):
+def _d1_fmt(v, kind, cur=None):
     if v is None or v == "":
         return "-"
     if kind == "text" or not isinstance(v, (int, float)):
@@ -13301,7 +13309,10 @@ def _d1_fmt(v, kind):
     if kind in ("usd", "int"):
         return "{:,.0f}".format(v)
     if kind == "px":
-        return "${:,.2f}".format(v)
+        return "₩{:,.0f}".format(v) if cur == "KRW" else "${:,.2f}".format(v)
+    if kind == "eok":
+        cls = "up" if v > 0 else ("down" if v < 0 else "")
+        return '<span class="%s">%s억</span>' % (cls, "{:+,.0f}".format(v))
     if kind == "ratio":
         return "{:,.2f}x".format(v)
     if kind == "pct":
@@ -13320,9 +13331,12 @@ def _render_d1(payload):
     s["_updown"] = "%s / %s" % (
         s.get("eps_up_30d") if s.get("eps_up_30d") is not None else "-",
         s.get("eps_down_30d") if s.get("eps_down_30d") is not None else "-")
+    ccy = s.get("currency")
+    hide = _D1_HIDE["kospi"] if ccy == "KRW" else _D1_NETS
     secs = []
     for title, rows in _D1_SECTIONS:
-        kvs = "".join(_d1_kv(lb, _d1_fmt(s.get(key), kind)) for lb, key, kind in rows)
+        kvs = "".join(_d1_kv(lb, _d1_fmt(s.get(key), kind, ccy))
+                      for lb, key, kind in rows if key not in hide)
         secs.append('<div class="sec"><h3>%s</h3><div class="grid">%s</div></div>'
                     % (_esc(title), kvs))
     hist = payload.get("op_income")
@@ -13346,12 +13360,12 @@ def _render_d1(payload):
         '<div class="price">%s · 기준일 %s · FY0 = %s</div>'
         '</div>%s</div>') % (
         _esc(s.get("name") or ""), _esc(s.get("symbol") or ""), _esc(_d1_tv_symbol(s)),
-        _d1_fmt(s.get("price"), "px"), _esc(s.get("updated_at") or "-"),
+        _d1_fmt(s.get("price"), "px", ccy), _esc((s.get("updated_at") or "-")[:10]),
         _esc(s.get("fy0") or "-"), "".join(secs))
 
 
 _D1_TV_EXCH = {"NASDAQ": "NASDAQ", "NYSE": "NYSE", "NYSE American": "AMEX",
-               "NYSE Arca": "AMEX", "Cboe": "CBOE"}
+               "NYSE Arca": "AMEX", "Cboe": "CBOE", "KRX": "KRX"}
 
 
 def _d1_tv_symbol(s):
@@ -13411,10 +13425,16 @@ def _d1_pred(kind, expr):
     return lambda v: isinstance(v, (int, float)) and fn(v, x)
 
 
+def _d1_cols():
+    """선택한 시장에 해당하는 열만."""
+    hide = _D1_HIDE.get(_D1_STATE["mkt"], ())
+    return [c for c in _D1_COLS if c[0] not in hide]
+
+
 def _d1_build_grid():
     key, d = _D1_STATE["sort"]
     ths = ['<th class="cn">#</th>']
-    for i, (k, label, kind) in enumerate(_D1_COLS):
+    for i, (k, label, kind) in enumerate(_d1_cols()):
         arrow = (" ▲" if d > 0 else " ▼") if k == key else ""
         cls = ("c0 " if i == 0 else "") + ("" if kind == "text" else "num")
         ths.append(
@@ -13429,8 +13449,9 @@ def _d1_build_grid():
 
 
 def _d1_render_body():
+    cols = _d1_cols()
     preds, bad = [], set()
-    for k, _l, kind in _D1_COLS:
+    for k, _l, kind in cols:
         p = _d1_pred(kind, _D1_STATE["flt"].get(k))
         if p is False:
             bad.add(k)
@@ -13449,17 +13470,18 @@ def _d1_render_body():
     out = []
     for n, r in enumerate(rows, 1):
         sym = r.get("symbol") or ""
+        cur = r.get("currency")
         tds = '<td class="cn">%d</td>' % n + "".join(
             '<td class="%s">%s</td>' % ("c0" if i == 0 else ("" if kind == "text" else "num"),
-                                        _d1_fmt(r.get(k), kind))
-            for i, (k, _l, kind) in enumerate(_D1_COLS))
+                                        _d1_fmt(r.get(k), kind, cur))
+            for i, (k, _l, kind) in enumerate(cols))
         out.append('<tr data-sym="%s"%s>%s</tr>'
                    % (_esc(sym), ' class="sel"' if sym == sel else "", tds))
     tbody = document.querySelector("#d1-grid tbody")
     if tbody is not None:
         tbody.innerHTML = "".join(out) or (
             '<tr><td colspan="%d" class="hint">조건에 맞는 종목이 없습니다.</td></tr>'
-            % (len(_D1_COLS) + 1))
+            % (len(cols) + 1))
     inputs = document.querySelectorAll("#d1-grid .d1-flt")
     for i in range(inputs.length):
         el = inputs.item(i)
@@ -13472,10 +13494,7 @@ def _d1_render_body():
 
 def _d1_render_active(bad=()):
     chips = []
-    mkt = _D1_MKTS.get(_D1_STATE["mkt"])
-    if mkt:
-        chips.append('<span class="d1-chip">시장: %s</span>' % _esc(mkt[0]))
-    for k, label, _kind in _D1_COLS:
+    for k, label, _kind in _d1_cols():
         v = (_D1_STATE["flt"].get(k) or "").strip()
         if v:
             chips.append('<span class="d1-chip%s" data-key="%s" title="클릭하면 해당 필터로 이동">%s: %s</span>'
@@ -13507,7 +13526,7 @@ def on_d1_mkt(event):
         return
     _d1_set_mkt(btn.getAttribute("data-mkt"))
     if _D1_STATE["loaded"]:
-        _d1_render_body()
+        _d1_build_grid()
     else:
         _d1_render_active()
 
@@ -13550,7 +13569,7 @@ def _d1_apply_payload(payload):
     else:
         _D1_STATE["ops"] = {}
     _D1_STATE.update(rows=rows, loaded=True)
-    upd = max((r.get("updated_at") or "" for r in rows), default="")
+    upd = max((r.get("updated_at") or "" for r in rows), default="")[:10]
     _apply_status("#d1-status", ("기준일 %s" % upd) if upd else "")
     _d1_build_grid()
 
@@ -13591,7 +13610,6 @@ def on_d1_reload(event):
 @when("click", "#d1ResetBtn")
 def on_d1_reset(event):
     _D1_STATE["flt"] = {}
-    _d1_set_mkt("all")
     document.querySelector("#d1SavedSel").value = ""
     document.querySelector("#d1SaveName").value = ""
     document.querySelector("#d1-grid").scrollLeft = 0
