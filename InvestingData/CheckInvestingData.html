@@ -191,9 +191,12 @@
   table.d1-grid th { position:sticky; top:0; z-index:2; background:#f6f8fa;
     vertical-align:top; text-align:left; font-weight:600; }
   table.d1-grid .num { text-align:right; }
-  table.d1-grid .c0 { position:sticky; left:0; z-index:1; background:var(--bg); font-weight:600;
+  table.d1-grid .c0 { position:sticky; left:44px; z-index:1; background:var(--bg); font-weight:600;
     box-shadow:inset -1px 0 0 var(--bd); }
-  table.d1-grid th.c0 { z-index:3; background:#f6f8fa; }
+  table.d1-grid th.c0, table.d1-grid th.cn { z-index:3; background:#f6f8fa; }
+  table.d1-grid .cn { position:sticky; left:0; z-index:1; background:var(--bg); box-sizing:border-box;
+    width:44px; min-width:44px; max-width:44px; text-align:right; color:var(--mut);
+    font-variant-numeric:tabular-nums; }
   table.d1-grid .d1-sort { cursor:pointer; user-select:none; margin-bottom:3px; }
   table.d1-grid .d1-flt { width:100%; min-width:64px; box-sizing:border-box; font-size:11px;
     padding:2px 4px; font-weight:400; }
@@ -782,7 +785,7 @@
     .fav-folder .fav-folder-ren:hover { background:#18243c; }
     table.holdings tbody tr.macro-sel:hover { background:#1e2c48; }
     table.holdings tbody tr:hover { background:#1a212b; }
-    table.d1-grid th, table.d1-grid th.c0 { background:#161c24; }
+    table.d1-grid th, table.d1-grid th.c0, table.d1-grid th.cn { background:#161c24; }
     table.d1-grid tbody tr:hover td { background:#1a212b; }
     table.d1-grid tbody tr.sel td { background:#1e2c48; }
     table.d1-grid .d1-flt.bad { background:#3a1d22; }
@@ -1180,8 +1183,14 @@
 
   <div class="tab-panel" id="tab-d1">
     <fieldset>
-      <legend>S&amp;P 500 종목 DB</legend>
+      <legend>미국 종목 DB (S&amp;P 500 · 러셀 1000)</legend>
       <div class="row">
+        <span id="d1Mkt" class="fin-period">
+          <button type="button" data-mkt="all" class="on">전체</button>
+          <button type="button" data-mkt="sp">S&amp;P 500</button>
+          <button type="button" data-mkt="r1">러셀 1000</button>
+          <button type="button" data-mkt="r1only" title="러셀 1000 중 S&amp;P 500이 아닌 종목">러셀 1000 전용</button>
+        </span>
         <button id="d1ReloadBtn" type="button">새로고침</button>
         <button id="d1ResetBtn" type="button">필터 초기화</button>
         <button id="d1LeftBtn" type="button" title="표의 맨 왼쪽으로 이동">⏮ 맨 왼쪽</button>
@@ -13243,10 +13252,16 @@ def on_group(event):
 # ===================== 종목 데이터 (워커 /stocks → D1) =====================
 
 _D1_STATE = {"rows": [], "ops": {}, "flt": {}, "sort": ("market_cap", -1),
-             "sel": None, "loaded": False}
+             "sel": None, "loaded": False, "mkt": "all"}
+_D1_MKTS = {
+    "sp": ("S&P 500", lambda v: "S&P500" in v),
+    "r1": ("러셀 1000", lambda v: "R1000" in v),
+    "r1only": ("러셀 1000 전용", lambda v: "R1000" in v and "S&P500" not in v),
+}
 # (섹션, [(라벨, 키, 형식)]) — 형식: usd($M) / pct / pctc(색상) / int / px / ratio / text
 _D1_SECTIONS = [
     ("1. 기본 식별 및 기업 규모", [
+        ("지수", "indices", "text"),
         ("거래소", "exchange", "text"), ("섹터", "sector", "text"),
         ("산업", "industry", "text"), ("시가총액 ($M)", "market_cap", "usd")]),
     ("2. 실적 및 성장성", [
@@ -13398,7 +13413,7 @@ def _d1_pred(kind, expr):
 
 def _d1_build_grid():
     key, d = _D1_STATE["sort"]
-    ths = []
+    ths = ['<th class="cn">#</th>']
     for i, (k, label, kind) in enumerate(_D1_COLS):
         arrow = (" ▲" if d > 0 else " ▼") if k == key else ""
         cls = ("c0 " if i == 0 else "") + ("" if kind == "text" else "num")
@@ -13422,6 +13437,9 @@ def _d1_render_body():
         elif p:
             preds.append((k, p))
     rows = [r for r in _D1_STATE["rows"] if all(p(r.get(k)) for k, p in preds)]
+    mkt = _D1_MKTS.get(_D1_STATE["mkt"])
+    if mkt:
+        rows = [r for r in rows if mkt[1](r.get("indices") or "")]
     key, d = _D1_STATE["sort"]
     has = [r for r in rows if r.get(key) is not None]
     has.sort(key=lambda r: str(r[key]).lower() if _D1_KIND.get(key) == "text" else r[key],
@@ -13429,9 +13447,9 @@ def _d1_render_body():
     rows = has + [r for r in rows if r.get(key) is None]
     sel = _D1_STATE["sel"]
     out = []
-    for r in rows:
+    for n, r in enumerate(rows, 1):
         sym = r.get("symbol") or ""
-        tds = "".join(
+        tds = '<td class="cn">%d</td>' % n + "".join(
             '<td class="%s">%s</td>' % ("c0" if i == 0 else ("" if kind == "text" else "num"),
                                         _d1_fmt(r.get(k), kind))
             for i, (k, _l, kind) in enumerate(_D1_COLS))
@@ -13441,7 +13459,7 @@ def _d1_render_body():
     if tbody is not None:
         tbody.innerHTML = "".join(out) or (
             '<tr><td colspan="%d" class="hint">조건에 맞는 종목이 없습니다.</td></tr>'
-            % len(_D1_COLS))
+            % (len(_D1_COLS) + 1))
     inputs = document.querySelectorAll("#d1-grid .d1-flt")
     for i in range(inputs.length):
         el = inputs.item(i)
@@ -13454,6 +13472,9 @@ def _d1_render_body():
 
 def _d1_render_active(bad=()):
     chips = []
+    mkt = _D1_MKTS.get(_D1_STATE["mkt"])
+    if mkt:
+        chips.append('<span class="d1-chip">시장: %s</span>' % _esc(mkt[0]))
     for k, label, _kind in _D1_COLS:
         v = (_D1_STATE["flt"].get(k) or "").strip()
         if v:
@@ -13469,6 +13490,26 @@ def _d1_render_active(bad=()):
 @when("click", "#d1LeftBtn")
 def on_d1_left(event):
     document.querySelector("#d1-grid").scrollLeft = 0
+
+
+def _d1_set_mkt(mkt):
+    _D1_STATE["mkt"] = mkt
+    btns = document.querySelectorAll("#d1Mkt button[data-mkt]")
+    for i in range(btns.length):
+        b = btns.item(i)
+        b.classList.toggle("on", b.getAttribute("data-mkt") == mkt)
+
+
+@when("click", "#d1Mkt")
+def on_d1_mkt(event):
+    btn = event.target.closest("button[data-mkt]")
+    if btn is None:
+        return
+    _d1_set_mkt(btn.getAttribute("data-mkt"))
+    if _D1_STATE["loaded"]:
+        _d1_render_body()
+    else:
+        _d1_render_active()
 
 
 @when("click", "#d1-active")
@@ -13550,6 +13591,7 @@ def on_d1_reload(event):
 @when("click", "#d1ResetBtn")
 def on_d1_reset(event):
     _D1_STATE["flt"] = {}
+    _d1_set_mkt("all")
     document.querySelector("#d1SavedSel").value = ""
     document.querySelector("#d1SaveName").value = ""
     document.querySelector("#d1-grid").scrollLeft = 0

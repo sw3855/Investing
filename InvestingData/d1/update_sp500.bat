@@ -1,5 +1,5 @@
 @echo off
-rem S&P 500 데이터 수집 후 원격 D1 적재 (작업 스케줄러 등록용)
+rem S&P 500 + 러셀 1000 데이터 수집 후 원격 D1 적재 (작업 스케줄러 등록용)
 chcp 65001 >nul
 setlocal
 cd /d "%~dp0"

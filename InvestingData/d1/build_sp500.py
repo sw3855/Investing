@@ -1,4 +1,5 @@
-"""S&P 500 전 종목을 yfinance로 수집해 D1(stocks, op_income_history)용 SQL 파일을 만든다.
+"""S&P 500 + 러셀 1000 합집합을 yfinance로 수집해 D1(stocks, op_income_history)용 SQL 파일을 만든다.
+겹치는 종목은 1행만 두고 stocks.indices 에 소속 지수("S&P500 R1000")를 기록한다.
 
 설치:  pip install yfinance pandas lxml requests
 실행:  python build_sp500.py                 (전체 → sp500_data.sql)
@@ -6,12 +7,15 @@
        python build_sp500.py --symbols AAPL MSFT GOOGL
 적재:  npx wrangler d1 execute investing_stocks --remote --file=sp500_data.sql
        또는 python build_sp500.py --upload   (수집 후 바로 D1 적재)
+       wrangler로 직접 적재할 땐 최초 1회:
+       npx wrangler d1 execute investing_stocks --remote --command "ALTER TABLE stocks ADD COLUMN indices TEXT"
 """
 import argparse
 import io
 import logging
 import math
 import os
+import re
 import shutil
 import ssl
 import subprocess
@@ -28,6 +32,7 @@ import yfinance as yf
 
 HERE = Path(__file__).resolve().parent
 SP500_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+R1000_URL = "https://en.wikipedia.org/wiki/List_of_Russell_1000_companies"
 EXCHANGES = {"NMS": "NASDAQ", "NGM": "NASDAQ", "NCM": "NASDAQ", "NYQ": "NYSE",
              "ASE": "NYSE American", "PCX": "NYSE Arca", "BTS": "Cboe"}
 # 한 회사가 두 클래스로 편입된 경우 제외할 쪽 (GOOGL·FOXA·NWSA만 유지)
@@ -64,7 +69,7 @@ def _ticker(symbol):
     return yf.Ticker(symbol, session=YF_SESSION) if YF_SESSION else yf.Ticker(symbol)
 
 STOCK_COLS = [
-    "symbol", "name", "exchange", "sector", "industry", "market_cap", "fy0",
+    "symbol", "name", "exchange", "indices", "sector", "industry", "market_cap", "fy0",
     "rev_est_0y", "rev_est_1y", "rev_growth_0y", "rev_growth_1y",
     "eps_growth_0y", "eps_growth_1y", "roe_ttm", "roe_est_0y", "roe_est_1y",
     "eps_est_0y", "eps_est_1y", "eps_rev_1m", "eps_rev_3m", "eps_up_30d", "eps_down_30d",
@@ -73,17 +78,50 @@ STOCK_COLS = [
     "volume", "avg_vol_1y", "avg_vol_1w", "vol_chg",
     "inst_pct", "insider_net_6m", "short_pct", "div_yield", "op_last", "op_yoy", "updated_at",
 ]
-COL_TYPES = {c: "TEXT" for c in ("name", "exchange", "sector", "industry", "updated_at")}
+COL_TYPES = {c: "TEXT" for c in ("name", "exchange", "indices", "sector", "industry",
+                                   "updated_at")}
 COL_TYPES.update({c: "INTEGER" for c in ("fy0", "eps_up_30d", "eps_down_30d", "volume",
                                           "avg_vol_1y", "avg_vol_1w", "insider_net_6m")})
 
 
+def _wiki_table(url, **kw):
+    html = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=30, verify=CA).text
+    return pd.read_html(io.StringIO(html), **kw)[0]
+
+
 def sp500_symbols():
-    html = requests.get(SP500_URL, headers={"User-Agent": "Mozilla/5.0"}, timeout=30,
-                        verify=CA).text
-    df = pd.read_html(io.StringIO(html), attrs={"id": "constituents"})[0]
+    df = _wiki_table(SP500_URL, attrs={"id": "constituents"})
     symbols = {s.replace(".", "-") for s in df["Symbol"].astype(str)}
     return sorted(symbols - SECONDARY_CLASSES)
+
+
+def r1000_symbols(prefer=()):
+    """다중 클래스 회사는 1종목만: prefer(S&P500)에 있는 쪽 > 점 없는 티커 > 표 순서."""
+    df = _wiki_table(R1000_URL, match="Symbol")
+    picked = {}
+    for name, sym in zip(df["Company"].astype(str), df["Symbol"].astype(str)):
+        sym = sym.strip().replace(".", "-")
+        key = re.sub(r"\s*\((Class|Series|Common)[^)]*\)\s*$", "", name).strip().lower()
+        rank = (sym not in prefer, "-" in sym)
+        if key not in picked or rank < picked[key][0]:
+            picked[key] = (rank, sym)
+    return sorted(sym for _r, sym in picked.values())
+
+
+def index_members():
+    """{심볼: "S&P500 R1000"} 와 지수별 종목 수."""
+    sp = sp500_symbols()
+    try:
+        r1 = r1000_symbols(set(sp))
+    except Exception as exc:
+        print("러셀1000 목록 조회 실패: %s" % exc, file=sys.stderr)
+        r1 = []
+    tags = {}
+    for s in sp:
+        tags.setdefault(s, []).append("S&P500")
+    for s in r1:
+        tags.setdefault(s, []).append("R1000")
+    return {s: " ".join(t) for s, t in tags.items()}, len(sp), len(r1)
 
 
 def num(v, scale=1.0):
@@ -253,10 +291,16 @@ def main():
         sys.stdout = _Tee(sys.__stdout__, logf)
         sys.stderr = _Tee(sys.__stderr__, logf)
 
-    symbols = [s.upper() for s in args.symbols] if args.symbols else sp500_symbols()
+    members, n_sp, n_r1 = index_members()
+    symbols = [s.upper() for s in args.symbols] if args.symbols else sorted(members)
     if args.limit:
         symbols = symbols[: args.limit]
-    print("대상 %d종목" % len(symbols))
+    print("대상 %d종목 (S&P500 %d, R1000 %d, 합집합 %d)" % (len(symbols), n_sp, n_r1, len(members)))
+
+    def build(s, tries=5):
+        row, ops = fetch_with_retry(s, tries)
+        row["indices"] = members.get(s)
+        return to_sql(row, ops)
 
     schema = "\n".join(
         ["CREATE TABLE IF NOT EXISTS stocks (",
@@ -270,7 +314,7 @@ def main():
     dup = ", ".join(sql_val(s) for s in sorted(SECONDARY_CLASSES))
     schema += "\nDELETE FROM stocks WHERE symbol IN (%s);" % dup
     schema += "\nDELETE FROM op_income_history WHERE symbol IN (%s);" % dup
-    if not args.symbols and not args.limit and len(symbols) >= 450:
+    if not args.symbols and not args.limit and n_sp >= 450 and n_r1 >= 900:
         # 전체 수집일 때만 지수에서 빠진 종목 정리 (목록 파싱 이상 시 대량 삭제 방지)
         keep = ", ".join(sql_val(s) for s in symbols)
         schema += "\nDELETE FROM stocks WHERE symbol NOT IN (%s);" % keep
@@ -278,14 +322,14 @@ def main():
     results, failed = {}, []
     n, t0 = len(symbols), time.time()
     with ThreadPoolExecutor(max_workers=args.workers) as ex:
-        futs = {ex.submit(fetch_with_retry, s): s for s in symbols}
+        futs = {ex.submit(build, s): s for s in symbols}
         for i, f in enumerate(as_completed(futs), 1):
             s = futs[f]
             el = time.time() - t0
             prog = "[%d/%d %3d%% 경과 %s 남은 %s]" % (
                 i, n, i * 100 // n, _mmss(el), _mmss(el / i * (n - i)))
             try:
-                results[s] = to_sql(*f.result())
+                results[s] = f.result()
                 print("%s %s OK" % (prog, s))
             except Exception as exc:
                 failed.append(s)
@@ -297,7 +341,7 @@ def main():
         retry, failed = failed, []
         for i, s in enumerate(retry, 1):
             try:
-                results[s] = to_sql(*fetch_with_retry(s, tries=3))
+                results[s] = build(s, tries=3)
                 print("[재시도 %d/%d] %s OK" % (i, len(retry), s))
             except Exception as exc:
                 failed.append(s)
@@ -320,8 +364,11 @@ def upload(sql_path):
     env = dict(os.environ)
     # 회사망 SSL 검사 루트를 Node가 신뢰하도록
     env["NODE_OPTIONS"] = (env.get("NODE_OPTIONS", "") + " --use-system-ca").strip()
-    cmd = [npx, "wrangler", "d1", "execute", "investing_stocks", "--remote",
-           "--file=%s" % sql_path, "--yes"]
+    base = [npx, "wrangler", "d1", "execute", "investing_stocks", "--remote", "--yes"]
+    # 기존 테이블에 indices 열 추가 (이미 있으면 duplicate column 오류 → 무시)
+    subprocess.run(base + ["--command=ALTER TABLE stocks ADD COLUMN indices TEXT"],
+                   cwd=str(HERE.parent), env=env, capture_output=True)
+    cmd = base + ["--file=%s" % sql_path]
     print("적재:", " ".join(cmd[1:]))
     # wrangler 출력도 로그에 남도록 직접 중계
     p = subprocess.Popen(cmd, cwd=str(HERE.parent), env=env, stdout=subprocess.PIPE,
