@@ -60,6 +60,7 @@
  *    POST   https://<worker>/favorites?account=<id>&pref_op=set → 본문 {earncal_folder} 사용자 설정 저장
  *    POST   https://<worker>/favorites?account=<id>&trend_op=set → 본문 {trends:{key:[[ts1,p1,ts2,p2],...]}} 차트 추세선 저장(빈 배열=삭제)
  *    POST   https://<worker>/favorites?account=<id>&d1f_op=set|del → 본문 {name, flt, sort} 종목 DB 필터 저장/삭제
+ *    POST   https://<worker>/favorites?account=<id>&fgm_op=set → 본문 {date:"YYYY-MM-DD", memo, score} 공포·탐욕 차트 마킹(빈 memo=삭제)
  *    DELETE https://<worker>/favorites?account=<id>&guru=<cik>  → 13F 대가 즐겨찾기 삭제
  *    DELETE https://<worker>/favorites?account=<id>&symbol=..  → 해당 심볼 삭제
  *    DELETE https://<worker>/favorites?account=<id>&folder=..  → 폴더와 그 안의 종목 삭제
@@ -1380,6 +1381,9 @@ function cleanTrendLines(v) {
 
 // 종목 DB 저장 필터: [{name, flt:{열:식}, sort:[열, 1|-1]}]
 const D1F_MAX = 30;
+// 공포·탐욕 차트 마킹: {"YYYY-MM-DD": {m: memo, s: 지수|null}} (구버전은 memo 문자열)
+const FGM_MAX = 300;
+const FGM_MEMO_MAX = 1000;
 
 function cleanD1Filter(p) {
   const name = cleanStr(p && p.name).slice(0, 40);
@@ -1516,18 +1520,22 @@ async function handleFavorites(request, env, reqUrl) {
       : {};
   const d1_filters =
     record && Array.isArray(record.d1_filters) ? record.d1_filters : [];
+  const fg_marks =
+    record && record.fg_marks && typeof record.fg_marks === "object" && !Array.isArray(record.fg_marks)
+      ? record.fg_marks
+      : {};
   // 현재 레코드 필드를 모두 보존하며 일부만 덮어써 저장한다.
   const save = (over = {}) =>
     env.FAVORITES.put(
       kvKey,
       JSON.stringify({
-        keyHash: record.keyHash, favorites, folders, gurus, prefs, trends, d1_filters, ...over,
+        keyHash: record.keyHash, favorites, folders, gurus, prefs, trends, d1_filters, fg_marks, ...over,
       })
     );
 
   if (request.method === "GET") {
     const token = record ? await makeSessionToken(env, account, record.keyHash) : undefined;
-    return jsonResponse({ favorites, folders, gurus, prefs, trends, d1_filters, exists: !!record, token });
+    return jsonResponse({ favorites, folders, gurus, prefs, trends, d1_filters, fg_marks, exists: !!record, token });
   }
 
   if (request.method === "POST") {
@@ -1601,6 +1609,23 @@ async function handleFavorites(request, env, reqUrl) {
       }
       await save();
       return jsonResponse({ d1_filters });
+    }
+
+    // 공포·탐욕 마킹: ?fgm_op=set 본문 {date, memo}. 빈 memo 는 삭제.
+    if (reqUrl.searchParams.get("fgm_op") === "set") {
+      const date = String((payload && payload.date) || "");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        return jsonResponse({ error: "날짜 형식이 올바르지 않습니다.", fg_marks }, 400);
+      }
+      const memo = String((payload && payload.memo) || "").trim().slice(0, FGM_MEMO_MAX);
+      const sc = payload && payload.score != null ? Number(payload.score) : NaN;
+      const s = Number.isFinite(sc) ? Math.max(0, Math.min(100, Math.round(sc * 10) / 10)) : null;
+      if (!memo) delete fg_marks[date];
+      else if (!(date in fg_marks) && Object.keys(fg_marks).length >= FGM_MAX) {
+        return jsonResponse({ error: `마킹은 최대 ${FGM_MAX}개까지 저장할 수 있습니다.`, fg_marks }, 400);
+      } else fg_marks[date] = { m: memo, s };
+      await save();
+      return jsonResponse({ fg_marks });
     }
 
     // 차트 추세선 저장: ?trend_op=set, 본문 {trends:{key: lines}}. 종목은 즐겨찾기에 있어야 함.

@@ -21,6 +21,7 @@ import sqlite3
 import ssl
 import subprocess
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timezone
@@ -395,20 +396,57 @@ def upload(sql_path):
     env = dict(os.environ)
     # 회사망 SSL 검사 루트를 Node가 신뢰하도록
     env["NODE_OPTIONS"] = (env.get("NODE_OPTIONS", "") + " --use-system-ca").strip()
-    base = [npx, "wrangler", "d1", "execute", "investing_stocks", "--remote", "--yes"]
+    # 작업 스케줄러 등 콘솔 없는 실행에서 입력 대기로 멈추지 않도록 비대화형 강제
+    env["CI"] = "1"
+    env["WRANGLER_SEND_METRICS"] = "false"
+    base = [npx, "--yes", "wrangler", "d1", "execute", "investing_stocks", "--remote", "--yes"]
+
+    def wrangler(arg, timeout, echo):
+        """wrangler 실행 → (exit code, 출력). 시간 초과 시 프로세스 트리 종료 후 exit -1."""
+        p = subprocess.Popen(base + [arg], cwd=str(HERE.parent), env=env,
+                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT, encoding="utf-8", errors="replace")
+        # npx.cmd만 죽이면 하위 node가 파이프를 잡고 있어 트리째 종료
+        expired = []
+
+        def kill():
+            expired.append(1)
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(p.pid)], capture_output=True)
+
+        timer = threading.Timer(timeout, kill)
+        timer.start()
+        out = []
+        try:
+            for line in p.stdout:
+                out.append(line)
+                if echo:
+                    print(line, end="")
+            rc = p.wait()
+        finally:
+            timer.cancel()
+        if expired:
+            out.append("\n%d초 시간 초과로 강제 종료" % timeout)
+            rc = -1
+        return rc, "".join(out)
+
     # 기존 테이블에 추가 열 생성 (이미 있으면 duplicate column 오류 → 무시)
+    print("추가 열 확인: %s" % ", ".join(ADDED_COLS))
     for c in ADDED_COLS:
-        subprocess.run(base + ["--command=ALTER TABLE stocks ADD COLUMN %s %s"
-                               % (c, COL_TYPES.get(c, "REAL"))],
-                       cwd=str(HERE.parent), env=env, capture_output=True)
-    cmd = base + ["--file=%s" % sql_path]
-    print("적재:", " ".join(cmd[1:]))
-    # wrangler 출력도 로그에 남도록 직접 중계
-    p = subprocess.Popen(cmd, cwd=str(HERE.parent), env=env, stdout=subprocess.PIPE,
-                         stderr=subprocess.STDOUT, encoding="utf-8", errors="replace")
-    for line in p.stdout:
-        print(line, end="")
-    return p.wait()
+        rc, out = wrangler("--command=ALTER TABLE stocks ADD COLUMN %s %s"
+                           % (c, COL_TYPES.get(c, "REAL")), 300, False)
+        # --yes 로 자동 승인된 npx 설치 안내(새 wrangler 버전 등)는 로그에 남김
+        for line in out.splitlines():
+            if line.lower().startswith("npm warn"):
+                print(line)
+        if rc and "duplicate column" not in out:
+            print("ALTER TABLE %s 실패 (exit %d):\n%s" % (c, rc, out[-2000:]), file=sys.stderr)
+            return rc or 1
+    arg = "--file=%s" % sql_path
+    print("적재:", " ".join(base[1:] + [arg]))
+    rc, _ = wrangler(arg, 1800, True)
+    if rc:
+        print("적재 실패 (exit %d)" % rc, file=sys.stderr)
+    return rc
 
 
 class _Tee:

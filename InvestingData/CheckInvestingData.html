@@ -582,6 +582,50 @@
     font-size:13px; margin-bottom:4px; }
   .fg-comp-name { color:#1f2328; }
   .fg-comp-val { font-weight:600; white-space:nowrap; }
+  .fg-chart-tools { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .fg-mark-mode { height:30px; padding:0 12px; font-size:13px; border:1px solid var(--bd);
+    border-radius:6px; background:var(--bg); color:inherit; cursor:pointer; }
+  .fg-mark-mode.on { background:#f5a623; border-color:#f5a623; color:#fff; font-weight:600; }
+  .fg-marking svg.chart-svg { cursor:crosshair; }
+  .fg-mark { fill:#fff; stroke:#f5a623; stroke-width:2.5; cursor:pointer; }
+  .fg-mark:hover, .fg-mark.sel { fill:#f5a623; }
+  .fg-mark-pop { position:absolute; z-index:5; width:260px; max-width:80%;
+    background:#fff; border:1px solid var(--bd); border-radius:8px; padding:10px 12px;
+    box-shadow:0 4px 14px rgba(0,0,0,.18); font-size:13px; }
+  .fg-mark-pop-head { display:flex; gap:8px; align-items:center; margin-bottom:6px; }
+  .fg-mark-pop-head span { font-size:12px; font-weight:600; }
+  .fg-mark-x { margin-left:auto; border:0; background:none; font-size:18px; line-height:1;
+    cursor:pointer; color:var(--mut); }
+  .fg-mark-memo { white-space:pre-wrap; word-break:break-word; line-height:1.5;
+    max-height:200px; overflow:auto; }
+  .fg-mark-pop textarea { width:100%; box-sizing:border-box; font:inherit; resize:vertical;
+    border:1px solid var(--bd); border-radius:6px; padding:6px; }
+  .fg-mark-act { display:flex; gap:6px; justify-content:flex-end; margin-top:8px; }
+  .fg-mark-act button { height:28px; padding:0 12px; font-size:12px; border:1px solid var(--bd);
+    border-radius:6px; background:var(--bg); color:inherit; cursor:pointer; }
+  .fg-mark-act button[data-fgmark="save"] { background:var(--pri); border-color:var(--pri); color:#fff; }
+  .fg-ml-form { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
+  .fg-ml-form input { height:30px; box-sizing:border-box; border:1px solid var(--bd);
+    border-radius:6px; padding:0 8px; font:inherit; font-size:13px; }
+  .fg-ml-form #fgMarkScore { width:100px; }
+  .fg-ml-form #fgMarkText { flex:1; min-width:160px; }
+  .fg-ml-form button { height:30px; padding:0 14px; border:1px solid var(--pri); border-radius:6px;
+    background:var(--pri); color:#fff; cursor:pointer; font-size:13px; }
+  table.fg-ml { width:100%; border-collapse:collapse; font-size:13px; }
+  table.fg-ml th, table.fg-ml td { padding:6px 8px; border-bottom:1px solid var(--bd);
+    text-align:left; vertical-align:top; }
+  table.fg-ml th { color:var(--mut); font-weight:600; white-space:nowrap; }
+  table.fg-ml td:first-child { white-space:nowrap; }
+  table.fg-ml a { color:var(--pri); text-decoration:none; }
+  .fg-ml-s { font-weight:700; }
+  .fg-ml-memo { white-space:pre-wrap; word-break:break-word; width:100%; }
+  .fg-ml-act { white-space:nowrap; }
+  .fg-ml-act button { height:24px; padding:0 8px; margin-left:4px; font-size:12px;
+    border:1px solid var(--bd); border-radius:5px; background:var(--bg); color:inherit; cursor:pointer; }
+  @media (prefers-color-scheme: dark) {
+    .fg-mark-pop { background:#161c24; }
+    .fg-mark { fill:#161c24; }
+  }
   .macro-note { color:var(--mut); font-size:12px; margin-top:8px; line-height:1.5; }
   .macro-note a { color:var(--pri); }
   table.cycle { width:100%; border-collapse:collapse; font-size:13px;
@@ -11583,6 +11627,10 @@ def _update_fav_login_ui():
     _update_ai_admin_ui()
     _update_login_tabs()
     _d1_update_saved_ui()
+    if not _fav_logged_in():
+        _FG_MARKS.update(map={}, sel=None, edit=False, mode=False)
+    _fg_refresh_chart()
+    _fg_refresh_list()
     asyncio.ensure_future(refresh_guru_favorites())
 
 
@@ -11658,6 +11706,7 @@ def _apply_fav_prefs(data):
     flts = (data or {}).get("d1_filters") if isinstance(data, dict) else None
     _D1_SAVED["list"] = flts if isinstance(flts, list) else []
     _apply_fav_trends(data)
+    _fg_apply_marks(data)
 
 
 async def _save_earncal_folder(folder):
@@ -12035,20 +12084,20 @@ def _fg_num(v):
         return None
 
 
-async def fetch_fear_greed():
+async def fetch_fear_greed(src=FEAR_GREED_URL):
     """CNN 공포·탐욕 지수 데이터를 여러 경로로 시도해 가져온다.
 
     순서: (1) 브라우저 직접 호출  (2) 사용자 CORS 프록시(Worker)
           (3) 공개 CORS 프록시들.  CNN 이 Cloudflare Worker 를 차단(HTTP 530)해도
     직접 호출이나 다른 우회 경로 중 하나가 성공하면 데이터를 표시한다.
     """
-    enc = str(js.encodeURIComponent(FEAR_GREED_URL))
+    enc = str(js.encodeURIComponent(src))
     attempts = [
-        ("직접", FEAR_GREED_URL),
-        ("사용자 프록시", _proxied(FEAR_GREED_URL)),
+        ("직접", src),
+        ("사용자 프록시", _proxied(src)),
         ("우회1", "https://api.allorigins.win/raw?url=" + enc),
         ("우회2", "https://corsproxy.io/?url=" + enc),
-        ("우회3", "https://thingproxy.freeboard.io/fetch/" + FEAR_GREED_URL),
+        ("우회3", "https://thingproxy.freeboard.io/fetch/" + src),
     ]
     errs = []
     seen = set()
@@ -12081,8 +12130,432 @@ def _fg_gauge_html(score_num, rating_label, extra=""):
            _fg_zone_bar(score_num), _fg_zone_legend()))
 
 
+_FG_HIST = {"pts": [], "range": 365, "long": False,
+            "series": {"sp": {}, "ndx": {}}, "ov": {"sp": False, "ndx": False}}
+# 하단 패널 지수: (키, 라벨, 색). sp=CNN 응답 포함, ndx=야후 별도 조회
+_FG_OVERLAYS = [("sp", "S&P 500", "#8e44ad"), ("ndx", "나스닥 100", "#e67e22")]
+_FG_RANGES = [(30, "1개월"), (90, "3개월"), (180, "6개월"), (365, "1년"),
+              (1095, "3년"), (1825, "5년")]
+# 기본 graphdata 는 약 1년치라 그보다 긴 기간은 시작일 지정 URL 로 별도 조회 (이보다 이르면 HTTP 500)
+FEAR_GREED_LONG_URL = FEAR_GREED_URL + "/2020-09-19"
+_FG_CHART = {"pts": [], "W": 0.0, "H": 0.0, "y1": 0.0, "y2": 0.0}
+# 차트 배경 구간(하한, 상한) — _FG_ZONES 와 같은 색 순서
+_FG_BANDS = [(0, 25), (25, 45), (45, 55), (55, 75), (75, 100)]
+
+
+def _fg_history_points(data):
+    """CNN fear_and_greed_historical → [(ts초, 점수, rating)] (UTC 날짜별 마지막 값)."""
+    hist = (data.get("fear_and_greed_historical") or {}).get("data") or []
+    by_day = {}
+    for p in hist:
+        x = _fg_num(p.get("x"))
+        y = _fg_num(p.get("y"))
+        if x is None or y is None:
+            continue
+        ts = x / 1000.0
+        day = datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d")
+        by_day[day] = (ts, y, p.get("rating"))
+    return sorted(by_day.values(), key=lambda t: t[0])
+
+
+def _fg_sp_points(data):
+    """CNN market_momentum_sp500 → {UTC날짜: S&P 500 종가}."""
+    out = {}
+    for p in (data.get("market_momentum_sp500") or {}).get("data") or []:
+        x = _fg_num(p.get("x"))
+        y = _fg_num(p.get("y"))
+        if x is not None and y is not None:
+            out[datetime.fromtimestamp(x / 1000.0, timezone.utc).strftime("%Y-%m-%d")] = y
+    return out
+
+
+def _fg_history_svg(pts):
+    W, H = 820.0, 300.0
+    padL, padR, padT, padB = 40.0, 18.0, 14.0, 34.0
+    plot_w = W - padL - padR
+    plot_h = H - padT - padB
+    # 하단 지수 패널들: x축 라벨 아래에 각자 y스케일로 쌓음
+    panels = []
+    for key, label, color in _FG_OVERLAYS:
+        if not _FG_HIST["ov"].get(key):
+            continue
+        series = _FG_HIST["series"].get(key) or {}
+        sp_pts = []
+        for ts, _v, _r in pts:
+            c = series.get(datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d"))
+            if c is not None:
+                sp_pts.append((ts, c))
+        if len(sp_pts) >= 2:
+            panels.append((key, label, color, H + 6.0, sp_pts))
+            H += 6.0 + 130.0 + 10.0
+    sp_h = 130.0
+    t0, t1 = pts[0][0], pts[-1][0]
+    span = max(t1 - t0, 1.0)
+
+    def X(ts):
+        return padL + (ts - t0) / span * plot_w
+
+    def Y(v):
+        return padT + (100.0 - max(0.0, min(100.0, v))) / 100.0 * plot_h
+
+    parts = ['<svg viewBox="0 0 %g %g" class="chart-svg" '
+             'preserveAspectRatio="xMidYMid meet">' % (W, H)]
+    for (lo, hi), (_w, color, _lbl) in zip(_FG_BANDS, _FG_ZONES):
+        parts.append('<rect x="%g" y="%g" width="%g" height="%g" fill="%s" '
+                     'fill-opacity="0.08"/>' % (padL, Y(hi), plot_w, Y(lo) - Y(hi), color))
+    for gv in (0, 25, 50, 75, 100):
+        gy = Y(gv)
+        parts.append('<line x1="%g" y1="%g" x2="%g" y2="%g" stroke="#eaecef" '
+                     'stroke-dasharray="3 3"/>' % (padL, gy, W - padR, gy))
+        parts.append('<text x="%g" y="%g" class="ax-y">%d</text>'
+                     % (padL - 8, gy + 4, gv))
+    # x축 라벨: 짧은 기간은 주 단위, 그 외는 월초
+    d0 = datetime.fromtimestamp(t0, timezone.utc)
+    d1 = datetime.fromtimestamp(t1, timezone.utc)
+    ticks = []
+    if span <= 45 * 86400:
+        d = d0
+        while d <= d1:
+            ticks.append((d, d.strftime("%m/%d")))
+            d += timedelta(days=7)
+    elif span > 800 * 86400:
+        for y in range(d0.year + 1, d1.year + 1):
+            ticks.append((datetime(y, 1, 1, tzinfo=timezone.utc), str(y)))
+    else:
+        y, m = d0.year, d0.month + 1
+        step = 1 if span <= 200 * 86400 else 2
+        while True:
+            if m > 12:
+                y, m = y + 1, m - 12
+            d = datetime(y, m, 1, tzinfo=timezone.utc)
+            if d > d1:
+                break
+            ticks.append((d, d.strftime("%y.%m")))
+            m += step
+    fg_bot = padT + plot_h
+    for d, lbl in ticks:
+        tx = X(d.timestamp())
+        parts.append('<line x1="%g" y1="%g" x2="%g" y2="%g" stroke="#eaecef"/>'
+                     % (tx, padT, tx, fg_bot))
+        for _k, _l, _c, top, _p in panels:
+            parts.append('<line x1="%g" y1="%g" x2="%g" y2="%g" stroke="#eaecef"/>'
+                         % (tx, top, tx, top + sp_h))
+        parts.append('<text x="%g" y="%g" class="ax-x">%s</text>'
+                     % (tx, fg_bot + 20, _esc(lbl)))
+    sp_y = {}
+    for key, label, color, top, sp_pts in panels:
+        lo = min(c for _t, c in sp_pts)
+        hi = max(c for _t, c in sp_pts)
+        rng = (hi - lo) or 1.0
+        lo, hi = lo - rng * 0.05, hi + rng * 0.05
+
+        def SY(c, top=top, lo=lo, hi=hi):
+            return top + (hi - c) / (hi - lo) * sp_h
+
+        for k in range(3):
+            gv = lo + (hi - lo) * k / 2.0
+            gy = SY(gv)
+            parts.append('<line x1="%g" y1="%g" x2="%g" y2="%g" stroke="#eaecef" '
+                         'stroke-dasharray="3 3"/>' % (padL, gy, W - padR, gy))
+            parts.append('<text x="%g" y="%g" class="ax-y">%.0f</text>'
+                         % (padL - 4, gy + 4, gv))
+        parts.append('<text x="%g" y="%g" style="fill:currentColor;font-size:12px;'
+                     'font-weight:600">%s</text>' % (padL + 6, top + 14, _esc(label)))
+        parts.append('<polyline points="%s" fill="none" stroke="%s" stroke-width="1.6"/>'
+                     % (" ".join("%g,%g" % (X(t), SY(c)) for t, c in sp_pts), color))
+        for t, c in sp_pts:
+            sp_y.setdefault(t, {})[key] = (SY(c), c)
+    poly = " ".join("%g,%g" % (X(ts), Y(v)) for ts, v, _r in pts)
+    parts.append('<polyline points="%s" class="line-path" fill="none"/>' % poly)
+    lx, ly, lv = X(t1), Y(pts[-1][1]), pts[-1][1]
+    parts.append('<circle cx="%g" cy="%g" r="4" fill="%s"/>' % (lx, ly, _fg_color(lv)))
+    parts.append('<text x="%g" y="%g" class="pt-val" text-anchor="end">%.0f</text>'
+                 % (lx - 6, ly - 6, lv))
+    parts.append('<line id="fg-guide" class="guide-line" x1="0" y1="%g" '
+                 'x2="0" y2="%g" style="display:none"/>'
+                 % (padT, (panels[-1][3] + sp_h) if panels else fg_bot))
+    parts.append('<circle id="fg-guide-dot" class="guide-dot" r="4" '
+                 'cx="0" cy="0" style="display:none;pointer-events:none"/>')
+    for key, _l, color, _t, _p in panels:
+        parts.append('<circle id="fg-guide-dot-%s" class="fg-guide-sub" r="4" fill="%s" '
+                     'cx="0" cy="0" style="display:none;pointer-events:none"/>' % (key, color))
+
+    labels = {k: (l, c) for k, l, c in _FG_OVERLAYS}
+    cache = []
+    for ts, v, r in pts:
+        day = datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d")
+        tip = ('<span class="d">%s</span><span class="v" style="color:%s">%.0f · %s</span>'
+               % (_esc(day), _fg_color(v), v, _esc(_fg_label(r))))
+        sub = sp_y.get(ts) or {}
+        for key, (sy, c) in sub.items():
+            tip += ('<span class="v" style="color:%s">%s %s</span>'
+                    % (labels[key][1], _esc(labels[key][0]), fmt_num(c, 2)))
+        cache.append({"x": X(ts), "y": Y(v), "tip": tip, "day": day, "v": v,
+                      "sy": {k: s[0] for k, s in sub.items()}})
+    marks = _FG_MARKS["map"]
+    by_day = {p["day"]: p for p in cache}
+    mpos = {}
+    for day in marks:
+        p = by_day.get(day)
+        if p is not None:
+            mpos[day] = {"x": p["x"], "y": p["y"], "v": p["v"]}
+            continue
+        # 시계열에 없는 날(휴장일 등)은 저장된 지수로 표시
+        ts = _fg_day_ts(day)
+        s = _fg_mark_score(day)
+        if ts is not None and s is not None and t0 <= ts <= t1:
+            mpos[day] = {"x": X(ts), "y": Y(s), "v": s}
+    for day, p in mpos.items():
+        parts.append('<circle class="fg-mark%s" data-fgdate="%s" cx="%g" cy="%g" r="6"/>'
+                     % (" sel" if day == _FG_MARKS["sel"] else "", day, p["x"], p["y"]))
+    parts.append('</svg>')
+    _FG_CHART.update(pts=cache, W=W, H=H, y1=padT, y2=fg_bot, marks=mpos)
+    return "".join(parts)
+
+
+def _fg_history_body():
+    pts = _FG_HIST["pts"]
+    if len(pts) < 2:
+        return '<div class="hint">타임라인 데이터가 없습니다.</div>'
+    days = _FG_HIST["range"]
+    cut = pts[-1][0] - days * 86400 if days else pts[0][0]
+    view = [p for p in pts if p[0] >= cut] or pts
+    if len(view) < 2:
+        view = pts
+    btns = "".join(
+        '<button type="button" data-fgrange="%d"%s>%s</button>'
+        % (d, ' class="on"' if d == days else "", _esc(lbl))
+        for d, lbl in _FG_RANGES)
+    mark_btn = "".join(
+        '<button type="button" class="fg-mark-mode%s" data-fgsp="%s">%s</button>'
+        % (" on" if _FG_HIST["ov"].get(k) else "", k, _esc(lbl))
+        for k, lbl, _c in _FG_OVERLAYS)
+    if _fav_logged_in():
+        on = _FG_MARKS["mode"]
+        mark_btn += ('<button type="button" class="fg-mark-mode%s" data-fgmark="mode">%s</button>'
+                    % (" on" if on else "",
+                       "날짜를 클릭하세요 (취소)" if on else "＋ 마킹 추가"))
+    svg = _fg_history_svg(view)
+    return ('<div class="fg-chart-tools"><div class="fin-period">%s</div>%s</div>'
+            '<div class="fin-chart%s" style="margin-top:10px;position:relative">'
+            '%s<div id="fg-tip" class="multpl-tip"></div>%s</div>'
+            % (btns, mark_btn, " fg-marking" if _FG_MARKS["mode"] else "",
+               svg, _fg_mark_pop_html()))
+
+
+_FG_MARKS = {"map": {}, "mode": False, "sel": None, "edit": False}
+
+
+def _fg_mark_pop_html():
+    """선택된 마킹의 메모 팝업(보기/편집). 차트에 그 날짜가 없으면 빈 문자열."""
+    day = _FG_MARKS["sel"]
+    p = _FG_CHART.get("marks", {}).get(day) if day else None
+    if p is None and day:
+        p = next((q for q in _FG_CHART["pts"] if q["day"] == day), None)
+    if p is None:
+        return ""
+    W, H = _FG_CHART["W"] or 1.0, _FG_CHART["H"] or 1.0
+    lp = p["x"] / W * 100
+    tx = "-8%" if lp < 20 else ("-92%" if lp > 80 else "-50%")
+    up = p["y"] / H > 0.55
+    style = ("left:%.2f%%;top:%.2f%%;transform:translate(%s,%s)"
+             % (lp, p["y"] / H * 100, tx, "calc(-100% - 12px)" if up else "12px"))
+    memo = _fg_mark_memo(day)
+    head = ('<div class="fg-mark-pop-head"><b>%s</b>'
+            '<span style="color:%s">%.0f · %s</span>'
+            '<button type="button" class="fg-mark-x" data-fgmark="close">×</button></div>'
+            % (_esc(day), _fg_color(p["v"]), p["v"], _esc(_fg_label(_fg_rating_of(p["v"])))))
+    if _FG_MARKS["edit"]:
+        body = ('<textarea id="fgMarkMemo" maxlength="1000" rows="4" '
+                'placeholder="메모를 입력하세요">%s</textarea>'
+                '<div class="fg-mark-act">'
+                '<button type="button" data-fgmark="save">저장</button>%s'
+                '<button type="button" data-fgmark="close">취소</button></div>'
+                % (_esc(memo),
+                   '<button type="button" data-fgmark="del">삭제</button>' if memo else ""))
+    else:
+        body = ('<div class="fg-mark-memo">%s</div>' % _esc(memo))
+        if _fav_logged_in():
+            body += ('<div class="fg-mark-act">'
+                     '<button type="button" data-fgmark="edit">편집</button>'
+                     '<button type="button" data-fgmark="del">삭제</button></div>')
+    return '<div class="fg-mark-pop" style="%s">%s%s</div>' % (style, head, body)
+
+
+def _fg_rating_of(v):
+    if v < 25:
+        return "extreme fear"
+    if v < 45:
+        return "fear"
+    if v <= 55:
+        return "neutral"
+    if v <= 75:
+        return "greed"
+    return "extreme greed"
+
+
+def _fg_refresh_chart():
+    box = document.querySelector("#fg-chart")
+    if box is not None:
+        box.innerHTML = _fg_history_body()
+        if _FG_MARKS["edit"]:
+            ta = document.querySelector("#fgMarkMemo")
+            if ta is not None:
+                ta.focus()
+
+
+def _fg_refresh_list():
+    box = document.querySelector("#fg-marks")
+    if box is not None:
+        box.innerHTML = _fg_mark_list_html()
+
+
+def _fg_day_ts(day):
+    try:
+        return datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def _fg_mark_memo(day):
+    v = _FG_MARKS["map"].get(day)
+    if isinstance(v, dict):
+        return str(v.get("m") or "")
+    return str(v or "")
+
+
+def _fg_data_score(day):
+    pts = _FG_HIST["pts"]
+    cache = _FG_HIST.get("daymap")
+    if cache is None or cache[0] is not pts:
+        cache = (pts, {datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d"): v
+                       for ts, v, _r in pts})
+        _FG_HIST["daymap"] = cache
+    return cache[1].get(day)
+
+
+def _fg_mark_score(day):
+    """시계열 값 우선, 없으면 저장된 값."""
+    v = _fg_data_score(day)
+    if v is not None:
+        return v
+    m = _FG_MARKS["map"].get(day)
+    return _fg_num(m.get("s")) if isinstance(m, dict) else None
+
+
+def _fg_mark_list_html():
+    if not _fav_logged_in():
+        return ""
+    rows = []
+    for day in _FG_MARKS["map"]:
+        rows.append((day, _fg_mark_score(day), _fg_mark_memo(day)))
+    rows.sort(key=lambda r: (r[1] is None, r[1] if r[1] is not None else 0, r[0]))
+    body = []
+    for day, s, memo in rows:
+        if s is None:
+            sc = '<td class="fg-ml-s">-</td>'
+        else:
+            sc = '<td class="fg-ml-s" style="color:%s">%.0f</td>' % (_fg_color(s), s)
+        body.append(
+            '<tr><td><a href="#" data-fgmark="goto" data-fgdate="%s">%s</a></td>%s'
+            '<td class="fg-ml-memo">%s</td>'
+            '<td class="fg-ml-act"><button type="button" data-fgmark="ledit" data-fgdate="%s">편집</button>'
+            '<button type="button" data-fgmark="ldel" data-fgdate="%s">삭제</button></td></tr>'
+            % (day, day, sc, _esc(memo), day, day))
+    table = ('<table class="fg-ml"><thead><tr><th>날짜</th><th>지수 ▲</th>'
+             '<th>메모</th><th></th></tr></thead><tbody>%s</tbody></table>' % "".join(body)
+             if body else '<div class="hint">마킹이 없습니다.</div>')
+    form = ('<div class="fg-ml-form">'
+            '<input type="date" id="fgMarkDate">'
+            '<input type="number" id="fgMarkScore" min="0" max="100" step="1" '
+            'placeholder="지수(자동)" title="시계열에 없는 날짜는 직접 입력">'
+            '<input type="text" id="fgMarkText" maxlength="1000" placeholder="메모">'
+            '<button type="button" data-fgmark="add">추가</button></div>')
+    return ('<h3 class="fg-h3">내 마킹 (%d) · 지수 오름차순</h3>%s%s'
+            % (len(rows), form, table))
+
+
+async def _fg_ensure_long():
+    if _FG_HIST["long"]:
+        return
+    try:
+        data = await fetch_fear_greed(FEAR_GREED_LONG_URL)
+        pts = _fg_history_points(data)
+        if pts:
+            _FG_HIST["pts"] = pts
+            _FG_HIST["series"]["sp"] = _fg_sp_points(data) or _FG_HIST["series"]["sp"]
+            _FG_HIST["long"] = True
+    except Exception as exc:
+        _warn("fear_greed_long", exc)
+
+
+def _fg_apply_marks(data):
+    m = (data or {}).get("fg_marks") if isinstance(data, dict) else None
+    _FG_MARKS["map"] = dict(m) if isinstance(m, dict) else {}
+    _FG_MARKS.update(sel=None, edit=False)
+    _fg_refresh_chart()
+    _fg_refresh_list()
+    asyncio.ensure_future(_fg_backfill_scores())
+
+
+def _fg_stored_score(day):
+    m = _FG_MARKS["map"].get(day)
+    return _fg_num(m.get("s")) if isinstance(m, dict) else None
+
+
+async def _fg_backfill_scores():
+    """지수가 저장 안 된 마킹(구버전·미배포 워커로 저장)에 시계열 값을 채워 재저장."""
+    if not any(_fg_stored_score(d) is None for d in _FG_MARKS["map"]):
+        return
+    await _fg_ensure_long()
+    _fg_refresh_list()
+    acct, key = _fav_creds()
+    if not (acct and key):
+        return
+    for day in list(_FG_MARKS["map"]):
+        if _fg_stored_score(day) is not None:
+            continue
+        s = _fg_data_score(day)
+        memo = _fg_mark_memo(day)
+        if s is None or not memo:
+            continue
+        data, err, _ = await _fav_api("POST", acct, key, extra_query="&fgm_op=set",
+                                      body=json.dumps({"date": day, "memo": memo, "score": s}))
+        if err or not isinstance(data, dict):
+            return
+        _FG_MARKS["map"] = dict(data.get("fg_marks") or {})
+        if _fg_stored_score(day) is None:
+            break  # 워커가 구버전(score 미저장)
+    _fg_refresh_list()
+
+
+async def _fg_save_mark(day, memo, score=None):
+    acct, key = _fav_creds()
+    if not (acct and key):
+        return False
+    if score is None:
+        score = _fg_mark_score(day)
+    data, err, _ = await _fav_api("POST", acct, key, extra_query="&fgm_op=set",
+                                  body=json.dumps({"date": day, "memo": memo, "score": score}))
+    if err:
+        window.alert("마킹 저장 실패: %s" % err)
+        return False
+    _FG_MARKS["map"] = dict(data.get("fg_marks") or {})
+    _FG_MARKS["edit"] = False
+    if day not in _FG_MARKS["map"]:
+        _FG_MARKS["sel"] = None
+    _fg_refresh_chart()
+    _fg_refresh_list()
+    return True
+
+
 def _fg_cnn_html(data):
     """CNN(미국 증시) 지수 카드 HTML 을 반환."""
+    _FG_HIST["pts"] = _fg_history_points(data)
+    _FG_HIST["series"]["sp"] = _fg_sp_points(data)
+    _FG_HIST["long"] = False
+    if _FG_HIST["range"] == 0 or _FG_HIST["range"] > 365:
+        _FG_HIST["range"] = 365
     fg = data.get("fear_and_greed") or {}
     score_num = _fg_num(fg.get("score"))
     rating = fg.get("rating")
@@ -12126,10 +12599,12 @@ def _fg_cnn_html(data):
         '<div style="padding:18px">'
         '%s'
         '<div class="grid" style="margin-top:16px">%s</div>'
+        '<h3 class="fg-h3">타임라인</h3><div id="fg-chart">%s</div>'
+        '<div id="fg-marks">%s</div>'
         '<h3 class="fg-h3">구성 지표 (7)</h3>%s'
         '</div></div>'
         % (_fg_gauge_html(score_num, _fg_label(rating), asof_html),
-           prev_html, "".join(comp_html)))
+           prev_html, _fg_history_body(), _fg_mark_list_html(), "".join(comp_html)))
 
 
 def _fg_cnn_error_html(exc):
@@ -14728,6 +15203,203 @@ async def _load_fear_greed():
             % _esc(str(exc)))
 
 
+async def _fg_mark_click(event):
+    """마킹 관련 클릭이면 처리하고 True."""
+    t = event.target
+    act_el = t.closest("[data-fgmark]")
+    if act_el is not None:
+        act = act_el.getAttribute("data-fgmark")
+        day = _FG_MARKS["sel"]
+        if act in ("goto", "ledit", "ldel", "add"):
+            event.preventDefault()
+            await _fg_mark_list_action(act, act_el.getAttribute("data-fgdate"))
+            return True
+        if act == "mode":
+            _FG_MARKS["mode"] = not _FG_MARKS["mode"]
+        elif act == "close":
+            _FG_MARKS.update(sel=None, edit=False)
+        elif act == "edit":
+            _FG_MARKS["edit"] = True
+        elif act == "save" and day:
+            ta = document.querySelector("#fgMarkMemo")
+            memo = (ta.value if ta is not None else "").strip()
+            if not memo:
+                window.alert("메모를 입력하세요.")
+                return True
+            await _fg_save_mark(day, memo)
+            return True
+        elif act == "del" and day:
+            if window.confirm("%s 마킹을 삭제할까요?" % day):
+                await _fg_save_mark(day, "")
+            return True
+        _fg_refresh_chart()
+        return True
+    if t.closest(".fg-mark-pop") is not None:
+        return True
+    mk = t.closest(".fg-mark")
+    if mk is not None:
+        _FG_MARKS.update(sel=mk.getAttribute("data-fgdate"), edit=False, mode=False)
+        _fg_refresh_chart()
+        return True
+    svg = t.closest("#fg-chart svg.chart-svg")
+    if svg is not None and _FG_MARKS["mode"] and _fav_logged_in() and _FG_CHART["pts"]:
+        rect = svg.getBoundingClientRect()
+        if rect.width:
+            sx = (event.clientX - rect.left) / rect.width * _FG_CHART["W"]
+            best = min(_FG_CHART["pts"], key=lambda p: abs(p["x"] - sx))
+            _FG_MARKS.update(sel=best["day"], edit=True, mode=False)
+            _fg_refresh_chart()
+        return True
+    if t.closest("#fg-marks") is not None:
+        if _FG_MARKS["sel"]:
+            _FG_MARKS.update(sel=None, edit=False)
+            _fg_refresh_chart()
+        return True
+    if _FG_MARKS["sel"]:
+        _FG_MARKS.update(sel=None, edit=False)
+        if t.closest("[data-fgrange],[data-fgsp]") is not None:
+            return False
+        _fg_refresh_chart()
+        return True
+    return False
+
+
+async def _fg_mark_list_action(act, day):
+    if act == "add":
+        d_el = document.querySelector("#fgMarkDate")
+        s_el = document.querySelector("#fgMarkScore")
+        m_el = document.querySelector("#fgMarkText")
+        day = (d_el.value if d_el is not None else "").strip()
+        memo = (m_el.value if m_el is not None else "").strip()
+        if _fg_day_ts(day) is None:
+            window.alert("날짜를 선택하세요.")
+            return
+        if not memo:
+            window.alert("메모를 입력하세요.")
+            return
+        pts = _FG_HIST["pts"]
+        if pts and _fg_day_ts(day) < pts[0][0]:
+            await _fg_ensure_long()
+        score = _fg_data_score(day)
+        if score is None:
+            score = _fg_num((s_el.value if s_el is not None else "").strip())
+            if score is None or not 0 <= score <= 100:
+                window.alert("시계열에 없는 날짜입니다. 지수(0~100)를 입력하세요.")
+                return
+        if day in _FG_MARKS["map"] and not window.confirm("%s 마킹을 덮어쓸까요?" % day):
+            return
+        await _fg_save_mark(day, memo, score)
+        return
+    if not day or day not in _FG_MARKS["map"]:
+        return
+    if act == "ldel":
+        if window.confirm("%s 마킹을 삭제할까요?" % day):
+            await _fg_save_mark(day, "")
+    elif act == "ledit":
+        memo = window.prompt("%s 메모" % day, _fg_mark_memo(day))
+        if memo is not None and str(memo).strip():
+            await _fg_save_mark(day, str(memo).strip())
+    elif act == "goto":
+        _FG_MARKS.update(sel=day, edit=False, mode=False)
+        _fg_refresh_chart()
+        if day not in _FG_CHART.get("marks", {}):
+            # 현재 기간 밖이면 최대(5년) 기간으로 전환
+            _FG_HIST["range"] = 1825
+            await _fg_ensure_long()
+            _fg_refresh_chart()
+        box = document.querySelector("#fg-chart")
+        if box is not None:
+            box.scrollIntoView()
+
+
+@when("click", "#fg-result")
+async def on_fg_range_click(event):
+    if await _fg_mark_click(event):
+        return
+    sp_btn = event.target.closest("[data-fgsp]")
+    if sp_btn is not None:
+        key = sp_btn.getAttribute("data-fgsp")
+        _FG_HIST["ov"][key] = not _FG_HIST["ov"].get(key)
+        if key == "ndx" and _FG_HIST["ov"][key] and not _FG_HIST["series"]["ndx"]:
+            sp_btn.innerHTML = '<span class="mini-spin"></span>'
+            try:
+                rows = await _fetch_index_history("^NDX", "10y")
+                _FG_HIST["series"]["ndx"] = {
+                    datetime.fromtimestamp(r[0], timezone.utc).strftime("%Y-%m-%d"): r[4]
+                    for r in rows or []}
+            except Exception as exc:
+                _warn("fear_greed_ndx", exc)
+        _fg_refresh_chart()
+        return
+    btn = event.target.closest("[data-fgrange]")
+    box = document.querySelector("#fg-chart")
+    if btn is None or box is None:
+        return
+    days = int(btn.getAttribute("data-fgrange"))
+    _FG_HIST["range"] = days
+    if (days == 0 or days > 365) and not _FG_HIST["long"]:
+        box.innerHTML = '<div class="hint"><span class="mini-spin"></span></div>'
+        await _fg_ensure_long()
+        _fg_refresh_list()
+    box = document.querySelector("#fg-chart")
+    if box is not None:
+        box.innerHTML = _fg_history_body()
+
+
+@when("mousemove", "#fg-result")
+def on_fg_hover(event):
+    pts = _FG_CHART["pts"]
+    svg = document.querySelector("#fg-chart svg.chart-svg")
+    tip = document.querySelector("#fg-tip")
+    if not pts or svg is None or tip is None:
+        return
+    rect = svg.getBoundingClientRect()
+    if not rect.width or not rect.height:
+        return
+    if (event.clientX < rect.left or event.clientX > rect.right
+            or event.clientY < rect.top or event.clientY > rect.bottom):
+        _fg_hide_hover()
+        return
+    W, H = _FG_CHART["W"], _FG_CHART["H"]
+    sx = (event.clientX - rect.left) / rect.width * W
+    best = min(pts, key=lambda p: abs(p["x"] - sx))
+    guide = document.querySelector("#fg-guide")
+    dot = document.querySelector("#fg-guide-dot")
+    if guide is not None:
+        guide.setAttribute("x1", "%g" % best["x"])
+        guide.setAttribute("x2", "%g" % best["x"])
+        guide.style.display = "block"
+    if dot is not None:
+        dot.setAttribute("cx", "%g" % best["x"])
+        dot.setAttribute("cy", "%g" % best["y"])
+        dot.style.display = "block"
+    sy = best.get("sy") or {}
+    for el in svg.querySelectorAll(".fg-guide-sub"):
+        y = sy.get(el.id[len("fg-guide-dot-"):])
+        if y is None:
+            el.style.display = "none"
+        else:
+            el.setAttribute("cx", "%g" % best["x"])
+            el.setAttribute("cy", "%g" % y)
+            el.style.display = "block"
+    tip.innerHTML = best["tip"]
+    _place_tip_clamped(tip, svg, best["x"], best["y"], W, H)
+
+
+def _fg_hide_hover():
+    for sel in ("#fg-tip", "#fg-guide", "#fg-guide-dot"):
+        el = document.querySelector(sel)
+        if el is not None:
+            el.style.display = "none"
+    for el in document.querySelectorAll("#fg-chart .fg-guide-sub"):
+        el.style.display = "none"
+
+
+@when("mouseleave", "#fg-result")
+def on_fg_leave(event):
+    _fg_hide_hover()
+
+
 @when("click", "#multplBtn")
 async def on_multpl(event):
     btn = document.querySelector("#multplBtn")
@@ -15186,6 +15858,20 @@ def _on_doc_click_acct(event):
 
 
 document.addEventListener("click", create_proxy(_on_doc_click_acct))
+
+
+def _on_doc_click_fg_mark(event):
+    # #fg-result 안의 클릭은 _fg_mark_click 이 처리한다.
+    if not _FG_MARKS["sel"]:
+        return
+    t = event.target
+    if t is not None and t.closest is not None and t.closest("#fg-result") is not None:
+        return
+    _FG_MARKS.update(sel=None, edit=False)
+    _fg_refresh_chart()
+
+
+document.addEventListener("click", create_proxy(_on_doc_click_fg_mark))
 
 
 @when("click", "#aiAdminOpenBtn")
