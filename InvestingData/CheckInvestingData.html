@@ -598,7 +598,23 @@
   @media (max-width:640px) { .tech-gauges { grid-template-columns:1fr; } }
   .fg-h3 { font-size:14px; color:var(--mut); margin:20px 0 10px;
     border-top:1px solid var(--bd); padding-top:14px; }
-  .fg-comp { margin-bottom:12px; }
+  .fg-comp { margin-bottom:12px; position:relative; }
+  .fg-help-btn { width:18px; height:18px; margin-left:6px; padding:0; border:1px solid var(--bd);
+    border-radius:50%; background:var(--bg); color:var(--mut); font-size:11px; font-weight:700;
+    line-height:16px; cursor:pointer; vertical-align:1px; }
+  .fg-help-btn:hover, .fg-help-btn.on { background:var(--pri); border-color:var(--pri); color:#fff; }
+  .fg-help-pop { display:none; position:absolute; top:24px; left:0; z-index:20;
+    width:min(380px, 100%); background:#fff; border:1px solid var(--bd); border-radius:8px;
+    box-shadow:0 6px 20px rgba(0,0,0,.16); padding:12px 30px 12px 14px;
+    font-size:12px; line-height:1.55; color:#1f2328; }
+  .fg-help-pop.open { display:block; }
+  .fg-help-pop.up { top:auto; bottom:calc(100% + 4px); }
+  .fg-help-pop h4 { margin:0 0 6px; font-size:13px; }
+  .fg-help-pop p { margin:5px 0; }
+  .fg-help-pop .fg-help-note { color:var(--mut); font-size:11px; }
+  .fg-help-x { position:absolute; top:6px; right:8px; width:22px; height:22px; border:none;
+    background:transparent; font-size:16px; line-height:1; cursor:pointer; color:var(--mut); padding:0; }
+  .fg-help-x:hover { color:var(--sell); }
   .fg-comp-top { display:flex; justify-content:space-between; align-items:baseline;
     font-size:13px; margin-bottom:4px; }
   .fg-comp-name { color:#1f2328; }
@@ -645,6 +661,7 @@
     border:1px solid var(--bd); border-radius:5px; background:var(--bg); color:inherit; cursor:pointer; }
   @media (prefers-color-scheme: dark) {
     .fg-mark-pop { background:#161c24; }
+    .fg-help-pop { background:#161c24; color:#e6e8eb; }
     .fg-mark { fill:#161c24; }
   }
   .macro-note { color:var(--mut); font-size:12px; margin-top:8px; line-height:1.5; }
@@ -1248,7 +1265,7 @@
 
   <div class="tab-panel" id="tab-d1">
     <fieldset>
-      <legend>종목 DB (S&amp;P 500 · 러셀 1000 · 코스피)</legend>
+      <legend>종목 DB</legend>
       <div class="row">
         <span id="d1Mkt" class="fin-period">
           <button type="button" data-mkt="sp" class="on">S&amp;P 500</button>
@@ -12049,6 +12066,31 @@ _FG_COMPONENTS = [
     ("junk_bond_demand", "정크본드 수요"),
 ]
 
+# 구성 지표 도움말: (무엇을 보는지, 해석)
+_FG_COMP_HELP = {
+    "market_momentum_sp500": (
+        "S&P 500 지수가 125일 이동평균에서 얼마나 떨어져 있는지를 봅니다.",
+        "지수가 125일 평균보다 크게 위면 탐욕, 아래면 공포 쪽입니다."),
+    "stock_price_strength": (
+        "뉴욕증권거래소(NYSE)에서 52주 신고가 종목 수와 52주 신저가 종목 수의 차이입니다.",
+        "신고가 종목이 더 많으면 탐욕, 신저가 종목이 더 많으면 공포입니다."),
+    "stock_price_breadth": (
+        "상승 종목 거래량과 하락 종목 거래량을 비교하는 맥클런 거래량 합산 지수(McClellan Volume Summation Index)입니다.",
+        "상승 종목 쪽으로 거래가 몰리면 탐욕, 하락 종목 쪽으로 몰리면 공포입니다."),
+    "put_call_options": (
+        "최근 5거래일 평균 풋/콜 옵션 거래 비율입니다. 풋은 하락에, 콜은 상승에 거는 옵션입니다.",
+        "비율이 높을수록(하락 대비가 많을수록) 공포, 낮을수록 탐욕입니다."),
+    "market_volatility_vix": (
+        "변동성 지수 VIX를 자신의 50일 이동평균과 비교합니다.",
+        "VIX가 50일 평균보다 높으면 공포, 낮으면 탐욕입니다."),
+    "safe_haven_demand": (
+        "최근 20거래일 동안 주식(S&P 500)과 미국 국채의 수익률 차이입니다.",
+        "국채 수익률이 주식보다 좋으면(안전자산으로 피신) 공포, 주식이 앞서면 탐욕입니다."),
+    "junk_bond_demand": (
+        "정크본드(투자부적격 등급 채권)와 투자적격 등급 채권의 금리 차이(스프레드)입니다.",
+        "스프레드가 좁아지면 위험을 감수하는 분위기라 탐욕, 넓어지면 공포입니다."),
+}
+
 
 def _fg_label(rating):
     return _FG_RATING_KR.get((rating or "").strip().lower(), rating or "-")
@@ -12605,14 +12647,23 @@ def _fg_cnn_html(data):
         csf = _fg_num(c.get("score"))
         cs_txt = "%.0f" % csf if csf is not None else "-"
         ccolor = _fg_color(csf if csf is not None else 50)
+        what, how = _FG_COMP_HELP.get(key, ("", ""))
+        help_html = (
+            '<button type="button" class="fg-help-btn" data-fghelp="%s" aria-label="도움말">?</button>'
+            '<div class="fg-help-pop" data-fghelp-pop="%s">'
+            '<button type="button" class="fg-help-x" data-fghelp-close="1">×</button>'
+            '<h4>%s</h4><p>%s</p><p>%s</p>'
+            '<p class="fg-help-note">각 지표는 장기 평균 대비 편차로 0~100 점수화되고, '
+            '7개 점수를 같은 비중으로 평균한 값이 공포·탐욕 지수입니다.</p></div>'
+            % (key, key, _esc(label), _esc(what), _esc(how))) if what else ""
         comp_html.append(
             '<div class="fg-comp">'
             '<div class="fg-comp-top">'
-            '<span class="fg-comp-name">%s</span>'
+            '<span class="fg-comp-name">%s%s</span>'
             '<span class="fg-comp-val" style="color:%s">%s · %s</span></div>'
             '%s'
             '</div>'
-            % (_esc(label), ccolor, _esc(cs_txt), _esc(_fg_label(c.get("rating"))),
+            % (_esc(label), help_html, ccolor, _esc(cs_txt), _esc(_fg_label(c.get("rating"))),
                _fg_zone_bar(csf, mini=True)))
 
     asof_html = ('<div class="fg-asof">기준: %s (UTC)</div>' % _esc(asof)) if asof else ""
@@ -15424,6 +15475,41 @@ async def _load_fear_greed():
             % _esc(str(exc)))
 
 
+def _fg_help_close_all(keep=None):
+    for el in document.querySelectorAll("#fg-result .fg-help-pop.open"):
+        if keep is None or el.getAttribute("data-fghelp-pop") != keep:
+            el.classList.remove("open")
+    for el in document.querySelectorAll("#fg-result .fg-help-btn.on"):
+        if keep is None or el.getAttribute("data-fghelp") != keep:
+            el.classList.remove("on")
+
+
+def _fg_help_click(event):
+    """구성 지표 도움말 클릭이면 처리하고 True. 그 외 클릭은 열린 도움말만 닫음."""
+    t = event.target
+    btn = t.closest("[data-fghelp]")
+    if btn is not None:
+        key = btn.getAttribute("data-fghelp")
+        _fg_help_close_all(keep=key)
+        pop = document.querySelector('#fg-result [data-fghelp-pop="%s"]' % key)
+        if pop is not None:
+            pop.classList.remove("up")
+            pop.classList.toggle("open")
+            btn.classList.toggle("on", pop.classList.contains("open"))
+            card = pop.closest(".card")
+            if card is not None and pop.classList.contains("open"):
+                if pop.getBoundingClientRect().bottom > card.getBoundingClientRect().bottom - 4:
+                    pop.classList.add("up")
+        return True
+    if t.closest("[data-fghelp-close]") is not None:
+        _fg_help_close_all()
+        return True
+    if t.closest(".fg-help-pop") is not None:
+        return True
+    _fg_help_close_all()
+    return False
+
+
 async def _fg_mark_click(event):
     """마킹 관련 클릭이면 처리하고 True."""
     t = event.target
@@ -15535,6 +15621,8 @@ async def _fg_mark_list_action(act, day):
 
 @when("click", "#fg-result")
 async def on_fg_range_click(event):
+    if _fg_help_click(event):
+        return
     if await _fg_mark_click(event):
         return
     sp_btn = event.target.closest("[data-fgsp]")
@@ -16082,11 +16170,12 @@ document.addEventListener("click", create_proxy(_on_doc_click_acct))
 
 
 def _on_doc_click_fg_mark(event):
-    # #fg-result 안의 클릭은 _fg_mark_click 이 처리한다.
-    if not _FG_MARKS["sel"]:
-        return
+    # #fg-result 안의 클릭은 _fg_mark_click / _fg_help_click 이 처리한다.
     t = event.target
     if t is not None and t.closest is not None and t.closest("#fg-result") is not None:
+        return
+    _fg_help_close_all()
+    if not _FG_MARKS["sel"]:
         return
     _FG_MARKS.update(sel=None, edit=False)
     _fg_refresh_chart()
