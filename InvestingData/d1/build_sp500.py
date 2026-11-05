@@ -9,6 +9,7 @@
        또는 python build_sp500.py --upload   (수집 후 바로 D1 적재)
        wrangler로 직접 적재할 땐 최초 1회 ADDED_COLS 열을 ALTER TABLE 로 추가해야 함
 코스피 종목(currency='KRW')은 build_kospi.py 가 관리하며 여기서는 건드리지 않는다.
+S&P 400·600 전용 종목은 build_sp1000.py 가 수집한다 (indices 태그는 두 스크립트 모두 4개 지수 기준).
 """
 import argparse
 import io
@@ -35,6 +36,10 @@ import yfinance as yf
 HERE = Path(__file__).resolve().parent
 SP500_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
 R1000_URL = "https://en.wikipedia.org/wiki/List_of_Russell_1000_companies"
+SP400_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_400_companies"
+SP600_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_600_companies"
+# 전체 수집 시 미국 종목 정리(prune)를 허용하는 지수별 최소 종목 수 (목록 파싱 이상 시 대량 삭제 방지)
+MIN_COUNTS = {"S&P500": 450, "R1000": 900, "S&P400": 350, "S&P600": 500}
 EXCHANGES = {"NMS": "NASDAQ", "NGM": "NASDAQ", "NCM": "NASDAQ", "NYQ": "NYSE",
              "ASE": "NYSE American", "PCX": "NYSE Arca", "BTS": "Cboe"}
 # 한 회사가 두 클래스로 편입된 경우 제외할 쪽 (GOOGL·FOXA·NWSA만 유지)
@@ -102,11 +107,11 @@ def sp500_symbols():
     return sorted(symbols - SECONDARY_CLASSES)
 
 
-def r1000_symbols(prefer=()):
-    """다중 클래스 회사는 1종목만: prefer(S&P500)에 있는 쪽 > 점 없는 티커 > 표 순서."""
-    df = _wiki_table(R1000_URL, match="Symbol")
+def _one_class_symbols(url, name_col, prefer=()):
+    """다중 클래스 회사는 1종목만: prefer에 있는 쪽 > 점 없는 티커 > 표 순서."""
+    df = _wiki_table(url, match="Symbol")
     picked = {}
-    for name, sym in zip(df["Company"].astype(str), df["Symbol"].astype(str)):
+    for name, sym in zip(df[name_col].astype(str), df["Symbol"].astype(str)):
         sym = sym.strip().replace(".", "-")
         key = re.sub(r"\s*\((Class|Series|Common)[^)]*\)\s*$", "", name).strip().lower()
         rank = (sym not in prefer, "-" in sym)
@@ -116,19 +121,42 @@ def r1000_symbols(prefer=()):
 
 
 def index_members():
-    """{심볼: "S&P500 R1000"} 와 지수별 종목 수."""
-    sp = sp500_symbols()
-    try:
-        r1 = r1000_symbols(set(sp))
-    except Exception as exc:
-        print("러셀1000 목록 조회 실패: %s" % exc, file=sys.stderr)
-        r1 = []
+    """{심볼: "S&P500 R1000"} 와 {지수: 종목 수}. 미국 지수 4개를 모두 태깅해
+    build_sp500.py / build_sp1000.py 가 같은 종목에 같은 indices 를 쓰도록 한다."""
+    lists = {"S&P500": sp500_symbols()}
+    for tag, url, col in (("R1000", R1000_URL, "Company"),
+                          ("S&P400", SP400_URL, "Security"),
+                          ("S&P600", SP600_URL, "Security")):
+        prefer = set().union(*lists.values())
+        try:
+            lists[tag] = _one_class_symbols(url, col, prefer)
+        except Exception as exc:
+            print("%s 목록 조회 실패: %s" % (tag, exc), file=sys.stderr)
+            lists[tag] = []
     tags = {}
-    for s in sp:
-        tags.setdefault(s, []).append("S&P500")
-    for s in r1:
-        tags.setdefault(s, []).append("R1000")
-    return {s: " ".join(t) for s, t in tags.items()}, len(sp), len(r1)
+    for tag in ("S&P500", "S&P400", "S&P600", "R1000"):
+        for s in lists[tag]:
+            tags.setdefault(s, []).append(tag)
+    return {s: " ".join(t) for s, t in tags.items()}, {k: len(v) for k, v in lists.items()}
+
+
+def prune_sql(members, counts):
+    """어느 미국 지수에도 없는 USD 종목 삭제 SQL. 지수 목록 하나라도 이상하면 빈 문자열."""
+    if any(counts.get(k, 0) < n for k, n in MIN_COUNTS.items()):
+        print("지수 목록 일부 이상 → 미국 종목 정리 생략: %s" % counts, file=sys.stderr)
+        return ""
+    keep = ", ".join(sql_val(s) for s in sorted(members))
+    return ("\nDELETE FROM stocks WHERE COALESCE(currency, 'USD') = 'USD'"
+            " AND symbol NOT IN (%s);" % keep
+            + "\nDELETE FROM op_income_history WHERE symbol NOT IN (SELECT symbol FROM stocks);")
+
+
+def us_build(members):
+    def build(s, tries=5):
+        row, ops = fetch_with_retry(s, tries)
+        row["indices"] = members.get(s)
+        return to_sql(row, ops)
+    return build
 
 
 def num(v, scale=1.0):
@@ -363,28 +391,22 @@ def finish(args, schema, results, failed):
 
 def main():
     args = parse_args("sp500_data.sql")
-    members, n_sp, n_r1 = index_members()
-    symbols = [s.upper() for s in args.symbols] if args.symbols else sorted(members)
+    members, counts = index_members()
+    # S&P400/600 전용 종목은 build_sp1000.py 가 수집
+    mine = sorted(s for s, t in members.items() if "S&P500" in t or "R1000" in t)
+    symbols = [s.upper() for s in args.symbols] if args.symbols else mine
     if args.limit:
         symbols = symbols[: args.limit]
-    print("대상 %d종목 (S&P500 %d, R1000 %d, 합집합 %d)" % (len(symbols), n_sp, n_r1, len(members)))
-
-    def build(s, tries=5):
-        row, ops = fetch_with_retry(s, tries)
-        row["indices"] = members.get(s)
-        return to_sql(row, ops)
+    print("대상 %d종목 (S&P500 %d, R1000 %d, 합집합 %d)"
+          % (len(symbols), counts["S&P500"], counts["R1000"], len(mine)))
 
     schema = schema_sql()
     dup = ", ".join(sql_val(s) for s in sorted(SECONDARY_CLASSES))
     schema += "\nDELETE FROM stocks WHERE symbol IN (%s);" % dup
     schema += "\nDELETE FROM op_income_history WHERE symbol IN (%s);" % dup
-    if not args.symbols and not args.limit and n_sp >= 450 and n_r1 >= 900:
-        # 전체 수집일 때만 지수에서 빠진 미국 종목 정리 (목록 파싱 이상 시 대량 삭제 방지)
-        keep = ", ".join(sql_val(s) for s in symbols)
-        schema += ("\nDELETE FROM stocks WHERE COALESCE(currency, 'USD') = 'USD'"
-                   " AND symbol NOT IN (%s);" % keep)
-        schema += "\nDELETE FROM op_income_history WHERE symbol NOT IN (SELECT symbol FROM stocks);"
-    results, failed = run_all(symbols, build, args.workers)
+    if not args.symbols and not args.limit:
+        schema += prune_sql(members, counts)
+    results, failed = run_all(symbols, us_build(members), args.workers)
     finish(args, schema, results, failed)
 
 

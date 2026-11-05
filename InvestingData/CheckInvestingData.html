@@ -171,7 +171,10 @@
   .d1-wrap { max-height:70vh; overflow:auto; margin-top:12px; border:1px solid var(--bd);
     border-radius:6px; }
   .d1-wrap:empty { display:none; }
-  main:has(#tab-d1.active) { max-width:none; padding-left:12px; padding-right:12px; }
+  /* 모바일은 다른 탭과 같은 좌우 여백 유지(헤더 지수·탭 폭이 바뀌지 않게) */
+  @media (min-width:601px) {
+    main:has(#tab-d1.active) { max-width:none; padding-left:12px; padding-right:12px; }
+  }
   #d1-result { max-width:860px; margin-left:auto; margin-right:auto; }
   main:has(#tab-d1.active) > :is(.index-box, .tab-groups, .tabs) { box-sizing:border-box;
     max-width:860px; margin-left:auto; margin-right:auto; }
@@ -211,6 +214,10 @@
     table.mcap-table td .sub { display:block; margin-left:0; font-size:11px;
       max-width:120px; overflow:hidden; text-overflow:ellipsis; }
     table.mcap-table .mcap-go { font-size:11px; padding:2px 6px; }
+    /* 종목 DB 툴바가 화면보다 넓어져 페이지 폭(헤더·탭)이 늘어나지 않게 */
+    #tab-d1 fieldset { min-width:0; }
+    #d1Mkt { display:flex; flex-wrap:wrap; max-width:100%; }
+    #d1Mkt button { flex:1 1 auto; }
   }
   #mcap-chart { margin-top:14px; }
   #mcap-chart .mcap-chart-head { font-size:13px; color:var(--mut); margin-bottom:6px; }
@@ -1233,11 +1240,14 @@
           <button type="button" data-mkt="sp" class="on">S&amp;P 500</button>
           <button type="button" data-mkt="r1">러셀 1000</button>
           <button type="button" data-mkt="r1only" title="러셀 1000 중 S&amp;P 500이 아닌 종목">러셀 1000 전용</button>
+          <button type="button" data-mkt="sp400" title="S&amp;P MidCap 400">S&amp;P 400</button>
+          <button type="button" data-mkt="sp600" title="S&amp;P SmallCap 600">S&amp;P 600</button>
           <button type="button" data-mkt="kospi" title="코스피 보통주 ($M 열은 달러 환산, 주가·EPS는 원화)">코스피</button>
         </span>
         <button id="d1ReloadBtn" type="button">새로고침</button>
         <button id="d1ResetBtn" type="button">필터 초기화</button>
         <button id="d1LeftBtn" type="button" title="표의 맨 왼쪽으로 이동">⏮ 맨 왼쪽</button>
+        <button id="d1CsvBtn" type="button" title="현재 필터·정렬 결과를 CSV 파일로 저장">CSV 저장</button>
         <span id="d1-saved" class="d1-saved" style="display:none">
           <select id="d1SavedSel"><option value="">저장된 필터</option></select>
           <input id="d1SaveName" type="text" maxlength="40" placeholder="필터 이름">
@@ -1451,7 +1461,7 @@ from html import unescape as _html_unescape
 
 from pyodide.http import pyfetch as _pyfetch_raw
 from pyscript import document, window, when
-from pyscript.ffi import create_proxy
+from pyscript.ffi import create_proxy, to_js
 import js
 
 _FETCH_TIMEOUT_MS = 25000
@@ -13732,12 +13742,15 @@ _D1_MKTS = {
     "sp": ("S&P 500", lambda v: "S&P500" in v),
     "r1": ("러셀 1000", lambda v: "R1000" in v),
     "r1only": ("러셀 1000 전용", lambda v: "R1000" in v and "S&P500" not in v),
+    "sp400": ("S&P 400", lambda v: "S&P400" in v),
+    "sp600": ("S&P 600", lambda v: "S&P600" in v),
     "kospi": ("코스피", lambda v: "KOSPI" in v),
 }
 # 코스피는 기관 보유 비율 대신 외국인/기관 순매수, 미국 시장은 그 반대
 _D1_NETS = {"frgn_net_1m", "inst_net_1m", "frgn_net_3m", "inst_net_3m"}
 _D1_HIDE = {"kospi": {"symbol", "sector", "short_pct", "inst_pct", "insider_net_6m",
-                       "_updown", "eps_up_30d", "eps_down_30d"}, "sp": _D1_NETS, "r1": _D1_NETS, "r1only": _D1_NETS}
+                       "_updown", "eps_up_30d", "eps_down_30d"}, "sp": _D1_NETS, "r1": _D1_NETS, "r1only": _D1_NETS,
+           "sp400": _D1_NETS, "sp600": _D1_NETS}
 # (섹션, [(라벨, 키, 형식)]) — 형식: usd($M) / pct / pctc(색상) / int / px / ratio / eok(억원, 색상) / text
 _D1_SECTIONS = [
     ("1. 기본 식별 및 기업 규모", [
@@ -13923,7 +13936,8 @@ def _d1_build_grid():
     _d1_render_body()
 
 
-def _d1_render_body():
+def _d1_filtered():
+    """(보이는 열, 필터·정렬 적용된 행, 잘못된 식 열 키 집합)."""
     cols = _d1_cols()
     preds, bad = [], set()
     for k, _l, kind in cols:
@@ -13940,7 +13954,11 @@ def _d1_render_body():
     has = [r for r in rows if r.get(key) is not None]
     has.sort(key=lambda r: str(r[key]).lower() if _D1_KIND.get(key) == "text" else r[key],
              reverse=d < 0)
-    rows = has + [r for r in rows if r.get(key) is None]
+    return cols, has + [r for r in rows if r.get(key) is None], bad
+
+
+def _d1_render_body():
+    cols, rows, bad = _d1_filtered()
     sel = _D1_STATE["sel"]
     out = []
     for n, r in enumerate(rows, 1):
@@ -13984,6 +14002,45 @@ def _d1_render_active(bad=()):
 @when("click", "#d1LeftBtn")
 def on_d1_left(event):
     document.querySelector("#d1-grid").scrollLeft = 0
+
+
+def _csv_cell(v):
+    if v is None:
+        return ""
+    s = str(v)
+    # 수식 주입 방지(엑셀에서 =,+,-,@ 로 시작하는 문자열)
+    if not isinstance(v, (int, float)) and s[:1] in ("=", "+", "-", "@"):
+        s = "'" + s
+    if any(c in s for c in ',"\r\n'):
+        s = '"%s"' % s.replace('"', '""')
+    return s
+
+
+@when("click", "#d1CsvBtn")
+def on_d1_csv(event):
+    if not _D1_STATE["loaded"]:
+        window.alert("데이터를 아직 불러오지 않았습니다.")
+        return
+    cols, rows, _bad = _d1_filtered()
+    if not rows:
+        window.alert("저장할 종목이 없습니다.")
+        return
+    lines = [",".join(_csv_cell(label) for _k, label, _kind in cols + [("currency", "통화", "text")])]
+    for r in rows:
+        lines.append(",".join(_csv_cell(r.get(k)) for k, _l, _kind in cols)
+                     + "," + _csv_cell(r.get("currency") or "USD"))
+    text = "\ufeff" + "\r\n".join(lines) + "\r\n"
+    blob = js.Blob.new(to_js([text]), to_js({"type": "text/csv;charset=utf-8"},
+                                            dict_converter=js.Object.fromEntries))
+    url = js.URL.createObjectURL(blob)
+    a = document.createElement("a")
+    a.href = url
+    a.download = "stockdb_%s_%s.csv" % (_D1_STATE.get("mkt") or "all",
+                                        datetime.now().strftime("%Y%m%d_%H%M"))
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    js.setTimeout(create_proxy(lambda: js.URL.revokeObjectURL(url)), 1000)
 
 
 def _d1_set_mkt(mkt):
