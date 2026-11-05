@@ -204,6 +204,20 @@
   table.d1-grid .d1-flt { width:100%; min-width:64px; box-sizing:border-box; font-size:11px;
     padding:2px 4px; font-weight:400; }
   table.d1-grid .d1-flt.bad { border-color:#d1242f; background:#fff0f0; }
+  table.d1-grid .d1-chk-btn { width:100%; min-width:110px; box-sizing:border-box; font-size:11px;
+    padding:2px 4px; font-weight:400; text-align:left; cursor:pointer; white-space:nowrap;
+    overflow:hidden; text-overflow:ellipsis; max-width:180px; }
+  table.d1-grid .d1-chk-btn.on { border-color:#2962ff; color:#2962ff; }
+  #d1-chk-pop { position:fixed; z-index:9500; display:none; min-width:200px; max-height:340px;
+    overflow:auto; background:var(--bg); border:1px solid var(--bd); border-radius:6px;
+    box-shadow:0 4px 14px rgba(0,0,0,.25); padding:6px 0; font-size:12px; }
+  #d1-chk-pop.open { display:block; }
+  #d1-chk-pop .d1-chk-head { display:flex; justify-content:flex-end; gap:6px; padding:0 8px 4px;
+    border-bottom:1px solid var(--bd); margin-bottom:4px; }
+  #d1-chk-pop label { display:flex; align-items:center; gap:6px; padding:3px 10px;
+    cursor:pointer; white-space:nowrap; }
+  #d1-chk-pop label:hover { background:rgba(41,98,255,.12); }
+  #d1-chk-pop label small { margin-left:auto; padding-left:10px; color:var(--mut); }
   table.d1-grid tbody tr { cursor:pointer; }
   table.d1-grid tbody tr:hover td { background:#f0f4ff; }
   table.d1-grid tbody tr.sel td { background:#dce6ff; }
@@ -13900,7 +13914,17 @@ def _d1_pred(kind, expr):
         return None
     if kind == "text":
         terms = [t.strip().lower() for t in e.split(",") if t.strip()]
-        return lambda v: v is not None and any(t in str(v).lower() for t in terms)
+        inc = [t for t in terms if not t.startswith("!")]
+        exc = [t[1:].strip() for t in terms if t.startswith("!") and t[1:].strip()]
+        if not inc and not exc:
+            return None
+
+        def _text_pred(v):
+            s = "" if v is None else str(v).lower()
+            if inc and not any(t in s for t in inc):
+                return False
+            return not any(t in s for t in exc)
+        return _text_pred
     e = e.replace(" ", "").replace(",", "").replace("%", "").replace("$", "")
     m = _D1_RANGE_RE.match(e)
     if m:
@@ -13913,6 +13937,126 @@ def _d1_pred(kind, expr):
     return lambda v: isinstance(v, (int, float)) and fn(v, x)
 
 
+# 문자 포함 대신 값 목록 체크박스로 고르는 열(쉼표로 이은 정확 일치 OR)
+_D1_CHECK_KEYS = {"sector"}
+
+
+def _d1_check_vals(key):
+    return [t.strip() for t in (_D1_STATE["flt"].get(key) or "").split(",") if t.strip()]
+
+
+def _d1_check_pred(expr):
+    vals = {t.strip().lower() for t in (expr or "").split(",") if t.strip()}
+    if not vals:
+        return None
+    return lambda v: v is not None and str(v).strip().lower() in vals
+
+
+def _d1_check_label(key):
+    vals = _d1_check_vals(key)
+    if not vals:
+        return "전체"
+    return vals[0] if len(vals) == 1 else "%d개 선택" % len(vals)
+
+
+def _d1_check_options(key):
+    """현재 시장 종목의 값별 개수(값 오름차순)."""
+    mkt = _D1_MKTS.get(_D1_STATE["mkt"])
+    counts = {}
+    for r in _D1_STATE["rows"]:
+        if mkt and not mkt[1](r.get("indices") or ""):
+            continue
+        v = (r.get(key) or "").strip() if isinstance(r.get(key), str) else r.get(key)
+        if v:
+            counts[v] = counts.get(v, 0) + 1
+    return sorted(counts.items(), key=lambda x: str(x[0]).lower())
+
+
+_D1_CHK = {"key": None, "pop": None, "proxies": []}
+
+
+def _d1_chk_close():
+    pop = _D1_CHK["pop"]
+    if pop is not None:
+        pop.classList.remove("open")
+    _D1_CHK["key"] = None
+
+
+def _d1_chk_sync_btn(key):
+    btn = document.querySelector('#d1-grid .d1-chk-btn[data-key="%s"]' % key)
+    if btn is not None:
+        btn.textContent = _d1_check_label(key)
+        btn.title = ", ".join(_d1_check_vals(key)) or "전체"
+        btn.classList.toggle("on", bool(_d1_check_vals(key)))
+
+
+def _d1_chk_apply(key, vals):
+    _D1_STATE["flt"][key] = ",".join(vals)
+    _d1_chk_sync_btn(key)
+    _D1_DEBOUNCE["seq"] += 1
+    asyncio.ensure_future(_d1_render_later(_D1_DEBOUNCE["seq"]))
+
+
+def _d1_chk_on_change(event):
+    key = _D1_CHK["key"]
+    if key is None:
+        return
+    boxes = _D1_CHK["pop"].querySelectorAll("input[type=checkbox]")
+    vals = [boxes.item(i).value for i in range(boxes.length) if boxes.item(i).checked]
+    _d1_chk_apply(key, vals)
+
+
+def _d1_chk_on_click(event):
+    btn = event.target.closest("button[data-chk]")
+    if btn is None or _D1_CHK["key"] is None:
+        return
+    on = btn.getAttribute("data-chk") == "all"
+    boxes = _D1_CHK["pop"].querySelectorAll("input[type=checkbox]")
+    for i in range(boxes.length):
+        boxes.item(i).checked = on
+    _d1_chk_apply(_D1_CHK["key"],
+                  [boxes.item(i).value for i in range(boxes.length)] if on else [])
+
+
+def _d1_chk_on_doc_click(event):
+    if _D1_CHK["key"] is None:
+        return
+    t = event.target
+    if t.closest("#d1-chk-pop") is None and t.closest(".d1-chk-btn") is None:
+        _d1_chk_close()
+
+
+def _d1_chk_open(btn):
+    key = btn.getAttribute("data-key")
+    if _D1_CHK["key"] == key:
+        _d1_chk_close()
+        return
+    pop = _D1_CHK["pop"]
+    if pop is None:
+        pop = document.createElement("div")
+        pop.id = "d1-chk-pop"
+        document.body.appendChild(pop)
+        for target, ev, fn in ((pop, "change", _d1_chk_on_change), (pop, "click", _d1_chk_on_click),
+                               (document, "click", _d1_chk_on_doc_click)):
+            p = create_proxy(fn)
+            _D1_CHK["proxies"].append(p)
+            target.addEventListener(ev, p)
+        _D1_CHK["pop"] = pop
+    sel = {v.lower() for v in _d1_check_vals(key)}
+    items = "".join(
+        '<label><input type="checkbox" value="%s"%s>%s<small>%d</small></label>'
+        % (_esc(v), " checked" if str(v).lower() in sel else "", _esc(v), n)
+        for v, n in _d1_check_options(key))
+    pop.innerHTML = ('<div class="d1-chk-head"><button type="button" data-chk="all">전체 선택</button>'
+                     '<button type="button" data-chk="none">전체 해제</button></div>%s' % (items or '<div class="hint" style="padding:4px 10px">값 없음</div>'))
+    _D1_CHK["key"] = key
+    pop.classList.add("open")
+    rect = btn.getBoundingClientRect()
+    left = min(rect.left, window.innerWidth - pop.offsetWidth - 8)
+    pop.style.left = "%dpx" % max(4, left)
+    pop.style.top = "%dpx" % (rect.bottom + 2)
+
+
 def _d1_cols():
     """선택한 시장에 해당하는 열만."""
     hide = _D1_HIDE.get(_D1_STATE["mkt"], ())
@@ -13920,16 +14064,25 @@ def _d1_cols():
 
 
 def _d1_build_grid():
+    _d1_chk_close()
     key, d = _D1_STATE["sort"]
     ths = ['<th class="cn">#</th>']
     for i, (k, label, kind) in enumerate(_d1_cols()):
         arrow = (" ▲" if d > 0 else " ▼") if k == key else ""
         cls = ("c0 " if i == 0 else "") + ("" if kind == "text" else "num")
+        if k in _D1_CHECK_KEYS:
+            vals = _d1_check_vals(k)
+            ths.append(
+                '<th class="%s" data-key="%s"><div class="d1-sort">%s%s</div>'
+                '<button type="button" class="d1-chk-btn%s" data-key="%s" title="%s">%s</button></th>'
+                % (cls, k, _esc(label), arrow, " on" if vals else "", k,
+                   _esc(", ".join(vals) or "전체"), _esc(_d1_check_label(k))))
+            continue
         ths.append(
             '<th class="%s" data-key="%s"><div class="d1-sort">%s%s</div>'
             '<input type="text" class="d1-flt" data-key="%s" value="%s" placeholder="%s"></th>'
             % (cls, k, _esc(label), arrow, k, _esc(_D1_STATE["flt"].get(k, "")),
-               "포함" if kind == "text" else "&gt;0"))
+               "포함, !제외" if kind == "text" else "&gt;0"))
     document.querySelector("#d1-grid").innerHTML = (
         '<table class="d1-grid"><thead><tr>%s</tr></thead><tbody></tbody></table>'
         % "".join(ths))
@@ -13941,7 +14094,8 @@ def _d1_filtered():
     cols = _d1_cols()
     preds, bad = [], set()
     for k, _l, kind in cols:
-        p = _d1_pred(kind, _D1_STATE["flt"].get(k))
+        p = (_d1_check_pred(_D1_STATE["flt"].get(k)) if k in _D1_CHECK_KEYS
+             else _d1_pred(kind, _D1_STATE["flt"].get(k)))
         if p is False:
             bad.add(k)
         elif p:
@@ -14068,13 +14222,19 @@ def on_d1_active_click(event):
     chip = event.target.closest(".d1-chip[data-key]")
     if chip is None:
         return
-    el = document.querySelector('#d1-grid .d1-flt[data-key="%s"]' % chip.getAttribute("data-key"))
+    k = chip.getAttribute("data-key")
+    el = document.querySelector('#d1-grid .d1-flt[data-key="%s"], #d1-grid .d1-chk-btn[data-key="%s"]'
+                                % (k, k))
     if el is None:
         return
     wrap = document.querySelector("#d1-grid")
     th = el.closest("th")
     wrap.scrollTop = 0
     wrap.scrollLeft = max(0, th.offsetLeft - (wrap.clientWidth - th.offsetWidth) / 2)
+    if el.classList.contains("d1-chk-btn"):
+        event.stopPropagation()
+        _d1_chk_open(el)
+        return
     el.focus()
     el.select()
 
@@ -14173,6 +14333,10 @@ async def _d1_render_later(seq):
 @when("click", "#d1-grid")
 def on_d1_grid_click(event):
     t = event.target
+    chk = t.closest(".d1-chk-btn")
+    if chk is not None:
+        _d1_chk_open(chk)
+        return
     head = t.closest(".d1-sort")
     if head is not None:
         key = head.parentElement.getAttribute("data-key")
