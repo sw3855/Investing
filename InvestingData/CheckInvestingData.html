@@ -117,6 +117,8 @@
     white-space:normal; box-shadow:0 4px 12px rgba(0,0,0,.18); }
   .help-tip:hover .help-pop, .help-tip:focus .help-pop { display:block; }
   .help-tip.left .help-pop { left:-8px; transform:none; }
+  /* .card 가 overflow:hidden 이라 카드 상단의 긴 도움말은 아래로 펼친다 */
+  .help-tip.down .help-pop { top:calc(100% + 6px); bottom:auto; max-width:min(560px, 86vw); }
   .mini-spin { display:inline-block; width:11px; height:11px; margin-right:6px;
     vertical-align:-1px; border:2px solid rgba(41,98,255,.25);
     border-top-color:var(--pri); border-radius:50%;
@@ -297,6 +299,14 @@
     .indicator-chart { border:1px solid var(--bd); border-radius:8px; padding:6px 8px;
         background:#fff; }
     .recov-wrap { position:relative; }
+    .ind-panel { position:relative; }
+    .ind-toggle { border:1px solid var(--bd); background:transparent; color:inherit; cursor:pointer;
+        font-size:12px; border-radius:6px; }
+    .ind-toggle-in { position:absolute; top:6px; left:6px; width:22px; height:20px; padding:0;
+        line-height:1; opacity:.7; }
+    .ind-toggle-in:hover { opacity:1; }
+    .ind-collapsed { width:100%; text-align:left; padding:6px 10px; font-weight:700; }
+    .ind-panel-body { position:relative; }
     .recov-help-btn:hover circle { fill:#dfe3e8; }
     .recov-help-pop { position:absolute; top:26px; left:8px; z-index:20;
         width:min(360px, calc(100% - 16px)); background:#fff; border:1px solid var(--bd);
@@ -437,6 +447,32 @@
     align-items:center; gap:5px; cursor:pointer; white-space:nowrap; }
   .stock-qtr-toggle input { cursor:pointer; margin:0; }
   .stock-qtr-metric { height:28px; }
+  .dca-head { display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; margin:4px 0 10px; }
+  .dca-pill { display:inline-block; padding:6px 20px; border-radius:999px; font-weight:800;
+    font-size:20px; letter-spacing:.5px; color:#fff; white-space:nowrap; }
+  .dca-pill.dark-txt { color:#111; }
+  .dca-zone { font-size:17px; font-weight:700; }
+  .dca-meta { color:var(--mut); font-size:13px; }
+  .dca-legend { display:flex; flex-wrap:wrap; gap:4px 14px; font-size:12px; color:var(--mut);
+    margin-bottom:6px; }
+  .dca-legend i { display:inline-block; width:10px; height:10px; border-radius:50%;
+    margin-right:5px; vertical-align:-1px; border:1px solid rgba(128,128,128,.5); }
+  .dca-inline { padding:0 4px 8px; }
+  .dca-inline .dca-head { margin:0; gap:6px 10px; }
+  .dca-inline .dca-pill { padding:3px 14px; font-size:13px; }
+  .dca-inline .dca-zone { font-size:14px; }
+  .dca-more-btn { border:1px solid var(--bd, rgba(128,128,128,.4)); background:transparent; border-radius:999px;
+    padding:2px 10px; font-size:12px; cursor:pointer; color:inherit; }
+  .dca-details { margin-top:8px; }
+  .dca-svg { width:100%; height:auto; display:block; }
+  .dca-help-pop { width:min(600px, calc(100% - 16px)); max-height:420px; overflow:auto; }
+  .dca-axes { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:8px;
+    margin-bottom:10px; }
+  .dca-ax { border:1px solid var(--line, rgba(128,128,128,.3)); border-radius:8px; padding:6px 10px; }
+  .dca-ax b { font-size:13px; }
+  .dca-ax .v { font-size:18px; font-weight:800; margin-left:8px; }
+  .dca-ax .w { font-size:11px; color:var(--mut); margin-left:6px; }
+  .dca-ax .d { font-size:11px; color:var(--mut); margin-top:2px; }
     .multpl-tip { position:absolute; top:8px; right:8px; pointer-events:none; display:none;
         align-items:center; justify-content:flex-end; gap:10px; max-width:calc(100% - 16px);
         color:var(--mut); font-size:12px; white-space:nowrap; overflow-x:auto; z-index:5; }
@@ -1540,6 +1576,8 @@ FIELDS = [
     "postmarket_high",
     "postmarket_low",
     "recommendation_mark",
+    "sector",
+    "industry",
     "recommendation_total",
     "recommendation_buy",
     "recommendation_hold",
@@ -4084,6 +4122,7 @@ def render_report(full_symbol, payload, keep_chart=False):
         document.querySelector("#stock-chart").replaceWith(old_chart)
     else:
         asyncio.ensure_future(load_stock_chart(full_symbol, desc))
+    asyncio.ensure_future(load_dca(full_symbol))
 
 
 def _on_add_compare(event):
@@ -7611,8 +7650,9 @@ def _candle_body_html(prefix, rows, dec, hover, trend_key, bench=None, vol=None,
         return a[s0:e] if a else a
 
     overlay = overlay_fn(w[lead:]) if overlay_fn else None
-    return ('<div class="candle-tip-host">%s</div>%s%s'
+    return ('<div class="candle-tip-host">%s</div>%s%s%s'
             % (_candle_svg(w, dec, prefix, hover, overlay, trend_key, lead, extra),
+               _dca_score_panel_html(w[lead:], extra) if prefix == "stockchart" else "",
                _recovery_pressure_html(w, cut(bench), prefix, cut(vol), lead, extra),
                _daily_indicators_html(w, prefix, lead, extra)))
 
@@ -7737,23 +7777,67 @@ def _oscillator_svg(rows, title, series, levels, vmin, vmax, guide_id=None, extr
     return "".join(parts)
 
 
+# 차트 보조지표 설정(DCA 기술 점수도 동일 값 사용)
+_WR_PERIOD, _WR_SIGNAL = 10, 9
+_STOCH_PARAMS = (15, 5, 5)
+
+
 def _daily_indicators_html(rows, prefix, lead=0, extra=0):
     """일봉용 Williams %R 및 Stochastic Slow 보조지표 패널 HTML."""
-    wr = _williams_r(rows, 10)
-    wr_signal = _sma_nullable(wr, 9)
-    slow_k, slow_d = _stochastic_slow(rows, 15, 5, 5)
+    wr = _williams_r(rows, _WR_PERIOD)
+    wr_signal = _sma_nullable(wr, _WR_SIGNAL)
+    slow_k, slow_d = _stochastic_slow(rows, *_STOCH_PARAMS)
     rows, wr, wr_signal, slow_k, slow_d = (
         a[lead:] for a in (rows, wr, wr_signal, slow_k, slow_d))
     return ('<div class="daily-indicators">%s%s</div>' % (
-        _oscillator_svg(rows, "Williams %R (10, 9)",
+        _panel_wrap(prefix + "-wr", "Williams %%R (%d, %d)" % (_WR_PERIOD, _WR_SIGNAL),
+                    _oscillator_svg(rows, "Williams %%R (%d, %d)" % (_WR_PERIOD, _WR_SIGNAL),
                         [("%R", "#2962ff", wr), ("Signal", "#ff9800", wr_signal)],
                         [(-20, "-20"), (-80, "-80")], -100.0, 0.0,
-                        prefix + "-wr-guide", extra),
-        _oscillator_svg(rows, "Stochastic Slow (15, 5, 5)",
+                        prefix + "-wr-guide", extra)),
+        _panel_wrap(prefix + "-stoch", "Stochastic Slow (%d, %d, %d)" % _STOCH_PARAMS,
+                    _oscillator_svg(rows, "Stochastic Slow (%d, %d, %d)" % _STOCH_PARAMS,
                         [("SlowK", "#2962ff", slow_k),
                          ("SlowD", "#ff9800", slow_d)],
                         [(20, "20"), (80, "80")], 0.0, 100.0,
-                        prefix + "-stoch-guide", extra)))
+                        prefix + "-stoch-guide", extra))))
+
+
+# 보조 패널 접기/펼치기 상태("<prefix>-<패널>"), 없으면 기본값
+_PANEL_OPEN = {}
+_PANEL_DEFAULT_CLOSED = ("-wr", "-stoch")
+
+
+def _panel_is_open(pid):
+    return _PANEL_OPEN.get(pid, not pid.endswith(_PANEL_DEFAULT_CLOSED))
+
+
+def _panel_wrap(pid, title, inner):
+    """보조 차트 패널에 접기/펼치기 버튼을 붙인다."""
+    if not inner:
+        return ""
+    opened = _panel_is_open(pid)
+    return ('<div class="ind-panel" data-panel="%s">'
+            '<div class="ind-panel-body" style="display:%s">%s'
+            '<button type="button" class="ind-toggle ind-toggle-in" title="접기">▴</button></div>'
+            '<button type="button" class="ind-toggle ind-collapsed" style="display:%s">'
+            '▾ %s</button></div>'
+            % (_esc(pid), "" if opened else "none", inner, "none" if opened else "", _esc(title)))
+
+
+def _handle_panel_toggle(event):
+    btn = event.target.closest(".ind-toggle") if event.target is not None else None
+    if btn is None:
+        return False
+    panel = btn.closest(".ind-panel")
+    if panel is None:
+        return False
+    pid = panel.getAttribute("data-panel")
+    opened = not _panel_is_open(pid)
+    _PANEL_OPEN[pid] = opened
+    panel.querySelector(".ind-panel-body").style.display = "" if opened else "none"
+    panel.querySelector(".ind-collapsed").style.display = "none" if opened else ""
+    return True
 
 
 # ===== 회복 점수 · 조정 압력 모델 =====
@@ -8011,7 +8095,8 @@ def _recovery_pressure_html(rows, bench_closes, prefix="idxchart", vol_aligned=N
                            "last_recov": _last_num(recov),
                            "last_corr": _last_num(corr)}
     return ('<div class="daily-indicators"><div class="recov-wrap">%s%s</div></div>'
-            % (_recovery_pressure_svg(rows, recov, corr, regime, prefix, extra),
+            % (_panel_wrap(prefix + "-recov", "회복 점수 · 조정 압력 (60, 5)",
+                           _recovery_pressure_svg(rows, recov, corr, regime, prefix, extra)),
                _recov_help_popup()))
 
 
@@ -8394,10 +8479,10 @@ def _candle_svg(rows, dec=2, prefix="idxchart", hover=None, overlay=None,
         return "".join(out)
 
     # 보조지표 패널과 동일한 설정으로 날짜별 값을 미리 계산해 호버 툴팁에 사용한다.
-    wr = _williams_r(full, 10)
-    wr_signal = _sma_nullable(wr, 9)[lead:]
+    wr = _williams_r(full, _WR_PERIOD)
+    wr_signal = _sma_nullable(wr, _WR_SIGNAL)[lead:]
     wr = wr[lead:]
-    slow_k, slow_d = _stochastic_slow(full, 15, 5, 5)
+    slow_k, slow_d = _stochastic_slow(full, *_STOCH_PARAMS)
     slow_k, slow_d = slow_k[lead:], slow_d[lead:]
 
     def _osc_tip(idx):
@@ -9041,15 +9126,25 @@ def _candle_hover(event, root_sel, hover, prefix):
     rect = svg.getBoundingClientRect()
     if not rect.width or not rect.height:
         return
-    if (event.clientX < rect.left or event.clientX > rect.right
-            or event.clientY < rect.top or event.clientY > rect.bottom):
+    slots = hover.get("slots", len(pts))
+    k_dca = None
+    dsvg = document.querySelector("#" + prefix + "-dca-svg")
+    if dsvg is not None and hover.get("plot_w"):
+        dr = dsvg.getBoundingClientRect()
+        if dr.width and dr.left <= event.clientX <= dr.right and dr.top <= event.clientY <= dr.bottom:
+            dx, _dy, _ = _svg_client_to_user(dsvg, event.clientX, event.clientY, dr, 820.0, 150.0)
+            k_dca = min(max(int(round((dx - 48.0) / (820.0 - 62.0) * slots - 0.5)), 0), slots - 1)
+    if k_dca is None and (event.clientX < rect.left or event.clientX > rect.right
+                          or event.clientY < rect.top or event.clientY > rect.bottom):
         _candle_hide(prefix)
         return
     W = hover["W"]
     H = hover["H"]
     sx, sy, _ = _svg_client_to_user(svg, event.clientX, event.clientY, rect, W, H)
-    slots = hover.get("slots", len(pts))
-    if hover.get("plot_w"):
+    if k_dca is not None:
+        k = k_dca
+        sy = -1.0       # 가격 가로선 숨김
+    elif hover.get("plot_w"):
         k = int(round((sx - hover["padL"]) / hover["plot_w"] * slots - 0.5))
         k = min(max(k, 0), slots - 1)
     else:
@@ -9084,12 +9179,17 @@ def _candle_hover(event, root_sel, hover, prefix):
     # 보조지표 SVG는 같은 날짜 인덱스를 자체 좌표계로 변환해 세로선을 표시한다.
     indicator_x = 48.0 + (820.0 - 48.0 - 14.0) * ((k + 0.5) / slots)
     for indicator_id in (prefix + "-wr-guide", prefix + "-stoch-guide",
-                         prefix + "-recov-guide"):
+                         prefix + "-recov-guide", prefix + "-dca-guide"):
         indicator_guide = document.querySelector("#" + indicator_id)
         if indicator_guide is not None:
             indicator_guide.setAttribute("x1", "%g" % indicator_x)
             indicator_guide.setAttribute("x2", "%g" % indicator_x)
             indicator_guide.style.display = "block"
+    dca_state = _DCA_HOVER.get(prefix)
+    dca_el = document.querySelector("#" + prefix + "-dca-val")
+    if dca_el is not None and dca_state:
+        dv = dca_state["vals"]
+        dca_el.innerHTML = _dca_value_markup(dv[bi] if bi < len(dv) else None)
     # 오실레이터 패널 값(우측 상단)을 호버한 날짜 값으로 갱신
     for val_id in (prefix + "-wr-val", prefix + "-stoch-val"):
         el = document.querySelector("#" + val_id)
@@ -9149,10 +9249,14 @@ def _candle_hide(prefix):
     for sel in ("#" + prefix + "-guide", "#" + prefix + "-guide-dot", "#" + prefix + "-ycur",
                 "#" + prefix + "-xcur",
                 "#" + prefix + "-wr-guide", "#" + prefix + "-stoch-guide",
-                "#" + prefix + "-recov-guide"):
+                "#" + prefix + "-recov-guide", "#" + prefix + "-dca-guide"):
         el = document.querySelector(sel)
         if el is not None:
             el.style.display = "none"
+    dca_state = _DCA_HOVER.get(prefix)
+    dca_el = document.querySelector("#" + prefix + "-dca-val")
+    if dca_el is not None and dca_state:
+        dca_el.innerHTML = _dca_value_markup(dca_state["last"])
     recov_state = _RECOV_HOVER.get(prefix)
     val_el = document.querySelector("#" + prefix + "-recov-val")
     if val_el is not None and recov_state:
@@ -9390,7 +9494,7 @@ def _render_stock_chart(name, rows):
     box.innerHTML = ('<div class="card"><div class="sec">%s%s%s'
                      '<div class="fin-chart">%s<div class="candle-tooltip-host">'
                      '%s</div></div></div></div>'
-                     % (top, controls, head,
+                     % (top, controls, head + _dca_head_html(),
                         _trend_toolbar_html("stockchart", trend_key),
                         _PAN_BODY["stockchart"]()))
     _bind_stockchart_controls()
@@ -9497,6 +9601,904 @@ async def load_stock_chart(full_symbol, name):
     if rows:
         _pan_init("stockchart", rows, rng)
     _render_stock_chart(name or full_symbol, rows)
+
+
+# ===================== DCA Optimizer (주봉 · 복합 점수 기반 적립 배수) =====================
+# 주말마다 4개 축(0~100, 높을수록 매수)을 가중합해 적립 배수 구간을 정한다.
+#  밸류(섹터별 P/E·P/FCF 백분위) · 조정 압력(일봉 60일 역스토캐스틱, 회복 점수 모델)
+#  · 건전성(FCF·매출 YoY, 부채/FCF) · 추세 안정성(장기 MA, 변동성 백분위)
+
+# (종합 점수 하한, 키, 배지, 구간명, 색) — 높은 점수부터
+_DCA_ZONES = [
+    (80, "4x", "4X DCA", "극단적 매수 구간", "#a21cf0"),
+    (67, "3x", "3X DCA", "강한 매수 구간", "#7ed321"),
+    (52, "2x", "2X DCA", "매수 구간", "#14a37a"),
+    (24, "1x", "1X DCA", "기본 적립 구간", "#ffffff"),
+    (15, "lt", "LIGHT TRIM", "일부 차익 구간", "#ff9800"),
+    (-1, "st", "STRONG TRIM", "강한 차익 구간", "#f23645"),
+]
+_DCA_RANK = {"st": 0, "lt": 1, "1x": 2, "2x": 3, "3x": 4, "4x": 5}
+_DCA_NA = ("na", "N/A", "판단 보류", "#9aa0a6")
+# (축 키, 가중치, 라벨)
+# 점수는 12개월 평균 괴리 + 역발상 보정만, 나머지(가중 0)는 참고 표시
+_DCA_AXES = (("ma12", 1.0, "12개월 평균 괴리"), ("val", 0.0, "밸류"),
+             ("tech", 0.0, "조정 압력"), ("health", 0.0, "건전성"),
+             ("trend", 0.0, "추세"))
+# 원조(dcaoptimizer) 역산: 월봉 종가 ÷ 12개월 평균 괴리 −22% 4X · −14% 3X · −6% 2X
+_DCA_MA12_MID = 42.0   # 괴리 0%일 때 점수(1X 구간 가운데)
+_DCA_MA12_DOWN = 1.75  # 평균 아래 1%p당 가산(−6% 52 · −14% 67 · −22% 80)
+_DCA_MA12_UP = 0.6     # 평균 위 1%p당 감산(+30% 24)
+_DCA_REGIME_PIVOT = 40  # 역발상 가중 보정 기준점: 회복은 높을수록 감산, 조정 압력은 높을수록 가산
+_DCA_REGIME_STEP = 15   # 기준점에서 이만큼 벗어날 때마다 1점
+_DCA_BENCH = {"KRX": "^KS11"}  # 그 외는 _RECOV_DEFAULT_BENCH(^NDX)
+_DCA_LB, _DCA_MA, _DCA_VOL = 52, 40, 10  # 주봉 기준 52주 고점·장기 MA·변동성 창
+_DCA_MIN_HIST = 52      # 백분위 계산 최소 주 수(그 전엔 회색)
+_DCA_WINDOW = 520       # 백분위 비교 최대 기간(주, 약 10년)
+_DCA_SHOW = 52          # 세부 항목 차트의 주봉 수(최근 1년)
+_DCA_LAG_Q = 45 * 86400  # 분기 실적 공개 지연(미래 정보 사용 방지)
+_DCA_LAG_A = 75 * 86400  # 연간 실적 공개 지연
+_DCA_STATE = {"symbol": None, "rows": None}
+# 밸류 지표: (재무 키 접두어, 평균 연수, 표시명, 배수명)
+_DCA_METRICS = {
+    "fcf": ("free_cash_flow", 1, "FCF TTM", "P/FCF"),
+    "fcf3y": ("free_cash_flow", 3, "FCF 3년 평균", "P/FCF(3년 평균)"),
+    "ni": ("net_income", 1, "순이익 TTM", "P/E"),
+    "ni3y": ("net_income", 3, "순이익 3년 평균", "P/E(3년 평균)"),
+    "rev": ("total_revenue", 1, "매출 TTM", "P/S"),
+    "ebitda": ("ebitda", 1, "EBITDA TTM", "P/EBITDA"),
+}
+_DCA_EARN_LBL = {"ni": "순이익", "ni3y": "순이익", "rev": "매출", "ebitda": "EBITDA"}
+# 섹터 기준: (밸류 지표, 기대 매출성장%, 매출 민감도, 이익 민감도, 부채/이익 양호·위험, 이름,
+#            성장 보정 연수(0=보정 안 함))
+_DCA_PROFILES = {
+    # FCF는 설비투자 사이클에, 순이익은 지분 평가익(GOOGL)·인수 상각(AVGO)에 왜곡 → EBITDA
+    "growth": ("ebitda", 8.0, 2.0, 1.0, (1.0, 4.0), "성장형", 3),
+    "default": ("ni", 4.0, 2.0, 1.0, (1.0, 8.0), "일반", 3),
+    "defensive": ("fcf", 3.0, 4.0, 1.5, (2.0, 10.0), "방어형", 3),
+    "cyclical": ("fcf3y", 3.0, 1.0, 0.5, (1.0, 8.0), "경기민감", 0),
+    # 반도체 장비·메모리: 다운사이클 투자로 FCF 3년 평균도 적자가 되어 순이익 3년 평균 사용
+    "semicycle": ("ni3y", 5.0, 1.0, 0.5, (1.0, 8.0), "반도체 사이클", 0),
+    "levered": ("ni", 3.0, 3.0, 1.0, (3.0, 15.0), "고부채 인프라", 3),
+    # 감가상각이 커 순이익이 왜곡되는 리츠·통신·케이블
+    "infra": ("ebitda", 3.0, 3.0, 1.0, (3.0, 8.0), "고부채 인프라(EBITDA)", 3),
+    "finance": ("ni", 5.0, 2.0, 1.0, None, "금융", 3),
+    "biotech": ("rev", 10.0, 1.0, 0.5, None, "적자 바이오(매출)", 0),
+}
+_DCA_GROWTH_YRS = 2               # 매출 성장률(연평균) 계산 기간
+# 상한이 크면 이익 급증 종목(LLY 45%→×2.7)이 사상 최저 배수로 보여 고점에서도 매수로 판정됨
+_DCA_GROWTH_CLAMP = (-10.0, 10.0)  # 성장 보정에 쓰는 성장률 범위(%)
+# TradingView sector/industry → 기준 그룹(없으면 default)
+_DCA_SECTOR_GROUP = {
+    "Technology Services": "growth", "Electronic Technology": "growth",
+    "Consumer Non-Durables": "defensive",
+    "Energy Minerals": "cyclical", "Non-Energy Minerals": "cyclical",
+    "Process Industries": "cyclical", "Producer Manufacturing": "cyclical",
+    "Consumer Durables": "cyclical", "Industrial Services": "cyclical",
+    "Transportation": "cyclical",
+    "Utilities": "levered", "Communications": "infra",
+    "Finance": "finance",
+}
+_DCA_INDUSTRY_GROUP = {
+    "Internet Software/Services": "growth", "Packaged Software": "growth",
+    "Semiconductors": "growth", "Electronic Production Equipment": "semicycle",
+    "Real Estate Investment Trusts": "infra", "Cable/Satellite TV": "infra",
+    "Biotechnology": "biotech",
+}
+# 업종으로 구분 안 되는 종목(메모리는 Semiconductors, 장비는 Industrial Machinery 등에 섞임)
+_DCA_SYMBOL_GROUP = {k: "semicycle" for k in (
+    "MU", "SNDK", "WDC", "STX", "005930", "000660",
+    "LRCX", "AMAT", "KLAC", "ASML", "TER", "8035")}
+# 종목 DB(D1) 분류 — 미국: Yahoo sector/industry, 코스피: 네이버 업종(공백 제거해 비교)
+_DCA_D1_SECTOR_GROUP = {
+    "Technology": "growth", "Communication Services": "default",
+    "Consumer Cyclical": "default", "Consumer Defensive": "defensive",
+    "Healthcare": "default", "Financial Services": "finance",
+    "Real Estate": "infra", "Utilities": "levered",
+    "Energy": "cyclical", "Basic Materials": "cyclical", "Industrials": "cyclical",
+}
+_DCA_D1_INDUSTRY_GROUP = {
+    # 성장형
+    "Internet Content & Information": "growth", "Electronic Gaming & Multimedia": "growth",
+    "Internet Retail": "growth", "Health Information Services": "growth",
+    # 반도체 사이클
+    "Semiconductor Equipment & Materials": "semicycle", "Solar": "cyclical",
+    # 감가상각 큰 고부채 인프라(EBITDA)
+    "Telecom Services": "infra", "Oil & Gas Midstream": "infra",
+    "Real Estate Services": "default", "Real Estate - Development": "default",
+    "Real Estate - Diversified": "default", "REIT - Mortgage": "finance",
+    "Biotechnology": "biotech",
+    # 경기민감(소비재 중)
+    "Auto Manufacturers": "cyclical", "Auto Parts": "cyclical",
+    "Auto & Truck Dealerships": "cyclical", "Recreational Vehicles": "cyclical",
+    "Residential Construction": "cyclical", "Furnishings, Fixtures & Appliances": "cyclical",
+    "Packaging & Containers": "cyclical", "Lodging": "cyclical",
+    "Resorts & Casinos": "cyclical", "Travel Services": "cyclical",
+    # 산업재 중 비경기
+    "Aerospace & Defense": "default", "Waste Management": "defensive",
+    "Consulting Services": "default", "Specialty Business Services": "default",
+    "Security & Protection Services": "default",
+}
+_DCA_KR_INDUSTRY_GROUP = {
+    "반도체와반도체장비": "semicycle",
+    "소프트웨어": "growth", "IT서비스": "growth", "양방향미디어와서비스": "growth",
+    "게임엔터테인먼트": "growth",
+    "생물공학": "biotech",
+    "은행": "finance", "증권": "finance", "생명보험": "finance", "손해보험": "finance",
+    "카드": "finance", "창업투자": "finance", "기타금융": "finance",
+    "전기유틸리티": "levered", "가스유틸리티": "levered", "복합유틸리티": "levered",
+    "무선통신서비스": "infra", "다각화된통신서비스": "infra", "부동산": "infra",
+    "운송인프라": "infra",
+    "식품": "defensive", "음료": "defensive", "담배": "defensive", "화장품": "defensive",
+    "가정용품": "defensive", "식품과기본식료품소매": "defensive",
+    **{k: "cyclical" for k in (
+        "화학", "철강", "비철금속", "석유와가스", "에너지장비및서비스", "건설",
+        "건축자재", "건축제품", "기계", "조선", "자동차", "자동차부품", "해운사",
+        "항공사", "항공화물운송과물류", "도로와철도운송", "종이와목재", "포장재",
+        "디스플레이패널", "디스플레이장비및부품", "전기제품", "전기장비")},
+}
+_DCA_D1_EXCH = {"NASDAQ", "NYSE", "AMEX", "NYSE ARCA", "CBOE", "BATS", "KRX"}
+
+
+def _dca_d1_symbol(full_symbol):
+    """TradingView 심볼 → 종목 DB 심볼(미국 BRK.B→BRK-B, 코스피 코드). 대상 아니면 None."""
+    exch, _, ticker = str(full_symbol or "").rpartition(":")
+    if exch.upper() not in _DCA_D1_EXCH or not ticker:
+        return None
+    return ticker.replace(".", "-").upper()
+
+
+def _dca_d1_row():
+    st = _DCA_STATE.get("d1")
+    return st[1] if st and st[0] == _LAST_STOCK.get("symbol") else None
+
+
+def _dca_profile():
+    """(그룹 키, 프로필, 업종명) — 종목 예외 > 종목 DB 업종 > DB 섹터 > TradingView 업종 > 섹터."""
+    data = _LAST_STOCK.get("data") or {}
+    sector, industry = data.get("sector") or "", data.get("industry") or ""
+    ticker = str(_LAST_STOCK.get("symbol") or "").split(":")[-1]
+    d1 = _dca_d1_row() or {}
+    d1_sec, d1_ind = d1.get("sector") or "", (d1.get("industry") or "").strip()
+    grp = (_DCA_SYMBOL_GROUP.get(ticker)
+           or _DCA_D1_INDUSTRY_GROUP.get(d1_ind)
+           or _DCA_KR_INDUSTRY_GROUP.get(d1_ind.replace(" ", ""))
+           or _DCA_D1_SECTOR_GROUP.get(d1_sec)
+           or (None if d1_ind or d1_sec else
+               _DCA_INDUSTRY_GROUP.get(industry) or _DCA_SECTOR_GROUP.get(sector))
+           or "default")
+    if d1_ind or d1_sec:
+        sector = d1_ind or d1_sec
+    if grp == "biotech":
+        fin = _LAST_STOCK.get("financials") or {}
+        ni = [p[1] for p in _dca_fcf_points(fin, "ni") if p[0] <= time.time()] if fin else []
+        if ni and ni[-1] > 0:
+            grp = "default"
+    return grp, _DCA_PROFILES[grp], sector
+
+
+def _dca_clamp(v):
+    return max(0.0, min(100.0, v))
+
+
+def _dca_forward():
+    """종목 DB 컨센서스 (EPS 성장%, 매출 성장%) — 올해·내년 추정 평균, 없으면 None."""
+    d1 = _dca_d1_row() or {}
+
+    def avg(*keys):
+        vals = [float(d1[k]) for k in keys if isinstance(d1.get(k), (int, float))]
+        return max(-50.0, min(100.0, sum(vals) / len(vals))) if vals else None
+    eps_g = avg("eps_growth_0y", "eps_growth_1y")
+    rev_g = avg("rev_growth_0y", "rev_growth_1y")
+    return None if eps_g is None and rev_g is None else (eps_g, rev_g)
+
+
+def _dca_apply_forward(s, fwd, prof):
+    """최신 주에만 컨센서스 성장 반영: 건전성 = (실적 YoY 점수 + 컨센서스 점수)/2,
+    값싼 함정 상한은 실적 대신 컨센서스 성장 기준(과거 주는 미래 정보라 미적용)."""
+    eps_g, rev_g = fwd
+    if prof[0] == "rev":  # 적자 기업 EPS 성장률은 의미 없음
+        eps_g = None
+    _m, g0, rev_k, earn_k = prof[:4]
+    parts = []
+    if eps_g is not None:
+        parts.append(_dca_clamp(50.0 + eps_g * earn_k))
+    if rev_g is not None:
+        parts.append(_dca_clamp(50.0 + (rev_g - g0) * rev_k))
+    if not parts:
+        return
+    ax = s["ax"]
+    fh = sum(parts) / len(parts)
+    ax["health"] = fh if ax["health"] is None else (ax["health"] + fh) / 2.0
+    s["fwd"] = (eps_g, rev_g)
+
+
+def _dca_zone(score, cap=None):
+    if score is None:
+        return _DCA_NA
+    for th, key, _b, _l, _c in _DCA_ZONES:
+        if score >= th:
+            if cap and _DCA_RANK[key] > _DCA_RANK[cap]:
+                key = cap
+            return next(z[1:] for z in _DCA_ZONES if z[1] == key)
+    return _DCA_ZONES[-1][1:]
+
+
+def _dca_fcf_points(fin, metric="fcf"):
+    """밸류 기준 이익 시계열 [(공개시각, 연간환산 값, 기간말)] (공개시각 오름차순)."""
+    base, yrs = _DCA_METRICS[metric][:2]
+    nq = 4 * yrs
+    end_cur = fin.get("fiscal_period_end_current")
+    pts = []
+    q = list(reversed(fin.get(base + "_fq_h") or []))
+    n = len(q)
+    if isinstance(end_cur, (int, float)) and n >= nq:
+        for j in range(nq - 1, n):
+            win = q[j - nq + 1:j + 1]
+            if any(v is None for v in win):
+                continue
+            pe = _month_end_shift_ts(end_cur, -3 * (n - 1 - j))
+            pts.append((pe + _DCA_LAG_Q, float(sum(win)) / yrs, pe))
+    first_q = pts[0][2] if pts else float("inf")
+    labels = list(reversed(fin.get("fiscal_period_fy_h") or []))
+    vals = list(reversed(fin.get(base + "_fy_h") or []))
+    m = re.match(r"^(\d{4})-Q([1-4])$", str(fin.get("fiscal_period_current") or ""))
+    fy_end = fyc = None
+    if m and isinstance(end_cur, (int, float)):
+        fyc, qn = int(m.group(1)), int(m.group(2))
+        fy_end = _month_end_shift_ts(end_cur, 3 * (4 - qn))
+    for i, lbl in enumerate(labels):
+        win = vals[i - yrs + 1:i + 1] if i >= yrs - 1 else []
+        if not win or any(v is None for v in win):
+            continue
+        v = sum(win) / yrs
+        try:
+            pe = (_month_end_shift_ts(fy_end, -12 * (fyc - int(lbl)))
+                  if fy_end is not None else _period_end_ts(lbl, True))
+        except (ValueError, TypeError):
+            pe = None
+        if pe is not None and pe < first_q:
+            pts.append((pe + _DCA_LAG_A, float(v), pe))
+    pts.sort(key=lambda p: p[0])
+    return pts
+
+
+def _dca_growth_points(fin):
+    """매출 TTM 연평균 성장률 [(공개시각, %)] (공개시각 오름차순)."""
+    rev = _dca_fcf_points(fin, "rev")
+    span, tol = _DCA_GROWTH_YRS * 365.25 * 86400, 50 * 86400
+    out = []
+    for t, v, pe in rev:
+        prev = [p for p in rev if abs(p[2] - (pe - span)) < tol and p[1] > 0]
+        if prev and v > 0:
+            out.append((t, ((v / prev[0][1]) ** (1.0 / _DCA_GROWTH_YRS) - 1.0) * 100.0))
+    return out
+
+
+def _dca_growth_adjust(pts, growth, years):
+    """이익 × (1+성장률)^years — 고성장기 리레이팅을 비싸다고 오판하지 않게 한다."""
+    if not years or not growth:
+        return pts
+    lo, hi = _DCA_GROWTH_CLAMP
+    out, k = [], -1
+    for t, v, pe in pts:
+        while k + 1 < len(growth) and growth[k + 1][0] <= t:
+            k += 1
+        if k >= 0:
+            out.append((t, v * (1.0 + max(lo, min(hi, growth[k][1])) / 100.0) ** years, pe))
+    return out
+
+
+def _dca_weekly(rows):
+    """야후 주봉을 ISO 주 단위로 합친다(마지막 '오늘' 봉 중복 정리)."""
+    out, keys = [], []
+    for ts, o, h, lo, c in rows:
+        k = datetime.fromtimestamp(ts + 12 * 3600, timezone.utc).isocalendar()[:2]
+        if keys and keys[-1] == k:
+            p = out[-1]
+            out[-1] = (p[0], p[1], max(p[2], h), min(p[3], lo), c)
+        else:
+            keys.append(k)
+            out.append((ts, o, h, lo, c))
+    return out
+
+
+def _dca_health_points(fin, prof=None):
+    """분기별 건전성 [(공개시각, 점수, 이익 TTM YoY%, 매출 YoY%, 부채/이익)] (공개시각 오름차순)."""
+    metric, g0, rev_k, earn_k, debt_band = (prof or _DCA_PROFILES["default"])[:5]
+    ekey = _DCA_METRICS[metric][0] + "_fq_h"
+    end_cur = fin.get("fiscal_period_end_current")
+    n = len(fin.get(ekey) or [])
+    if not isinstance(end_cur, (int, float)) or n < 4:
+        return []
+
+    def at(key, j):  # j: 연대순 인덱스(최신=n-1). 배열 길이가 달라도 최신 기준 정렬
+        arr = fin.get(key) or []
+        k = n - 1 - j
+        return arr[k] if 0 <= k < len(arr) else None
+
+    def ttm(j):
+        if j < 3:
+            return None
+        win = [at(ekey, i) for i in range(j - 3, j + 1)]
+        return None if any(v is None for v in win) else float(sum(win))
+
+    pts = []
+    for j in range(3, n):
+        f, f_prev = ttm(j), ttm(j - 4)
+        rev, rev_prev = at("total_revenue_fq_h", j), at("total_revenue_fq_h", j - 4) if j >= 4 else None
+        debt = at("total_debt_fq_h", j)
+        fcf_yoy = ((f - f_prev) / abs(f_prev) * 100.0
+                   if f is not None and f_prev else None)
+        rev_yoy = ((rev - rev_prev) / abs(rev_prev) * 100.0
+                   if rev is not None and rev_prev else None)
+        ratio = (debt / f if debt_band and debt is not None and f and f > 0 else None)
+        parts = []
+        if fcf_yoy is not None:
+            parts.append(_dca_clamp(50.0 + fcf_yoy * earn_k))
+        if rev_yoy is not None:
+            parts.append(_dca_clamp(50.0 + (rev_yoy - g0) * rev_k))
+        if f is not None and f <= 0:
+            parts.append(0.0)
+        elif ratio is not None:
+            ok, bad = debt_band
+            parts.append(_dca_clamp((bad - ratio) / (bad - ok) * 100.0))
+        if parts:
+            pe = _month_end_shift_ts(end_cur, -3 * (n - 1 - j))
+            pts.append((pe + _DCA_LAG_Q, sum(parts) / len(parts), fcf_yoy, rev_yoy, ratio))
+    return pts
+
+
+def _rsi_wilder(closes, period=14):
+    out = [None] * len(closes)
+    if len(closes) <= period:
+        return out
+    gain = loss = 0.0
+    for i in range(1, period + 1):
+        d = closes[i] - closes[i - 1]
+        gain += max(d, 0.0)
+        loss += max(-d, 0.0)
+    gain /= period
+    loss /= period
+    out[period] = 100.0 if loss == 0 else 100.0 - 100.0 / (1.0 + gain / loss)
+    for i in range(period + 1, len(closes)):
+        d = closes[i] - closes[i - 1]
+        gain = (gain * (period - 1) + max(d, 0.0)) / period
+        loss = (loss * (period - 1) + max(-d, 0.0)) / period
+        out[i] = 100.0 if loss == 0 else 100.0 - 100.0 / (1.0 + gain / loss)
+    return out
+
+
+def _dca_tech_eval(rows):
+    """주봉 rows 각 위치의 {tech, trend, rsi, wr, k, dd} 리스트."""
+    lb, ma_n, vol_n = _DCA_LB, _DCA_MA, _DCA_VOL
+    closes = [r[4] for r in rows]
+    rsi = _rsi_wilder(closes, 14)
+    wr = _williams_r(rows, _WR_PERIOD)
+    stk = _stochastic_slow(rows, *_STOCH_PARAMS)[0]
+    ma = _sma(closes, ma_n)
+    # 수익률 누적합으로 구간 표준편차를 O(1)에 구한다
+    s1, s2 = [0.0], [0.0]
+    for i in range(1, len(closes)):
+        r = closes[i] / closes[i - 1] - 1.0
+        s1.append(s1[-1] + r)
+        s2.append(s2[-1] + r * r)
+
+    def vol(i):
+        if i < vol_n:
+            return None
+        a, b = s1[i] - s1[i - vol_n], s2[i] - s2[i - vol_n]
+        return max(0.0, b / vol_n - (a / vol_n) ** 2) ** 0.5
+
+    out = []
+    for i in range(len(rows)):
+        parts = []
+        if rsi[i] is not None:
+            parts.append(_dca_clamp((70.0 - rsi[i]) / 40.0 * 100.0))
+        if wr[i] is not None:
+            parts.append(-wr[i])
+        if stk[i] is not None:
+            parts.append(100.0 - stk[i])
+        dd = None
+        if i + 1 >= lb:
+            hi = max(r[2] for r in rows[i - lb + 1:i + 1])
+            dd = 1.0 - closes[i] / hi if hi > 0 else None
+            if dd is not None:
+                parts.append(_dca_clamp(dd / 0.5 * 100.0))
+        tparts = []
+        if ma[i]:
+            gap = closes[i] / ma[i] - 1.0
+            tparts.append(100.0 if gap >= 0 else _dca_clamp(100.0 + gap * 400.0))
+        v = vol(i)
+        hist = [x for x in (vol(j) for j in range(max(vol_n, i - lb * 3 + 1), i + 1, 2))
+                if x is not None]
+        if v is not None and len(hist) >= 20:
+            tparts.append(100.0 - sum(1 for x in hist if x < v) / len(hist) * 100.0)
+        out.append({"tech": sum(parts) / len(parts) if len(parts) >= 3 else None,
+                    "trend": sum(tparts) / len(tparts) if tparts else None,
+                    "rsi": rsi[i], "wr": wr[i], "k": stk[i], "dd": dd})
+    return out
+
+
+def _dca_ma12_dev(rows):
+    """주별 (현재 종가 ÷ 최근 12개 월봉 종가 평균 − 1)% — 이번 달은 현재 주 종가로 형성 중."""
+    out, closes, cur = [], [], None
+    for ts, _o, _h, _l, c in rows:
+        d = datetime.fromtimestamp(ts + 4 * 86400, timezone.utc)  # 주봉은 금요일 속한 달로
+        if (d.year, d.month) != cur:
+            cur = (d.year, d.month)
+            closes.append(c)
+        else:
+            closes[-1] = c
+        w = closes[-12:]
+        out.append((c / (sum(w) / 12.0) - 1.0) * 100.0 if len(w) == 12 else None)
+    return out
+
+
+def _dca_ma12_score(dev):
+    if dev is None:
+        return None
+    k = _DCA_MA12_DOWN if dev < 0 else _DCA_MA12_UP
+    return _dca_clamp(_DCA_MA12_MID - dev * k)
+
+
+def _dca_regime_adj(rec, corr):
+    """역발상 가중 보정: 회복(상대강도)이 높을수록 감산, 조정 압력이 높을수록 가산."""
+    adj = 0.0
+    if rec is not None:
+        adj -= (max(0.0, min(100.0, rec)) - _DCA_REGIME_PIVOT) / _DCA_REGIME_STEP
+    if corr is not None:
+        adj += (max(0.0, min(100.0, corr)) - _DCA_REGIME_PIVOT) / _DCA_REGIME_STEP
+    return adj
+
+
+def _dca_daily_regime(rows, daily):
+    """주별 (회복, 조정 압력) — 각 주 마지막 거래일의 일봉 60일 값."""
+    drows, dbench = daily
+    rec_d, corr_d, _reg = _recovery_pressure_series(drows, dbench)
+    now = time.time()
+    rec, corr, j = [], [], -1
+    for r in rows:
+        end = min(r[0] + 7 * 86400 - 1, now)
+        while j + 1 < len(drows) and drows[j + 1][0] <= end:
+            j += 1
+        rec.append(rec_d[j] if j >= 0 else None)
+        corr.append(corr_d[j] if j >= 0 else None)
+    return rec, corr
+
+
+def _dca_series(rows, fcf_pts, health_pts=None, bench=None, daily=None):
+    """주별 {ts,o,h,l,c,fcf,mult,pct,ax,score,cap,zone,rec,radj} 리스트."""
+    now = time.time()
+    refs = [min(r[0] + 7 * 86400 - 1, now) for r in rows]
+    tvals = _dca_tech_eval(rows)
+    recov, corr, reg = _recovery_pressure_series(rows, bench)
+    if daily:
+        recov, corr = _dca_daily_regime(rows, daily)
+    ma12 = _dca_ma12_dev(rows)
+    health_pts = health_pts or []
+    out, hist, k, hk = [], [], -1, -1
+    for m, (ts, o, h, lo, c) in enumerate(rows):
+        ref = refs[m]
+        while k + 1 < len(fcf_pts) and fcf_pts[k + 1][0] <= ref:
+            k += 1
+        while hk + 1 < len(health_pts) and health_pts[hk + 1][0] <= ref:
+            hk += 1
+        fcf = fcf_pts[k][1] if k >= 0 else None
+        mult = c / fcf if fcf and fcf > 0 else None
+        pct = None
+        if mult is not None:
+            hist.append(mult)
+            win = hist[-_DCA_WINDOW:]
+            if len(win) >= _DCA_MIN_HIST:
+                lt = sum(1 for v in win if v < mult)
+                eq = sum(1 for v in win if v == mult)
+                pct = (lt + 0.5 * eq) / len(win) * 100.0
+        tv = tvals[m]
+        hp = health_pts[hk] if hk >= 0 else None
+        ax = {"ma12": _dca_ma12_score(ma12[m]),
+              "val": None if pct is None else 100.0 - pct,
+              "tech": corr[m] if corr[m] is not None else (tv["tech"] if tv else None),
+              "health": hp[1] if hp else None,
+              "trend": tv["trend"] if tv else None}
+        score = None
+        radj = _dca_regime_adj(recov[m], corr[m])
+        if ax["ma12"] is not None:
+            score = max(0.0, min(100.0, ax["ma12"] + radj))
+        out.append({"ts": ts, "o": o, "h": h, "l": lo, "c": c, "fcf": fcf,
+                    "mult": mult, "pct": pct, "ax": ax, "tv": tv, "hp": hp,
+                    "rec": recov[m], "radj": radj, "ma12": ma12[m],
+                    "score": score, "cap": None, "zone": _dca_zone(score)})
+    return out
+
+
+def _dca_clear():
+    _DCA_STATE["view"] = None
+    box = document.querySelector("#dca-section")
+    if box is not None:
+        box.innerHTML = ""
+
+
+def _dca_head_html():
+    """종목 차트 이름 아래 DCA 결과 + 세부 항목(버튼으로 펼침)."""
+    v = _DCA_STATE.get("view")
+    if not v or v["symbol"] != _STOCKCHART_STATE.get("symbol"):
+        return '<div id="dca-section" class="dca-inline"></div>'
+    opened = _DCA_STATE.get("open")
+    return ('<div id="dca-section" class="dca-inline"><div class="dca-head">%s'
+            '<button type="button" class="dca-more-btn">%s</button></div>'
+            '<div class="dca-details" style="display:%s">%s</div></div>'
+            % (v["summary"], "접기 ▴" if opened else "세부 항목 ▾",
+               "" if opened else "none", v["details"]))
+
+
+def _handle_dca_more_click(event):
+    btn = event.target.closest(".dca-more-btn") if event.target is not None else None
+    if btn is None:
+        return
+    _DCA_STATE["open"] = opened = not _DCA_STATE.get("open")
+    det = document.querySelector("#dca-section .dca-details")
+    if det is not None:
+        det.style.display = "" if opened else "none"
+    btn.textContent = "접기 ▴" if opened else "세부 항목 ▾"
+
+
+def _dca_score_panel_html(rows, extra=0):
+    """종목 차트용 DCA 종합 점수 패널 — 보이는 봉마다 그 주의 점수."""
+    v = _DCA_STATE.get("view")
+    if not v or v["symbol"] != _STOCKCHART_STATE.get("symbol") or not rows:
+        return ""
+    wts, wsc = v["wts"], v["wsc"]
+    W, H = 820.0, 150.0
+    pad_l, pad_r, pad_t, pad_b = 48.0, 14.0, 30.0, 10.0
+    plot_w, plot_h = W - pad_l - pad_r, H - pad_t - pad_b
+    slots = len(rows) + extra
+    half = plot_w / slots / 2.0
+
+    def X(i):
+        return pad_l + plot_w * ((i + 0.5) / slots)
+
+    def Y(s):
+        return pad_t + (100.0 - s) / 100.0 * plot_h
+
+    vals, j = [], -1
+    for r in rows:
+        while j + 1 < len(wts) and wts[j + 1] <= r[0]:
+            j += 1
+        vals.append(wsc[j] if j >= 0 and r[0] < wts[j] + 7 * 86400 else None)
+    g = ['<rect x="%g" y="%g" width="%g" height="%g" fill="none" stroke="#d0d5db" '
+         'stroke-width="1"/>' % (pad_l, pad_t, plot_w, plot_h),
+         '<text x="%g" y="16" style="fill:currentColor;font-size:11px;font-weight:700">'
+         'DCA 종합 점수 (주봉)</text>' % pad_l,
+         '<g class="recov-help-btn" style="cursor:pointer">'
+         '<circle cx="176" cy="11" r="7" fill="#eef1f4" stroke="#9aa0a6"/>'
+         '<text x="176" y="15" text-anchor="middle" style="font-size:10px;'
+         'font-weight:700;fill:#57606a">?</text></g>']
+    for th, key, _b, _l, color in _DCA_ZONES[:-1]:
+        y = Y(th)
+        g.append('<line x1="%g" y1="%g" x2="%g" y2="%g" stroke="%s" stroke-width="1" '
+                 'stroke-dasharray="4 3" opacity=".7"/><text x="%g" y="%g" class="ax-y">%d</text>'
+                 % (pad_l, y, W - pad_r, y, "#aeb4bd" if key == "1x" else color,
+                    pad_l - 7, y + 4, th))
+    pts = ["%.1f,%.1f" % (X(i), Y(s[0])) for i, s in enumerate(vals) if s]
+    if len(pts) >= 2:
+        g.append('<polyline points="%s" fill="none" stroke="currentColor" stroke-width="1" '
+                 'opacity=".35"/>' % " ".join(pts))
+    # 같은 주(같은 점수)의 봉들을 구간색 굵은 선 하나로
+    i, n = 0, len(vals)
+    while i < n:
+        k = i
+        while k + 1 < n and vals[k + 1] is vals[i]:
+            k += 1
+        s = vals[i]
+        if s:
+            g.append('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" '
+                     'stroke-width="3" stroke-linecap="round"/>'
+                     % (X(i) - half * 0.8, Y(s[0]), X(k) + half * 0.8, Y(s[0]), s[1]))
+        i = k + 1
+    last = next((s for s in reversed(vals) if s), None)
+    _DCA_HOVER["stockchart"] = {"vals": vals, "last": last}
+    g.append('<text id="stockchart-dca-val" x="%g" y="16" text-anchor="end" '
+             'style="font-size:10px;font-weight:700">%s</text>' % (W - pad_r, _dca_value_markup(last)))
+    g.append('<line id="stockchart-dca-guide" class="guide-line" x1="0" y1="%g" x2="0" y2="%g" '
+             'style="display:none"/>' % (pad_t, pad_t + plot_h))
+    return ('<div class="daily-indicators"><div class="recov-wrap">%s%s</div></div>'
+            % (_panel_wrap("stockchart-dca", "DCA 종합 점수 (주봉)",
+                           '<div class="indicator-chart">'
+                           '<svg id="stockchart-dca-svg" viewBox="0 0 %g %g" class="chart-svg oscillator-svg" '
+                           'preserveAspectRatio="xMidYMid meet">%s</svg></div>' % (W, H, "".join(g))),
+               v["help"]))
+
+
+_DCA_HOVER = {}
+
+
+def _dca_value_markup(s):
+    if not s:
+        return '<tspan style="fill:#8a8f98">-</tspan>'
+    return '<tspan style="fill:%s">%s %.0f</tspan>' % (s[1], _esc(s[2]), s[0])
+
+
+def _dca_svg(series, med):
+    W, H, HC = 900.0, 455.0, 340.0
+    pl, pr, pt = 8.0, 62.0, 18.0
+    sp0, sp1 = 368.0, 445.0
+    n = len(series)
+    fair = [s["fcf"] * med if s["fcf"] and s["fcf"] > 0 and med else None
+            for s in series]
+    vals = [s["h"] for s in series] + [s["l"] for s in series]
+    vals += [v for v in fair if v is not None]
+    lo_v, hi_v = min(vals), max(vals)
+    pad = (hi_v - lo_v) * 0.06 or hi_v * 0.05 or 1.0
+    lo_v, hi_v = max(0.0, lo_v - pad), hi_v + pad
+    slot = (W - pl - pr) / n
+    bw = max(1.5, slot * 0.62)
+
+    def X(i):
+        return pl + slot * (i + 0.5)
+
+    def Y(v):
+        return pt + (hi_v - v) / (hi_v - lo_v) * (HC - pt)
+
+    def SY(v):
+        return sp1 - v / 100.0 * (sp1 - sp0)
+
+    dec = 2 if series[-1]["c"] < 1000 else 0
+    g = []
+    for t in range(6):
+        v = lo_v + (hi_v - lo_v) * t / 5.0
+        y = Y(v)
+        g.append('<line x1="%.1f" x2="%.1f" y1="%.1f" y2="%.1f" stroke="rgba(128,128,128,.18)"/>'
+                 '<text x="%.1f" y="%.1f" font-size="11" fill="currentColor" opacity=".6">%s</text>'
+                 % (pl, W - pr, y, y, W - pr + 6, y + 4, fmt_num(v, dec)))
+    prev_m = None
+    for i, s in enumerate(series):
+        d = datetime.fromtimestamp(s["ts"] + 12 * 3600, timezone.utc)
+        new_m, prev_m = prev_m is not None and d.month != prev_m, d.month
+        if new_m:
+            lbl = str(d.year) if d.month == 1 else "%d월" % d.month
+            g.append('<text x="%.1f" y="%.1f" font-size="11" text-anchor="middle" '
+                     'fill="currentColor" opacity=".6">%s</text>' % (X(i), HC + 16, lbl))
+    # FCF TTM × 중앙 배수(적정가 환산선) 계단선
+    path, pen = [], False
+    for i, v in enumerate(fair):
+        if v is None:
+            pen = False
+            continue
+        x0, x1 = X(i) - slot / 2, X(i) + slot / 2
+        path.append("%s%.1f,%.1f L%.1f,%.1f" % ("L" if pen else "M", x0, Y(v), x1, Y(v)))
+        pen = True
+    if path:
+        g.append('<path d="%s" fill="none" stroke="#ffa31a" stroke-width="2"/>' % " ".join(path))
+    for i, s in enumerate(series):
+        key, badge, label, color = s["zone"]
+        x = X(i)
+        y_o, y_c = Y(s["o"]), Y(s["c"])
+        top, hgt = min(y_o, y_c), max(1.0, abs(y_c - y_o))
+        stroke = "#8a8f98" if key in ("1x", "na") else color
+        tip = "%s 주 · 종가 %s · %s" % (_dca_week_lbl(s["ts"]), fmt_num(s["c"], dec), badge)
+        if s["score"] is not None:
+            tip += " · 종합 %.0f (%s)" % (s["score"], ", ".join(
+                "%s %.0f" % (lb, s["ax"][key]) for key, _w, lb in _DCA_AXES
+                if s["ax"][key] is not None))
+            if s["cap"]:
+                tip += " · 실적 둔화로 %s 상한" % s["cap"].upper()
+        else:
+            tip += " (12개월 미만)"
+        g.append('<g><title>%s</title><line x1="%.1f" x2="%.1f" y1="%.1f" y2="%.1f" '
+                 'stroke="%s" stroke-width="1"/><rect x="%.1f" y="%.1f" width="%.1f" '
+                 'height="%.1f" fill="%s" stroke="%s" stroke-width="0.8"/></g>'
+                 % (_esc(tip), x, x, Y(s["h"]), Y(s["l"]), stroke,
+                    x - bw / 2, top, bw, hgt, color, stroke))
+    last = series[-1]
+    yl = Y(last["c"])
+    g.append('<line x1="%.1f" x2="%.1f" y1="%.1f" y2="%.1f" stroke="#a21cf0" '
+             'stroke-dasharray="3 3"/><rect x="%.1f" y="%.1f" width="%.1f" height="16" '
+             'rx="2" fill="#a21cf0"/><text x="%.1f" y="%.1f" font-size="11" fill="#fff">%s</text>'
+             % (pl, W - pr, yl, yl, W - pr + 2, yl - 8, pr - 4, W - pr + 6, yl + 4,
+                fmt_num(last["c"], dec)))
+    # 종합 점수 패널(구간 경계 점선 + 구간색 점)
+    g.append('<text x="%.1f" y="%.1f" font-size="11" fill="currentColor" opacity=".7">'
+             '종합 점수</text>' % (pl, sp0 - 4))
+    for th, key, _b, _l, color in _DCA_ZONES[:-1]:
+        y = SY(th)
+        g.append('<line x1="%.1f" x2="%.1f" y1="%.1f" y2="%.1f" stroke="%s" '
+                 'stroke-dasharray="2 3" opacity=".6"/><text x="%.1f" y="%.1f" '
+                 'font-size="10" fill="currentColor" opacity=".55">%d</text>'
+                 % (pl, W - pr, y, y, "#8a8f98" if key == "1x" else color,
+                    W - pr + 6, y + 3, th))
+    line = " ".join("%.1f,%.1f" % (X(i), SY(s["score"]))
+                    for i, s in enumerate(series) if s["score"] is not None)
+    if line:
+        g.append('<polyline points="%s" fill="none" stroke="currentColor" '
+                 'stroke-width="1" opacity=".35"/>' % line)
+    for i, s in enumerate(series):
+        if s["score"] is None:
+            continue
+        color = s["zone"][3]
+        g.append('<circle cx="%.1f" cy="%.1f" r="%.1f" fill="%s" stroke="#8a8f98" '
+                 'stroke-width=".5"/>' % (X(i), SY(s["score"]),
+                                          min(3.5, max(1.5, slot * 0.3)), color))
+    return ('<svg class="dca-svg" viewBox="0 0 %d %d" role="img" aria-label="DCA 주봉 차트">%s</svg>'
+            % (W, H, "".join(g)))
+
+
+def _dca_week_lbl(ts):
+    return datetime.fromtimestamp(ts + 12 * 3600, timezone.utc).strftime("%Y-%m-%d")
+
+
+def _render_dca():
+    fin = _LAST_STOCK.get("financials") if _LAST_STOCK.get("symbol") == _DCA_STATE["symbol"] else None
+    rows = _DCA_STATE.get("rows")
+    grp, prof, sector = _dca_profile()
+    _base, _yrs, m_lbl, mult_lbl = _DCA_METRICS[prof[0]]
+    earn_lbl = _DCA_EARN_LBL.get(prof[0], "FCF")
+    raw_pts = _dca_fcf_points(fin, prof[0]) if fin else []
+    growth = _dca_growth_points(fin) if fin and prof[6] else []
+    fcf_pts = _dca_growth_adjust(raw_pts, growth, prof[6])
+    if not rows or not fcf_pts:
+        _dca_clear()
+        return
+    series = _dca_series(rows, fcf_pts, _dca_health_points(fin, prof), _DCA_STATE.get("bench"),
+                         _DCA_STATE.get("daily"))
+    first = next((i for i, s in enumerate(series) if s["fcf"] is not None), None)
+    if first is None:
+        _dca_clear()
+        return
+    series = series[first:]
+    mults = sorted(s["mult"] for s in series[-_DCA_WINDOW:] if s["mult"] is not None)
+    med = mults[len(mults) // 2] if mults else None
+    last = series[-1]
+    fwd = _dca_forward()
+    if fwd:
+        _dca_apply_forward(last, fwd, prof)
+    key, badge, label, color = last["zone"]
+    cur = _LAST_STOCK.get("cur") or ""
+    dark_txt = " dark-txt" if key in ("1x", "3x", "na") else ""
+    if last["score"] is not None:
+        pct_txt = "종합 %.0f점" % last["score"]
+        mix_txt = "괴리 %.0f %s 역발상 %.0f" % (
+            last["ax"]["ma12"], "+" if last["radj"] >= 0 else "−", abs(last["radj"]))
+    else:
+        pct_txt = mix_txt = "데이터 축적 중(12개월 미만)"
+    tv, hp = last.get("tv") or {}, last.get("hp")
+
+    def f(v, fmt):
+        return "-" if v is None else fmt % v
+
+    ok_bad = prof[4]
+    g_last = next((gv for gt, gv in reversed(growth) if gt <= last["ts"] + 7 * 86400), None)
+    details = {
+        "ma12": "종가 ÷ 최근 12개 월봉 종가 평균 %s" % f(last.get("ma12"), "%+.0f%%"),
+        "val": "%s 백분위 %s%s" % (
+            mult_lbl, f(last["pct"], "%.0f%%"),
+            " · 매출 성장 %s/년 보정" % f(g_last, "%+.0f%%") if growth else ""),
+        "tech": "일봉 60일 역스토캐스틱 · 회복 %s(%s 대비) · 역발상 보정 %s · RSI %s · 52주 낙폭 %s" % (
+            f(last.get("rec"), "%.0f"), _DCA_STATE.get("bench_sym") or "-",
+            f(last.get("radj"), "%+.0f"), f(tv.get("rsi"), "%.0f"),
+            f(None if tv.get("dd") is None else tv["dd"] * 100, "%.0f%%")),
+        "health": "%s YoY %s · 매출 YoY %s(기준 %+.0f%%)%s" % (
+            earn_lbl, f(hp[2] if hp else None, "%+.0f%%"), f(hp[3] if hp else None, "%+.0f%%"),
+            prof[1], "" if not ok_bad else " · 부채/%s %s(양호 ≤%.0f·위험 ≥%.0f)" % (
+                earn_lbl, f(hp[4] if hp else None, "%.1f배"), ok_bad[0], ok_bad[1]))
+            + ("" if not last.get("fwd") else " · 컨센서스 EPS %s·매출 %s(올해·내년 평균)" % (
+                f(last["fwd"][0], "%+.0f%%"), f(last["fwd"][1], "%+.0f%%"))),
+        "trend": "%d주 MA · 변동성 백분위" % _DCA_MA,
+    }
+    axes = "".join(
+        '<div class="dca-ax"><b>%s</b><span class="v">%s</span>'
+        '<span class="w">%s</span><div class="d">%s</div></div>'
+        % (_esc(lb), f(last["ax"][k_], "%.0f"), "가중 %d%%" % int(w * 100) if w else "참고",
+           _esc(details[k_]))
+        for k_, w, lb in _DCA_AXES)
+    legend = "".join('<span><i style="background:%s"></i>%s</span>' % (z[4], _esc(z[2]))
+                     for z in _DCA_ZONES)
+    legend += ('<span><i style="background:%s"></i>판단 보류</span>'
+               '<span><i style="background:#ffa31a;border-radius:2px;height:3px"></i>'
+               '%s × 중앙 %s(적정가 환산)</span>' % (_DCA_NA[3], m_lbl, mult_lbl))
+    help_body = (
+                '· 매주 말 점수(0~100, 높을수록 매수) = 12개월 평균 괴리 + 역발상 보정(원조 dcaoptimizer 방식, 밸류·조정 압력·건전성·추세는 참고만). 차트의 각 봉에는 그 주의 점수를 표시<br>'
+                '· 12개월 평균 괴리: 종가 ÷ 최근 12개 월봉 종가 평균(이번 달은 현재가). %.0f − 괴리%%×%.2f(평균 아래) / ×%.1f(평균 위)<br>'
+                '· 밸류(참고): 주 종가 ÷ 공개된 이익(분기 +45일·연간 +75일 지연)의 최근 %d주(약 10년) 자기 역사 백분위를 뒤집음(52주 미만이면 없음)<br>'
+                '· 성장 보정: 이익 × (1+매출 2년 연평균 성장률)^3 기준 배수 — 고성장기 리레이팅을 고평가로 오판하지 않음(경기민감·반도체 사이클·적자 바이오 제외, 성장률 -10~10%% 제한)<br>'
+                '· 업종별 기준: 성장형(소프트웨어·인터넷·반도체 설계) EBITDA(P/EBITDA, 설비투자·지분 평가익·인수 상각 왜곡 배제)·매출 기대 +8%%·부채/EBITDA ≤4 / '
+                '일반(제약 등) 순이익(P/E) +4%% / 방어형(필수소비) FCF(P/FCF) +3%% / '
+                '경기민감(에너지·소재·제조·운송)은 고점 이익 함정 방지로 FCF 3년 평균 / 반도체 장비·메모리는 순이익 3년 평균 +5%% / '
+                '유틸리티 순이익(P/E)·부채/이익 ≤15 / 리츠·통신·케이블 P/EBITDA(감가상각 왜곡 배제)·부채/EBITDA ≤8 / '
+                '바이오 P/S(매출, 최근 순이익 흑자면 일반) / 금융은 순이익(P/E), 부채 제외<br>'
+                '· 조정 압력(일봉, 각 주 마지막 거래일 값): 100 − 최근 %d일 종가 최저~최고 중 현재 위치(%d일 평활, 변동성 폭발 시 50 대비 편차 최대 1.8배 증폭) — 고점 근처면 낮고 조정이 깊을수록 높음. 일봉을 못 받으면 주봉 60주로 대체<br>'
+                '· 회복 점수: 벤치마크(국내 ^KS11, 그 외 ^NDX) 대비 상대강도의 같은 위치(같은 평활·증폭)<br>'
+                '· 역발상 보정: 점수 −(회복−%d)÷%d + (조정 압력−%d)÷%d (합계 약 ±6.7점)<br>'
+                '· 건전성(참고): 이익 TTM YoY·분기 매출 YoY(업종 기대성장 대비)·부채/이익(적자면 0점) / 추세(참고): 40주 MA 위·낮은 변동성일수록 높음<br>'
+                '· ≥80 4X · ≥67 3X · ≥52 2X · ≥24 1X · ≥15 약한 차익 · 그 미만 강한 차익<br>'
+                '· 최신 주만: 종목 DB 컨센서스(올해·내년 EPS·매출 성장 평균)를 건전성(참고)에 절반 반영<br>'
+                '· 월봉 12개 미만이면 회색(판단 보류), 이익 데이터가 없으면 DCA 미표시(차트는 첫 이익 공개 주부터)<br>'
+                '· 주식수 일정 가정(자사주·희석 미반영, 밸류 참고 축)'
+                % ((_DCA_MA12_MID, _DCA_MA12_DOWN, _DCA_MA12_UP, _DCA_WINDOW, _RECOV_WIN, _RECOV_SMOOTH,
+                    _DCA_REGIME_PIVOT, _DCA_REGIME_STEP,
+                    _DCA_REGIME_PIVOT, _DCA_REGIME_STEP)))
+    wsc = [None if s["score"] is None else (s["score"], "#aeb4bd" if s["zone"][0] == "1x" else s["zone"][3],
+                                             s["zone"][1]) for s in series]
+    _DCA_STATE["view"] = {
+        "symbol": _DCA_STATE["symbol"],
+        "wts": [s["ts"] for s in series], "wsc": wsc,
+        "summary": ('<span class="dca-pill%s" style="background:%s;box-shadow:0 0 10px %s88">%s</span>'
+                    '<span class="dca-zone">%s</span><span class="dca-meta">%s</span>'
+                    % (dark_txt, color, color, _esc(badge), _esc(label), _esc(pct_txt))),
+        "details": ('<div class="dca-meta">%s · 주봉 · %s · %s · %s %s · 업종 기준 %s%s</div>'
+                    '<div class="dca-axes">%s</div><div class="dca-legend">%s</div>'
+                    '<div class="fin-chart">%s</div>'
+                    % (fmt_num(last["c"], 2 if last["c"] < 1000 else 0),
+                       datetime.now().strftime("%Y-%m-%d"), _esc(mix_txt), _esc(m_lbl),
+                       _esc(fmt_large(next((p[1] for p in reversed(raw_pts) if p[0] <= time.time()), None), cur)),
+                       _esc(prof[5]), "(%s)" % _esc(sector) if sector else "", axes, legend,
+                       _dca_svg(series[-_DCA_SHOW:], med))),
+        "help": ('<div class="recov-help-pop dca-help-pop" style="display:none">'
+                 '<button type="button" class="recov-help-close" title="닫기" aria-label="닫기">×</button>'
+                 '<h4>DCA Optimizer 계산 기준</h4><p>%s</p></div>' % help_body),
+    }
+    box = document.querySelector("#stock-chart")
+    if (_STOCKCHART_STATE.get("symbol") == _DCA_STATE["symbol"] and _STOCKCHART_STATE.get("rows")
+            and box is not None and box.querySelector(".idx-chart-head") is not None):
+        _rerender_stock_chart()
+
+
+async def load_dca(full_symbol):
+    """FCF TTM 기반 주봉 DCA 점수를 계산해 종목 차트에 표시(개별종목만)."""
+    fin = _LAST_STOCK.get("financials") if _LAST_STOCK.get("symbol") == full_symbol else None
+    if not fin:
+        _dca_clear()
+        return
+    st = _DCA_STATE.get("d1")
+    if not st or st[0] != full_symbol:
+        # 종목 DB(업종·컨센서스) — 없거나 실패하면 TradingView 분류로 대체
+        d1sym, row = _dca_d1_symbol(full_symbol), None
+        if d1sym:
+            row = next((r for r in _D1_STATE.get("rows") or [] if r.get("symbol") == d1sym), None)
+            if row is None:
+                try:
+                    row = (await _mcap_get("/stocks?symbol=%s" % d1sym)).get("stock")
+                except Exception:
+                    row = None
+        if _LAST_STOCK.get("symbol") != full_symbol:
+            return
+        _DCA_STATE["d1"] = (full_symbol, row)
+    if not _dca_fcf_points(fin, _dca_profile()[1][0]):
+        _dca_clear()
+        return
+    if _DCA_STATE["symbol"] != full_symbol or not _DCA_STATE.get("rows"):
+        _DCA_STATE["view"] = None
+        box = document.querySelector("#dca-section")
+        if box is not None:
+            box.innerHTML = '<div class="dca-head"><span class="dca-meta">DCA <span class="mini-spin"></span></span></div>'
+        try:
+            # range=max 는 상장 오래된 종목에서 3mo 봉으로 강등됨
+            rows, _sym = await _fetch_history_any(_yf_symbol_candidates(full_symbol), "20y", "1wk")
+        except Exception as exc:
+            _warn("dca", exc)
+            rows = None
+        bench_sym = _DCA_BENCH.get(full_symbol.split(":")[0].upper(), _RECOV_DEFAULT_BENCH)
+        bench = daily = None
+        if rows:
+            rows = _dca_weekly(rows)
+            try:
+                bench = _align_bench_closes(rows, _dca_weekly(
+                    await _fetch_index_history(bench_sym, "20y", "1wk")))
+            except Exception as exc:
+                _warn("dca-bench", exc)
+            try:
+                drows, _s = await _fetch_history_any(_yf_symbol_candidates(full_symbol), "2y", "1d")
+                daily = (drows, _align_bench_closes(
+                    drows, await _fetch_index_history(bench_sym, "2y", "1d")))
+            except Exception as exc:
+                _warn("dca-daily", exc)
+        if _LAST_STOCK.get("symbol") != full_symbol:
+            return
+        _DCA_STATE["symbol"] = full_symbol
+        _DCA_STATE["rows"] = rows
+        _DCA_STATE["bench"] = bench
+        _DCA_STATE["daily"] = daily
+        _DCA_STATE["bench_sym"] = bench_sym if bench else None
+    _render_dca()
 
 
 # ===================== 대가 13F 포트폴리오 (SEC EDGAR) =====================
@@ -14609,7 +15611,7 @@ def _render_mcap_top():
             '<td class="num">%s</td><td class="num m-hide">%s</td>'
             '<td class="num m-hide">%s</td><td class="num">%s</td>'
             '<td><button type="button" class="mcap-go" data-go="%s">조회</button></td></tr>'
-            % (_esc(r["symbol"]), ' class="sel"' if r["symbol"] == sel else "",
+            % (_esc(r["symbol"]), ' class="sel"' if _mcap_canon(r["symbol"]) == sel else "",
                i + 1, _esc(r.get("name") or ""),
                _esc(r.get("description") or ""), _esc(r.get("sector") or "-"),
                fmt_large(mcap if isinstance(mcap, (int, float)) else None, "USD"),
@@ -14620,13 +15622,25 @@ def _render_mcap_top():
     box.innerHTML = "".join(h)
 
 
+# 스캐너 is_primary 가 주마다 GOOG↔GOOGL 처럼 대표 클래스를 바꿔 선이 끊기므로 한 심볼로 합친다.
+_MCAP_ALIAS = {"NASDAQ:GOOG": "NASDAQ:GOOGL", "NYSE:BRK.A": "NYSE:BRK.B",
+               "NASDAQ:FOX": "NASDAQ:FOXA", "NASDAQ:NWS": "NASDAQ:NWSA"}
+
+
+def _mcap_canon(sym):
+    return _MCAP_ALIAS.get(sym, sym)
+
+
 def _mcap_weekly_ranks(weeks):
     """주별 {symbol: (순위, 시총)} — TOP N 만."""
     out = []
     for w in weeks:
-        rows = [r for r in (w.get("r") or [])
-                if len(r) >= 2 and isinstance(r[1], (int, float)) and r[1] > 0]
-        rows.sort(key=lambda r: -r[1])
+        merged = {}
+        for r in (w.get("r") or []):
+            if len(r) >= 2 and isinstance(r[1], (int, float)) and r[1] > 0:
+                s = _mcap_canon(r[0])
+                merged[s] = max(merged.get(s, 0), r[1])
+        rows = sorted(merged.items(), key=lambda r: -r[1])
         out.append({r[0]: (i + 1, r[1]) for i, r in enumerate(rows[:_MCAP_CHART_N])})
     return out
 
@@ -14733,6 +15747,7 @@ async def _load_mcap_hist():
 
 
 def _mcap_select(sym):
+    sym = _mcap_canon(sym)
     _MCAP_HIST["sel"] = None if _MCAP_HIST["sel"] == sym else sym
     _render_mcap_top()
     _render_mcap_chart()
@@ -15265,6 +16280,8 @@ def _handle_recov_help_click(event):
     """도움말 버튼/닫기/바깥 클릭에 따라 회복·조정 설명 팝업을 토글한다."""
     target = event.target
     if target is None:
+        return
+    if _handle_panel_toggle(event):
         return
     btn = target.closest(".recov-help-btn")
     if btn is not None:
@@ -16049,6 +17066,7 @@ def on_result_recov_help(event):
     """종목 탭 회복/조정 패널의 도움말 팝업 토글."""
     _handle_recov_help_click(event)
     _handle_trend_click(event)
+    _handle_dca_more_click(event)
 
 
 @when("pointerdown", "#result")
