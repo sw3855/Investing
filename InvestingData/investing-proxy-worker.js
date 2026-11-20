@@ -65,6 +65,7 @@
  *    DELETE https://<worker>/favorites?account=<id>&symbol=..  → 해당 심볼 삭제
  *    DELETE https://<worker>/favorites?account=<id>&folder=..  → 폴더와 그 안의 종목 삭제
  *    DELETE https://<worker>/favorites?account=<id>            → (symbol 없이) 계정 전체 삭제
+ *           (30일간 deleted:<id> 로 백업, 같은 ID·공유 키로 register=1 하면 복원)
  *
  * ── Gemini AI 기업 평가 (POST /gemini) ─────────────────────
  *  평가 프롬프트(Evaluation_Prompt.md 내용)를 시스템 지시로 사용해 제미나이가
@@ -134,8 +135,8 @@ const CORS_HEADERS = {
   "Access-Control-Max-Age": "86400",
 };
 
-// 모델 목록 조회 없이 안정적인 Lite 모델을 고정 사용한다.
-const GEMINI_FIXED_MODEL = "gemini-3.5-flash-lite";
+// 모델 목록 조회 없이 Gemini 4 Hydrogen 모델을 고정 사용한다.
+const GEMINI_FIXED_MODEL = "gemini-4-hydrogen";
 
 // Google Gemini 호출은 회사망/엣지 경로에 따라 "User location is not supported"
 // 오류가 날 수 있다. GEMINI_RELAY_URL(예: Vercel 미국 고정 함수)이 설정돼 있으면
@@ -167,11 +168,11 @@ async function geminiFetch(env, endpoint, method, payload, apiKey) {
   return fetch(url, init);
 }
 
-// "models/gemini-2.5-flash" → 205 처럼 버전 비교용 점수를 만든다.
+// "models/gemini-2.5-flash" → 205, "gemini-4-hydrogen" → 400 처럼 버전 비교용 점수를 만든다.
 function _modelVersionScore(name) {
-  const m = String(name || "").match(/gemini-(\d+)\.(\d+)/);
+  const m = String(name || "").match(/gemini-(\d+)(?:\.(\d+))?/);
   if (!m) return -1;
-  return parseInt(m[1], 10) * 100 + parseInt(m[2], 10);
+  return parseInt(m[1], 10) * 100 + parseInt(m[2] || "0", 10);
 }
 
 // 모델 목록 조회를 생략하고 고정 모델을 반환한다.
@@ -243,6 +244,10 @@ const FAV_SALT = "investing-fav-v1";
 // 세션 토큰: "~tok.<만료ms>.<HMAC>". 서명에 keyHash 를 포함해 키 변경/리셋 시 자동 무효화된다.
 const SESSION_TOKEN_PREFIX = "~tok.";
 const SESSION_TTL_MS = 24 * 3600 * 1000;
+// 계정 삭제 시 레코드를 deleted:<account> 로 보관하는 기간 (같은 키로 재등록하면 복원)
+const FAV_DELETED_PREFIX = "deleted:";
+const FAV_DELETED_TTL_DAYS = 30;
+const FAV_DELETED_TTL_SEC = FAV_DELETED_TTL_DAYS * 86400;
 
 // AI 평가 접근 제어: 관리자 계정·허용 계정 목록을 FAVORITES KV 에 저장한다.
 //  - ai_admin : 관리자 계정 ID (없으면 아래 기본값으로 최초 1회 시드)
@@ -1548,6 +1553,22 @@ async function handleFavorites(request, env, reqUrl) {
         return jsonResponse({ error: "사용할 수 없는 공유 키 형식입니다." }, 400);
       }
       const keyHash = await sha256Hex(FAV_SALT + ":" + authKey);
+      // 소프트 삭제된 백업이 있고 같은 공유 키로 재등록하면 데이터를 복원한다.
+      const delKey = FAV_DELETED_PREFIX + account;
+      let backup = null;
+      try {
+        const rawBackup = await env.FAVORITES.get(delKey);
+        if (rawBackup) backup = JSON.parse(rawBackup);
+      } catch {
+        backup = null;
+      }
+      if (backup && backup.keyHash && timingSafeEqual(backup.keyHash, keyHash)) {
+        const { deletedAt, failCount, ...restored } = backup;
+        await env.FAVORITES.put(kvKey, JSON.stringify(restored));
+        await env.FAVORITES.delete(delKey);
+        const token = await makeSessionToken(env, account, keyHash);
+        return jsonResponse({ registered: true, restored: true, token });
+      }
       await env.FAVORITES.put(
         kvKey,
         JSON.stringify({ keyHash, favorites: [], folders: [], gurus: [] })
@@ -1836,12 +1857,17 @@ async function handleFavorites(request, env, reqUrl) {
       return jsonResponse({ gurus: keptGurus });
     }
 
-    // symbol 도 folder 도 없으면 계정 전체 삭제 (키 검증 통과 시)
+    // symbol 도 folder 도 없으면 계정 전체 삭제 (키 검증 통과 시) → 일정 기간 백업 후 삭제
     if (!symbol && !folderToDelete) {
       if (record) {
+        await env.FAVORITES.put(
+          FAV_DELETED_PREFIX + account,
+          JSON.stringify({ ...record, deletedAt: Date.now() }),
+          { expirationTtl: FAV_DELETED_TTL_SEC }
+        );
         await env.FAVORITES.delete(kvKey);
       }
-      return jsonResponse({ favorites: [], folders: [], deleted: true });
+      return jsonResponse({ favorites: [], folders: [], deleted: true, restorable_days: FAV_DELETED_TTL_DAYS });
     }
 
     if (!record) {

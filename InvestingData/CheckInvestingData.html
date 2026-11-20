@@ -189,6 +189,12 @@
   .d1-help { font-size:.85em; opacity:.75; cursor:help; border-bottom:1px dotted currentColor; }
   .d1-saved { display:inline-flex; flex-wrap:wrap; align-items:center; gap:6px; }
   .d1-saved input { width:140px; }
+  .d1-anchor { margin-top:8px; border:1px solid var(--bd); border-radius:6px; padding:6px 10px; font-size:.85em; }
+  .d1-anchor h4 { margin:6px 0 2px; font-size:1em; }
+  .d1-anchor .ai { display:inline-flex; align-items:center; gap:4px; margin:2px 14px 2px 0; }
+  .d1-anchor .ai input { width:56px; }
+  .d1-anchor small { color:var(--mut); }
+  .d1-anchor .d1-anchor-act { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-top:6px; }
   table.d1-grid { border-collapse:separate; border-spacing:0; font-size:12px; }
   table.d1-grid th, table.d1-grid td { padding:4px 8px; white-space:nowrap;
     border-right:1px solid var(--bd); border-bottom:1px solid var(--bd); }
@@ -1316,7 +1322,8 @@
         <button id="d1LeftBtn" type="button" title="표의 맨 왼쪽으로 이동">⏮ 맨 왼쪽</button>
         <button id="d1CsvBtn" type="button" title="현재 필터·정렬 결과를 CSV 파일로 저장">CSV 저장</button>
         <span id="d1-saved" class="d1-saved" style="display:none">
-          <select id="d1SavedSel"><option value="">저장된 필터</option></select>
+          <select id="d1SavedSel" title="기본 필터(기준점에서 산출) 또는 저장된 필터"><option value="" hidden>필터 선택</option></select>
+          <button id="d1AnchorBtn" type="button" title="섹터 기본 필터의 네 가지 기준점 보기·수정">기준점</button>
           <input id="d1SaveName" type="text" maxlength="40" placeholder="필터 이름">
           <button id="d1SaveBtn" type="button">필터 저장</button>
           <button id="d1DelBtn" type="button">삭제</button>
@@ -1324,6 +1331,7 @@
         <span class="d1-help" tabindex="0" title="숫자 열:  >10  >=10  <5  <=5  =3  (기호 없으면 >=)&#10;범위:  5~20  (양끝 포함)&#10;문자 열:  포함 검색, 쉼표로 여러 개(OR)  예) tech,health&#10;%·$·쉼표·공백은 무시됨 · 여러 열 조건은 AND&#10;열 제목 클릭: 정렬 전환">ⓘ 필터 문법</span>
       </div>
       <div id="d1-active" class="d1-active"></div>
+      <div id="d1-anchor" class="d1-anchor" style="display:none"></div>
     </fieldset>
     <div id="d1-grid" class="d1-wrap"></div>
     <div id="d1-result"></div>
@@ -15044,6 +15052,7 @@ def _d1_chk_sync_btn(key):
 
 
 def _d1_chk_apply(key, vals):
+    _d1_preset_clear()
     _D1_STATE["flt"][key] = ",".join(vals)
     _d1_chk_sync_btn(key)
     _D1_DEBOUNCE["seq"] += 1
@@ -15355,6 +15364,7 @@ def on_d1_reload(event):
 @when("click", "#d1ResetBtn")
 def on_d1_reset(event):
     _D1_STATE["flt"] = {}
+    _d1_preset_clear()
     document.querySelector("#d1SavedSel").value = ""
     document.querySelector("#d1SaveName").value = ""
     document.querySelector("#d1-grid").scrollLeft = 0
@@ -15369,6 +15379,7 @@ def on_d1_filter(event):
     el = event.target
     if not el.classList.contains("d1-flt"):
         return
+    _d1_preset_clear()
     _D1_STATE["flt"][el.getAttribute("data-key")] = el.value
     _D1_DEBOUNCE["seq"] += 1
     asyncio.ensure_future(_d1_render_later(_D1_DEBOUNCE["seq"]))
@@ -15432,6 +15443,9 @@ async def _d1_load_ops(sym):
 
 
 _D1_SAVED = {"list": []}
+# 통합 선택 박스 값: "p:키" = 섹터 기본 필터, "s:이름" = 저장된 필터
+_D1_PRESET_NAMES = [("health", "헬스케어"), ("tech", "테크"), ("consumer", "소비재 (필수)"),
+                    ("industrial", "산업재"), ("finance", "금융"), ("utility", "유틸리티")]
 
 
 def _d1_update_saved_ui():
@@ -15440,13 +15454,21 @@ def _d1_update_saved_ui():
         return
     if not _fav_logged_in():
         _D1_SAVED["list"] = []
+        document.querySelector("#d1-anchor").style.display = "none"
     box.style.display = "" if _fav_logged_in() else "none"
     sel = document.querySelector("#d1SavedSel")
     cur = sel.value
+
+    def opt(v, label):
+        return '<option value="%s"%s>%s</option>' % (
+            _esc(v), " selected" if v == cur else "", _esc(label))
+    html = '<option value="" hidden>필터 선택</option><optgroup label="기본 필터">'
+    html += "".join(opt("p:" + k, n) for k, n in _D1_PRESET_NAMES) + "</optgroup>"
     names = [f.get("name") for f in _D1_SAVED["list"] if f.get("name")]
-    sel.innerHTML = '<option value="">저장된 필터</option>' + "".join(
-        '<option value="%s"%s>%s</option>' % (_esc(n), " selected" if n == cur else "", _esc(n))
-        for n in names)
+    if names:
+        html += '<optgroup label="저장된 필터">' + "".join(
+            opt("s:" + n, n) for n in names) + "</optgroup>"
+    sel.innerHTML = html
 
 
 def _d1_apply_saved(name):
@@ -15454,6 +15476,7 @@ def _d1_apply_saved(name):
     if f is None:
         return
     _D1_STATE["flt"] = {k: v for k, v in (f.get("flt") or {}).items() if k in _D1_KIND}
+    _d1_preset_clear()
     sort = f.get("sort")
     if isinstance(sort, list) and len(sort) == 2 and sort[0] in _D1_KIND:
         _D1_STATE["sort"] = (sort[0], 1 if sort[1] == 1 else -1)
@@ -15493,13 +15516,17 @@ async def _d1_save_current():
         return
     key, d = _D1_STATE["sort"]
     if await _d1_saved_op("set", {"name": name, "flt": flt, "sort": [key, d]}):
-        document.querySelector("#d1SavedSel").value = name
+        document.querySelector("#d1SavedSel").value = "s:" + name
 
 
 @when("change", "#d1SavedSel")
 def on_d1_saved_select(event):
-    if event.target.value:
-        _d1_apply_saved(event.target.value)
+    v = event.target.value
+    if v.startswith("p:"):
+        _d1_preset_select(v[2:])
+    elif v.startswith("s:"):
+        _d1_apply_saved(v[2:])
+        event.target.value = v
 
 
 @when("click", "#d1SaveBtn")
@@ -15515,12 +15542,326 @@ def on_d1_save_name_key(event):
 
 @when("click", "#d1DelBtn")
 def on_d1_saved_delete(event):
-    name = document.querySelector("#d1SavedSel").value
-    if not name:
-        window.alert("삭제할 필터를 선택하세요.")
+    v = document.querySelector("#d1SavedSel").value
+    if not v.startswith("s:"):
+        window.alert("삭제할 저장된 필터를 선택하세요.")
         return
+    name = v[2:]
     if window.confirm("'%s' 필터를 삭제할까요?" % name):
         asyncio.ensure_future(_d1_saved_op("del", {"name": name}))
+
+
+# ===================== 종목 DB 섹터 기본 필터 (섹터별 스크리닝 기준 문서) =====================
+
+# (키, 라벨, 문서 기본값, 기준점 번호) — ①물가 ②명목 성장률 ③S&P 500 평균 ④섹터 구조·규제
+_D1_ANCHOR_DEFS = [
+    ("infl", "근원 CPI YoY (%)", 3.0, 1),
+    ("ngdp", "명목 GDP YoY (%)", 5.0, 2),
+    ("sp_eps_xt", "EPS 성장률 FY0 · 테크 제외 중앙값 (%)", 12.0, 3),
+    ("sp_roe", "ROE · 자본 가중 (%)", 24.0, 3),
+    ("sp_pe", "PER · FY0 이익 기준 (배)", 22.0, 3),
+    ("sp_div", "배당수익률 · 시총 가중 (%)", 1.1, 3),
+    ("tech_roe", "테크 ROE 허들 (%)", 20.0, 4),
+    ("buyback", "금융 자사주 소각 효과 (%p)", 3.0, 4),
+    ("fin_roe", "금융 ROE 하한 (%)", 12.0, 4),
+    ("util_roe", "유틸리티 허용 ROE 하한 (%)", 12.0, 4),
+]
+_D1_ANCHOR_GROUPS = {
+    1: "① 미국 물가 — FRED CPILFESL",
+    2: "② 미국 명목 경제성장률 — FRED GDP",
+    3: "③ S&P 500 지수 평균 — 종목 DB S&P 500 집계",
+    4: "④ 섹터 자본 구조·규제 — 종목 DB 섹터 분포 · 미 10년물·위험프리미엄",
+}
+# 주정부 허용 ROE는 관행상 미 10년물 + 5~6%p
+_D1_UTIL_ROE_SPREAD = 5.5
+_D1_TECH_SECTORS = ("Technology", "Communication Services")
+_D1_ANCHOR_LS = "d1_anchor_v1"
+_D1_ANCHOR = {"vals": {k: d for k, _l, d, _g in _D1_ANCHOR_DEFS}, "src": {}, "preset": None,
+              "fetched": False, "busy": False}
+
+
+def _d1_anchor_load():
+    try:
+        saved = json.loads(window.localStorage.getItem(_D1_ANCHOR_LS) or "{}")
+    except Exception:
+        return
+    for k, v in (saved.get("vals") or {}).items():
+        if k in _D1_ANCHOR["vals"] and isinstance(v, (int, float)):
+            _D1_ANCHOR["vals"][k] = float(v)
+    _D1_ANCHOR["src"] = {k: str(v) for k, v in (saved.get("src") or {}).items()}
+
+
+def _d1_anchor_save():
+    try:
+        window.localStorage.setItem(_D1_ANCHOR_LS, json.dumps(
+            {"vals": _D1_ANCHOR["vals"], "src": _D1_ANCHOR["src"]}))
+    except Exception:
+        pass
+
+
+_d1_anchor_load()
+
+
+def _d1_n(x):
+    return ("%.1f" % x).rstrip("0").rstrip(".")
+
+
+def _d1_preset_flt(key, a):
+    """문서의 산출 공식: 매출 기준선 × 업종 영업 레버리지 = EPS 기준."""
+    def ge(x):
+        return ">=" + _d1_n(x)
+
+    def le(x):
+        return "0~" + _d1_n(x)
+    n, i = a["ngdp"], a["infl"]
+    if key == "health":
+        r = n + 1  # 명목 성장률 상회
+        return {"sector": "Healthcare", "rev_growth_0y": ge(r), "rev_growth_1y": ge(r),
+                "eps_growth_0y": ge(a["sp_eps_xt"]), "eps_growth_1y": ge(a["sp_eps_xt"]), "div_yield": ">0"}
+    if key == "tech":
+        r = n * 4  # 명목 성장률의 4배
+        return {"sector": ",".join(_D1_TECH_SECTORS), "rev_growth_0y": ge(r), "rev_growth_1y": ge(r),
+                "eps_growth_0y": ge(r * 1.5), "eps_growth_1y": ge(r),
+                "roe_ttm": ge(a["tech_roe"])}
+    if key == "consumer":
+        return {"sector": "Consumer Defensive", "rev_growth_0y": ge(i), "rev_growth_1y": ge(i),
+                "eps_growth_0y": ge(i * 4 / 3), "eps_growth_1y": ge(i * 4 / 3),
+                "forward_pe": le(a["sp_pe"]), "div_yield": ge(a["sp_div"] * 1.4),
+                "eps_rev_3m": ">0"}
+    if key == "industrial":
+        r = n + 1
+        return {"sector": "Industrials", "rev_growth_0y": ge(r), "rev_growth_1y": ge(r),
+                "eps_growth_0y": ge(r * 1.5), "eps_growth_1y": ge(r * 1.5),
+                "roe_ttm": ge(a["sp_roe"]), "div_yield": ">0",
+                "eps_rev_3m": ">=3", "eps_rev_1m": ">=1"}
+    if key == "finance":
+        e = n + a["buyback"]
+        return {"sector": "Financial Services", "rev_growth_0y": ge(n), "rev_growth_1y": ge(n),
+                "eps_growth_0y": ge(e), "eps_growth_1y": ge(e),
+                "roe_ttm": ge(a["fin_roe"]), "eps_rev_1m": ">=0", "eps_rev_3m": ">=0",
+                "op_last": ">0"}
+    if key == "utility":
+        r = n - 1
+        return {"sector": "Utilities", "rev_growth_0y": ge(r), "rev_growth_1y": ge(r),
+                "eps_growth_0y": ge(r * 1.5), "eps_growth_1y": ge(r * 1.5),
+                "roe_ttm": ge(a["util_roe"])}
+    return {}
+
+
+def _d1_preset_apply(key):
+    flt = _d1_preset_flt(key, _D1_ANCHOR["vals"])
+    if not flt:
+        return
+    if _D1_STATE["mkt"] == "kospi":
+        _d1_set_mkt("sp")
+    _D1_ANCHOR["preset"] = key
+    _D1_STATE["flt"] = flt
+    document.querySelector("#d1SavedSel").value = "p:" + key
+    document.querySelector("#d1-grid").scrollLeft = 0
+    if _D1_STATE["loaded"]:
+        _d1_build_grid()
+    else:
+        _d1_render_active()
+
+
+def _d1_preset_select(key):
+    _d1_preset_apply(key)
+    if not _D1_ANCHOR["fetched"] and not _D1_ANCHOR["busy"]:
+        asyncio.ensure_future(_d1_anchor_fetch(keep_manual=True))
+
+
+def _d1_preset_clear():
+    _D1_ANCHOR["preset"] = None
+    sel = document.querySelector("#d1SavedSel")
+    if sel is not None and sel.value.startswith("p:"):
+        sel.value = ""
+
+
+def _d1_sp_stats():
+    """종목 DB의 S&P 500 종목으로 지수 평균(시총·이익·자본 가중) 산출."""
+    def num(v):
+        return isinstance(v, (int, float))
+    rows = [r for r in _D1_STATE["rows"] if "S&P500" in (r.get("indices") or "")
+            and num(r.get("market_cap")) and r["market_cap"] > 0]
+    out = {}
+    # 지수 PER = Σ시총 ÷ Σ(FY0 추정 순이익) — 적자 기업 포함
+    earn = [(r["market_cap"], r["market_cap"] * r["eps_est_0y"] / r["price"]) for r in rows
+            if num(r.get("eps_est_0y")) and num(r.get("price")) and r["price"] > 0]
+    if earn and sum(e for _m, e in earn) > 0:
+        out["sp_pe"] = round(sum(m for m, _e in earn) / sum(e for _m, e in earn), 1)
+    # 가중 평균은 일회성 이익 급증 종목에 끌려가므로 중앙값
+    xt = sorted(r["eps_growth_0y"] for r in rows
+                if r.get("sector") != "Technology" and num(r.get("eps_growth_0y")))
+    if xt:
+        h = len(xt) // 2
+        out["sp_eps_xt"] = round(xt[h] if len(xt) % 2 else (xt[h - 1] + xt[h]) / 2, 1)
+    # 자본 가중 ROE = Σ이익 ÷ Σ자본. PBR 0.2 미만은 클래스주 데이터 오류(BRK-B 0.001)
+    book = [(r["market_cap"] / r["pbr"], max(-100.0, min(200.0, r["roe_ttm"]))) for r in rows
+            if num(r.get("pbr")) and r["pbr"] >= 0.2 and num(r.get("roe_ttm"))]
+    if book:
+        out["sp_roe"] = round(sum(b * x for b, x in book) / sum(b for b, _x in book), 1)
+    if rows:
+        out["sp_div"] = round(sum(r["market_cap"] * (r.get("div_yield") or 0) for r in rows)
+                              / sum(r["market_cap"] for r in rows), 2)
+    return out, len(rows)
+
+
+def _d1_median(vals):
+    v = sorted(vals)
+    if not v:
+        return None
+    h = len(v) // 2
+    return v[h] if len(v) % 2 else (v[h - 1] + v[h]) / 2
+
+
+def _d1_sector_stats():
+    """상대 기준(테크 ROE·금융 자사주 효과)을 S&P 500 섹터 중앙값으로 산출."""
+    def num(v):
+        return isinstance(v, (int, float))
+    rows = [r for r in _D1_STATE["rows"] if "S&P500" in (r.get("indices") or "")]
+    out = {}
+    tech = [r["roe_ttm"] for r in rows
+            if r.get("sector") in _D1_TECH_SECTORS and num(r.get("roe_ttm"))]
+    if tech:
+        out["tech_roe"] = (round(_d1_median(tech), 1), "테크·커뮤니케이션 %d종목 ROE 중앙값" % len(tech))
+    # EPS 증가율이 매출 증가율을 웃도는 폭 = 자사주 소각·마진 효과
+    gap = [r["eps_growth_1y"] - r["rev_growth_1y"] for r in rows
+           if r.get("sector") == "Financial Services"
+           and num(r.get("eps_growth_1y")) and num(r.get("rev_growth_1y"))]
+    if gap:
+        out["buyback"] = (round(_d1_median(gap), 1),
+                          "금융 %d종목 (EPS−매출 증가율 FY+1) 중앙값" % len(gap))
+    return out
+
+
+def _d1_anchor_render():
+    box = document.querySelector("#d1-anchor")
+    vals, src = _D1_ANCHOR["vals"], _D1_ANCHOR["src"]
+    parts = []
+    for g, title in _D1_ANCHOR_GROUPS.items():
+        items = "".join(
+            '<label class="ai">%s <input type="text" inputmode="decimal" data-ak="%s" value="%s">'
+            '<small data-as="%s">%s</small></label>'
+            % (_esc(lb), k, _d1_n(vals[k]) if k != "sp_div" else "%g" % vals[k], k,
+               _esc(src.get(k) or "문서 기본값"))
+            for k, lb, _d, gg in _D1_ANCHOR_DEFS if gg == g)
+        parts.append("<h4>%s</h4><div>%s</div>" % (_esc(title), items))
+    box.innerHTML = ("".join(parts)
+                     + '<div class="d1-anchor-act"><button type="button" data-act="fetch">외부값 불러오기</button>'
+                     '<button type="button" data-act="default">문서 기본값</button>'
+                     '<span id="d1-anchor-status" class="hint"></span></div>')
+
+
+def _d1_anchor_status(msg):
+    st = document.querySelector("#d1-anchor-status")
+    if st is not None:
+        st.textContent = msg
+
+
+async def _d1_anchor_fetch(keep_manual=False):
+    _D1_ANCHOR["busy"] = True
+    try:
+        await _d1_anchor_fetch_run(keep_manual)
+    finally:
+        _D1_ANCHOR["busy"] = False
+
+
+async def _d1_anchor_fetch_run(keep_manual):
+    _d1_anchor_status("불러오는 중...")
+    vals, src, miss = {}, {}, []
+    cpi, gdp, _rf, _erp = await asyncio.gather(
+        fetch_fred_series({"series": "CPILFESL", "units": "pc1"}, FRED_API_KEY),
+        fetch_fred_series({"series": "GDP", "units": "pc1"}, FRED_API_KEY),
+        _ensure_rf_rate(), _ensure_erp())
+    for key, res, name in (("infl", cpi, "CPILFESL"), ("ngdp", gdp, "GDP")):
+        if res and isinstance(res.get("value"), (int, float)):
+            vals[key] = round(res["value"], 1)
+            src[key] = "FRED %s · %s" % (name, res.get("date") or "-")
+        else:
+            miss.append("FRED %s" % name)
+    rf, erp = _RF_RATE.get("rate"), _ERP_RATE.get("rate")
+    if rf is not None:
+        vals["util_roe"] = round(rf * 100 + _D1_UTIL_ROE_SPREAD, 1)
+        src["util_roe"] = "US10Y %.2f%% + %g%%p" % (rf * 100, _D1_UTIL_ROE_SPREAD)
+        if erp is not None:
+            # 자기자본비용(COE)을 넘는 ROE만 주주가치 창출
+            vals["fin_roe"] = round((rf + erp) * 100, 1)
+            src["fin_roe"] = "COE = US10Y %.2f%% + ERP %.2f%%" % (rf * 100, erp * 100)
+        else:
+            miss.append("ERP(multpl)")
+    else:
+        miss.append("US10Y")
+    if _D1_STATE["loaded"]:
+        stats, cnt = _d1_sp_stats()
+        upd = max((r.get("updated_at") or "" for r in _D1_STATE["rows"]), default="")[:10]
+        for key, v in stats.items():
+            vals[key] = v
+            src[key] = "종목 DB %d종목 · %s" % (cnt, upd or "-")
+        for key, (v, how) in _d1_sector_stats().items():
+            vals[key] = v
+            src[key] = "%s · %s" % (how, upd or "-")
+    else:
+        miss.append("종목 DB(미로딩)")
+    # 자동 불러오기는 사용자가 직접 고친 값을 덮지 않음
+    for k, v in vals.items():
+        if keep_manual and _D1_ANCHOR["src"].get(k) == "수동":
+            continue
+        _D1_ANCHOR["vals"][k] = v
+        _D1_ANCHOR["src"][k] = src[k]
+    if _D1_STATE["loaded"]:
+        _D1_ANCHOR["fetched"] = True
+    _d1_anchor_save()
+    if document.querySelector("#d1-anchor").style.display != "none":
+        _d1_anchor_render()
+    _d1_anchor_status("실패: %s" % ", ".join(miss) if miss else "갱신 완료")
+    if _D1_ANCHOR["preset"]:
+        _d1_preset_apply(_D1_ANCHOR["preset"])
+
+
+@when("click", "#d1AnchorBtn")
+def on_d1_anchor_toggle(event):
+    box = document.querySelector("#d1-anchor")
+    if box.style.display == "none":
+        _d1_anchor_render()
+        box.style.display = ""
+    else:
+        box.style.display = "none"
+
+
+@when("click", "#d1-anchor")
+def on_d1_anchor_click(event):
+    btn = event.target.closest("button[data-act]")
+    if btn is None:
+        return
+    if btn.getAttribute("data-act") == "fetch":
+        asyncio.ensure_future(_d1_anchor_fetch())
+        return
+    _D1_ANCHOR["vals"] = {k: d for k, _l, d, _g in _D1_ANCHOR_DEFS}
+    _D1_ANCHOR["src"] = {}
+    _d1_anchor_save()
+    _d1_anchor_render()
+    if _D1_ANCHOR["preset"]:
+        _d1_preset_apply(_D1_ANCHOR["preset"])
+
+
+@when("input", "#d1-anchor")
+def on_d1_anchor_input(event):
+    el = event.target
+    k = el.getAttribute("data-ak")
+    if not k:
+        return
+    try:
+        v = float(el.value.replace(",", "").strip())
+    except ValueError:
+        return
+    _D1_ANCHOR["vals"][k] = v
+    _D1_ANCHOR["src"][k] = "수동"
+    tag = document.querySelector('#d1-anchor small[data-as="%s"]' % k)
+    if tag is not None:
+        tag.textContent = "수동"
+    _d1_anchor_save()
+    if _D1_ANCHOR["preset"]:
+        _d1_preset_apply(_D1_ANCHOR["preset"])
 
 
 # ===================== 미국 시가총액 순위 (워커 /mcap-top) =====================
@@ -17305,6 +17646,10 @@ async def on_fav_register(event):
         _set_fav_login_status("")
         window.alert("계정 등록 실패: %s" % err)
         return
+    if data.get("restored"):
+        window.alert("삭제됐던 '%s' 계정의 데이터를 복원했습니다." % acct)
+        await on_fav_login(event)
+        return
     # 등록 성공 → 바로 로그인 상태로 전환
     global _FAV_FOLDERS
     _fav_set_creds(acct, data.get("token") or key)
@@ -17378,7 +17723,8 @@ async def on_fav_delete_account(event):
         return
     if not window.confirm(
             "'%s' 계정과 저장된 모든 즐겨찾기를 서버에서 삭제합니다.\n"
-            "이 작업은 되돌릴 수 없습니다. 계속할까요?" % acct):
+            "30일 안에 같은 계정 ID·공유 키로 다시 등록하면 복원됩니다.\n"
+            "계속할까요?" % acct):
         return
     _set_fav_status("계정 삭제 중...")
     ok = await fav_delete_account()
@@ -17391,7 +17737,7 @@ async def on_fav_delete_account(event):
     document.querySelector("#favAccount").value = ""
     render_favorites([])
     _update_fav_login_ui()
-    _set_fav_status("계정 '%s' 삭제됨" % acct)
+    _set_fav_status("계정 '%s' 삭제됨 (30일 내 같은 키로 재등록 시 복원)" % acct)
 
 
 @when("keydown", "#favKey")
