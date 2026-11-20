@@ -495,6 +495,7 @@
   .trend-tools { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:0 0 6px; }
   .trend-tools .trend-btn { height:26px; padding:0 10px; font-size:12px; }
   .trend-tools .trend-btn.on { background:var(--pri); color:#fff; border-color:var(--pri); }
+  .trend-tools .zoom-first { margin-left:auto; }
   :where(#compare-section, #idxchart-result, #rrg-result, #multpl-result,
          #liq-result, #macro-chart, #result) svg { touch-action:pan-y; }
   .chart-svg.candle-svg { touch-action:none; user-select:none; -webkit-user-select:none; }
@@ -668,6 +669,8 @@
   .fg-marking svg.chart-svg { cursor:crosshair; }
   .fg-mark { fill:#fff; stroke:#f5a623; stroke-width:2.5; cursor:pointer; }
   .fg-mark:hover, .fg-mark.sel { fill:#f5a623; }
+  .fg-pick { fill:#2962ff; stroke:#fff; stroke-width:2; pointer-events:none; }
+  .fg-pick-line { stroke:#2962ff; stroke-dasharray:4 3; pointer-events:none; }
   .fg-mark-pop { position:absolute; z-index:5; width:260px; max-width:80%;
     background:#fff; border:1px solid var(--bd); border-radius:8px; padding:10px 12px;
     box-shadow:0 4px 14px rgba(0,0,0,.18); font-size:13px; }
@@ -7170,8 +7173,14 @@ def _trend_select(prefix, li):
 
 
 def _trend_toolbar_html(prefix, key):
+    zoom = ('<button type="button" class="trend-btn zoom-first" data-trend="zoomin" '
+            'title="확대 (Ctrl+마우스 휠 위)">＋ 확대</button>'
+            '<button type="button" class="trend-btn" data-trend="zoomout" '
+            'title="축소 (Ctrl+마우스 휠 아래)">－ 축소</button>'
+            '<button type="button" class="trend-btn" data-trend="zoomreset" '
+            'title="차트 위치·줌 초기화">⟲ 초기화</button>')
     if not key:
-        return ""
+        return '<div class="trend-tools" data-prefix="%s">%s</div>' % (prefix, zoom)
     on = bool(_TREND_MODE.get(prefix))
     has = bool(_TRENDLINES.get(key))
     dis = "" if has else " disabled"
@@ -7182,8 +7191,8 @@ def _trend_toolbar_html(prefix, key):
             '<button type="button" class="trend-btn" data-trend="delsel"%s>'
             '선택 삭제</button>'
             '<button type="button" class="trend-btn" data-trend="clear"%s>'
-            '모두 지우기</button></div>'
-            % (prefix, " on" if on else "", "" if sel_on else " disabled", dis))
+            '모두 지우기</button>%s</div>'
+            % (prefix, " on" if on else "", "" if sel_on else " disabled", dis, zoom))
 
 
 def _trend_refresh(prefix):
@@ -7450,6 +7459,12 @@ def _handle_trend_click(event):
         return
     key = (_TREND_GEOM.get(prefix) or {}).get("key")
     act = btn.getAttribute("data-trend")
+    if act in ("zoomin", "zoomout"):
+        _pan_zoom(prefix, 1 / _PAN_ZOOM_STEP if act == "zoomin" else _PAN_ZOOM_STEP)
+        return
+    if act == "zoomreset":
+        _pan_reset(prefix)
+        return
     if act == "draw":
         _TREND_MODE[prefix] = not _TREND_MODE.get(prefix)
         _TREND_SEL.pop(prefix, None)
@@ -7630,9 +7645,77 @@ def _pan_init(prefix, rows, rng):
     if span and n:
         cut = rows[-1][0] - span * 86400
         count = min(n, max(2, sum(1 for r in rows if r[0] > cut)))
-    _PAN_VIEW[prefix] = {"n": n, "count": count, "end": n,
+    _PAN_VIEW[prefix] = {"n": n, "count": count, "end": n, "count0": count,
                          "blank": max(5, count // 2),   # 최신 봉 오른쪽 빈 칸 최대 수
                          "yoff": 0.0}   # 상하 이동량(자동 가격범위 대비 비율, +면 위쪽 가격대)
+
+
+_PAN_ZOOM_STEP = 1.25
+_PAN_ZOOM_MIN = 10      # 확대 시 최소 표시 봉 수
+_PAN_WHEEL_AT = {}      # prefix -> 마지막 휠 줌 처리 시각
+
+
+def _pan_zoom(prefix, factor, f=1.0):
+    """보이는 봉 수를 factor 배로 바꾼다. f(0~1)는 화면상 고정점 위치(1=오른쪽 끝)."""
+    v = _PAN_VIEW.get(prefix)
+    if not v or prefix not in _PAN_BODY or _PAN_DRAG.get(prefix):
+        return False
+    old = v["count"]
+    new = int(round(old * factor))
+    new = min(new, old - 1) if factor < 1 else max(new, old + 1)
+    new = min(max(new, min(_PAN_ZOOM_MIN, v["n"])), v["n"])
+    if new == old:
+        return False
+    anchor = v["end"] - old + f * old
+    end = int(round(anchor + (1 - f) * new))
+    v["count"] = new
+    v["end"] = min(max(end, new), v["n"] + v["blank"])
+    _pan_render(prefix)
+    return True
+
+
+def _pan_reset(prefix):
+    v = _PAN_VIEW.get(prefix)
+    if not v or prefix not in _PAN_BODY:
+        return
+    _PAN_DRAG.pop(prefix, None)
+    v["count"] = v.get("count0", v["count"])
+    v["end"] = v["n"]
+    v["yoff"] = 0.0
+    _pan_render(prefix)
+
+
+def _on_chart_wheel(event):
+    if not (event.ctrlKey or event.metaKey) or not event.deltaY:
+        return
+    t = event.target
+    svg = t.closest("svg.candle-svg") if t is not None and t.closest is not None else None
+    if svg is None:
+        return
+    prefix = None
+    for p, root in _TREND_ROOT.items():
+        host = document.querySelector(root)
+        if host is not None and host.contains(svg):
+            prefix = p
+            break
+    if prefix is None:
+        return
+    event.preventDefault()      # 브라우저 페이지 확대 대신 차트 줌
+    now = time.time()
+    if now - _PAN_WHEEL_AT.get(prefix, 0.0) < 0.05:
+        return
+    _PAN_WHEEL_AT[prefix] = now
+    f = 1.0
+    g = _TREND_GEOM.get(prefix)
+    rect = svg.getBoundingClientRect()
+    if g and rect.width and rect.height:
+        sx = _svg_client_to_user(svg, event.clientX, event.clientY, rect, g["W"], g["H"])[0]
+        f = min(max((sx - g["padL"]) / g["plot_w"], 0.0), 1.0)
+    _pan_zoom(prefix, 1 / _PAN_ZOOM_STEP if event.deltaY < 0 else _PAN_ZOOM_STEP, f)
+
+
+document.addEventListener("wheel", create_proxy(_on_chart_wheel),
+                          to_js({"passive": False}, dict_converter=js.Object.fromEntries))
 
 
 def _pan_window(prefix, n):
@@ -12679,7 +12762,7 @@ def _update_fav_login_ui():
     _update_login_tabs()
     _d1_update_saved_ui()
     if not _fav_logged_in():
-        _FG_MARKS.update(map={}, sel=None, edit=False, mode=False)
+        _FG_MARKS.update(map={}, sel=None, edit=False, mode=None)
     _fg_refresh_chart()
     _fg_refresh_list()
     asyncio.ensure_future(refresh_guru_favorites())
@@ -13384,6 +13467,11 @@ def _fg_history_svg(pts):
     for day, p in mpos.items():
         parts.append('<circle class="fg-mark%s" data-fgdate="%s" cx="%g" cy="%g" r="6"/>'
                      % (" sel" if day == _FG_MARKS["sel"] else "", day, p["x"], p["y"]))
+    pk = by_day.get(_FG_MARKS["mode"]) if _FG_MARKS["mode"] else None
+    if pk is not None:
+        parts.append('<line class="fg-pick-line" x1="%g" y1="%g" x2="%g" y2="%g"/>'
+                     % (pk["x"], padT, pk["x"], fg_bot))
+        parts.append('<circle class="fg-pick" cx="%g" cy="%g" r="5"/>' % (pk["x"], pk["y"]))
     parts.append('</svg>')
     _FG_CHART.update(pts=cache, W=W, H=H, y1=padT, y2=fg_bot, marks=mpos)
     return "".join(parts)
@@ -13407,19 +13495,21 @@ def _fg_history_body():
         % (" on" if _FG_HIST["ov"].get(k) else "", k, _esc(lbl))
         for k, lbl, _c in _FG_OVERLAYS)
     if _fav_logged_in():
-        on = _FG_MARKS["mode"]
-        mark_btn += ('<button type="button" class="fg-mark-mode%s" data-fgmark="mode">%s</button>'
-                    % (" on" if on else "",
-                       "날짜를 클릭하세요 (취소)" if on else "＋ 마킹 추가"))
+        pick = _FG_MARKS["mode"]
+        mark_btn += ('<button type="button" class="fg-mark-mode%s" data-fgmark="mode" '
+                     'title="타임라인에서 날짜를 클릭한 뒤 누르세요">%s</button>'
+                     % (" on" if pick else "",
+                        "＋ 마킹 추가 (%s)" % _esc(pick) if pick else "＋ 마킹 추가"))
     svg = _fg_history_svg(view)
     return ('<div class="fg-chart-tools"><div class="fin-period">%s</div>%s</div>'
             '<div class="fin-chart%s" style="margin-top:10px;position:relative">'
             '%s<div id="fg-tip" class="multpl-tip"></div>%s</div>'
-            % (btns, mark_btn, " fg-marking" if _FG_MARKS["mode"] else "",
+            % (btns, mark_btn, " fg-marking" if _fav_logged_in() else "",
                svg, _fg_mark_pop_html()))
 
 
-_FG_MARKS = {"map": {}, "mode": False, "sel": None, "edit": False}
+# mode: 타임라인에서 클릭해 고른(아직 저장 안 된) 날짜
+_FG_MARKS = {"map": {}, "mode": None, "sel": None, "edit": False}
 
 
 def _fg_mark_pop_html():
@@ -16880,7 +16970,18 @@ async def _fg_mark_click(event):
             await _fg_mark_list_action(act, act_el.getAttribute("data-fgdate"))
             return True
         if act == "mode":
-            _FG_MARKS["mode"] = not _FG_MARKS["mode"]
+            pick = _FG_MARKS["mode"]
+            if not pick:
+                window.alert("타임라인에서 날짜를 먼저 클릭하세요.")
+                return True
+            _FG_MARKS["mode"] = None
+            if pick not in _FG_MARKS["map"]:
+                s = _fg_mark_score(pick)
+                memo = ("%.0f · %s" % (s, _fg_label(_fg_rating_of(s)))) if s is not None else pick
+                if not await _fg_save_mark(pick, memo, s):
+                    _fg_refresh_chart()
+                    return True
+            _FG_MARKS.update(sel=pick, edit=False)
         elif act == "close":
             _FG_MARKS.update(sel=None, edit=False)
         elif act == "edit":
@@ -16903,16 +17004,16 @@ async def _fg_mark_click(event):
         return True
     mk = t.closest(".fg-mark")
     if mk is not None:
-        _FG_MARKS.update(sel=mk.getAttribute("data-fgdate"), edit=False, mode=False)
+        _FG_MARKS.update(sel=mk.getAttribute("data-fgdate"), edit=False, mode=None)
         _fg_refresh_chart()
         return True
     svg = t.closest("#fg-chart svg.chart-svg")
-    if svg is not None and _FG_MARKS["mode"] and _fav_logged_in() and _FG_CHART["pts"]:
+    if svg is not None and _fav_logged_in() and _FG_CHART["pts"]:
         rect = svg.getBoundingClientRect()
         if rect.width:
             sx = (event.clientX - rect.left) / rect.width * _FG_CHART["W"]
             best = min(_FG_CHART["pts"], key=lambda p: abs(p["x"] - sx))
-            _FG_MARKS.update(sel=best["day"], edit=True, mode=False)
+            _FG_MARKS.update(sel=None, edit=False, mode=best["day"])
             _fg_refresh_chart()
         return True
     if t.closest("#fg-marks") is not None:
@@ -16965,7 +17066,7 @@ async def _fg_mark_list_action(act, day):
         if memo is not None and str(memo).strip():
             await _fg_save_mark(day, str(memo).strip())
     elif act == "goto":
-        _FG_MARKS.update(sel=day, edit=False, mode=False)
+        _FG_MARKS.update(sel=day, edit=False, mode=None)
         _fg_refresh_chart()
         if day not in _FG_CHART.get("marks", {}):
             # 현재 기간 밖이면 최대(5년) 기간으로 전환
