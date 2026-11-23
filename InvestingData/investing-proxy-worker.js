@@ -96,11 +96,14 @@
  *      관리자를 바꾸려면 KV 의 'ai_admin' 값을 수정한다.
  *    - 허용 계정 목록은 FAVORITES KV 의 'ai_access' 키(JSON 배열)에 저장된다.
  *    - 관리자 전용 관리 API:
- *        GET    /ai-access?account=<admin>            → { admin, allowed:[...], accounts:[...], resetRequests:[{account,at}] }
- *        POST   /ai-access?account=<admin>  본문 {target} → 계정 접근 허가
+ *        GET    /ai-access?account=<admin>            → { admin, allowed:[...], accounts:[...], resetRequests:[{account,at}], aiRequests:[{account,at}] }
+ *        POST   /ai-access?account=<admin>  본문 {target} → 계정 접근 허가(해당 계정의 AI 사용 요청도 제거)
  *        POST   /ai-access?account=<admin>&op=reset_pw 본문 {target} → 해당 계정 공유 키를 "0000"으로 리셋
  *        DELETE /ai-access?account=<admin>&target=..   → 계정 접근 취소
  *        DELETE /ai-access?account=<admin>&reset_req=.. → 비밀번호 리셋 요청 거절
+ *        DELETE /ai-access?account=<admin>&ai_req=..    → AI 사용 요청 거절
+ *    - 일반 계정용:
+ *        POST   /ai-access?account=<user>&op=request   → AI 사용 요청 등록(관리자 승인 대기)
  *
  * ── 거시경제 자료실 (/macro-doc) ────────────────────────────
  *  관리자(ai_admin) 계정만 HTML 리포트를 등록/삭제할 수 있고, 열람은 누구나 가능하다.
@@ -259,6 +262,9 @@ const AI_ACCESS_KEY = "ai_access";
 const PW_RESET_REQ_KEY = "pw_reset_requests";
 const PW_RESET_REQ_MAX = 200;
 const PW_RESET_DEFAULT = "0000";
+// AI 사용 요청 목록(JSON 배열 [{account, at}]). 관리자가 허가하면 제거된다.
+const AI_REQ_KEY = "ai_access_requests";
+const AI_REQ_MAX = 200;
 const PW_FAIL_MAX = 10;
 // 거시경제 자료실: 관리자가 등록한 HTML 리포트를 FAVORITES KV 에 저장한다.
 //  - macrodoc_index : 자료 목록(JSON 배열 [{id,title,updatedAt}])
@@ -849,6 +855,20 @@ async function saveResetRequests(env, list) {
   await env.FAVORITES.put(PW_RESET_REQ_KEY, JSON.stringify(list));
 }
 
+async function loadAiRequests(env) {
+  try {
+    const arr = JSON.parse((await env.FAVORITES.get(AI_REQ_KEY)) || "[]");
+    if (Array.isArray(arr)) return arr.filter((r) => r && typeof r.account === "string");
+  } catch {
+    // 무시하고 빈 목록 반환
+  }
+  return [];
+}
+
+async function saveAiRequests(env, list) {
+  await env.FAVORITES.put(AI_REQ_KEY, JSON.stringify(list));
+}
+
 // 등록된 모든 계정 ID 목록을 반환한다. (KV 의 'fav:<account>' 키를 나열)
 // 관리자 화면에서 접근 허가 대상 계정을 검색·선택할 때 사용한다.
 async function listAllAccounts(env) {
@@ -966,6 +986,26 @@ async function handleAiAccess(request, env, reqUrl) {
   const authKey = request.headers.get("X-Fav-Key") || "";
   const record = await verifyCredentials(env, account, authKey);
   const admin = await getAdminAccount(env);
+
+  // 일반 계정의 AI 사용 요청 (로그인 필요)
+  if (request.method === "POST" && reqUrl.searchParams.get("op") === "request") {
+    if (!record) {
+      return jsonResponse({ error: "로그인이 필요합니다." }, 401);
+    }
+    if (await isAiAuthorized(env, account)) {
+      return jsonResponse({ allowed: true });
+    }
+    const requests = await loadAiRequests(env);
+    if (!requests.some((r) => r.account === account)) {
+      if (requests.length >= AI_REQ_MAX) {
+        return jsonResponse({ error: "요청이 너무 많습니다. 잠시 후 다시 시도하세요." }, 429);
+      }
+      requests.push({ account, at: Date.now() });
+      await saveAiRequests(env, requests);
+    }
+    return jsonResponse({ requested: true });
+  }
+
   if (!record || account !== admin) {
     return jsonResponse({ error: "관리자만 접근할 수 있습니다." }, 403);
   }
@@ -976,6 +1016,7 @@ async function handleAiAccess(request, env, reqUrl) {
       allowed: await loadAiAccess(env),
       accounts: await listAllAccounts(env),
       resetRequests: await loadResetRequests(env),
+      aiRequests: await loadAiRequests(env),
     });
   }
 
@@ -1039,7 +1080,9 @@ async function handleAiAccess(request, env, reqUrl) {
       list.push(target);
       await saveAiAccess(env, list);
     }
-    return jsonResponse({ allowed: list });
+    const aiRequests = (await loadAiRequests(env)).filter((r) => r.account !== target);
+    await saveAiRequests(env, aiRequests);
+    return jsonResponse({ allowed: list, aiRequests });
   }
 
   if (request.method === "DELETE") {
@@ -1048,6 +1091,12 @@ async function handleAiAccess(request, env, reqUrl) {
       const requests = (await loadResetRequests(env)).filter((r) => r.account !== resetReq);
       await saveResetRequests(env, requests);
       return jsonResponse({ resetRequests: requests });
+    }
+    const aiReq = reqUrl.searchParams.get("ai_req");
+    if (aiReq !== null) {
+      const aiRequests = (await loadAiRequests(env)).filter((r) => r.account !== aiReq);
+      await saveAiRequests(env, aiRequests);
+      return jsonResponse({ aiRequests });
     }
     const target = cleanStr(reqUrl.searchParams.get("target"));
     let list = await loadAiAccess(env);
@@ -1224,8 +1273,15 @@ async function handleGemini(request, env, reqUrl) {
     );
   }
   if (!(await isAiAuthorized(env, account))) {
+    const requested = (await loadAiRequests(env)).some((r) => r.account === account);
     return jsonResponse(
-      { error: "AI 평가 사용 권한이 없습니다. 관리자에게 접근 허가를 요청하세요." },
+      {
+        error: requested
+          ? "AI 사용 요청이 접수되어 관리자 승인을 기다리는 중입니다."
+          : "AI 평가 사용 권한이 없습니다. 아래 버튼으로 관리자에게 사용을 요청하세요.",
+        needAccess: true,
+        requested,
+      },
       403
     );
   }

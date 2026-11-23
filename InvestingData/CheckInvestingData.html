@@ -34,6 +34,8 @@
   .acct-btn.logged-in::after { content:""; position:absolute; top:1px; right:1px;
     width:9px; height:9px; border-radius:50%; background:#3fd1a2;
     border:2px solid #0e1e46; }
+  .acct-btn.logged-in.has-req { border-color:#ff6b6b; }
+  .acct-btn.logged-in.has-req::after { background:#ff6b6b; }
   .acct-popup { display:none; position:absolute; right:0; top:calc(100% + 10px);
     z-index:60; width:260px; background:#fff; color:#1f2328;
     border:1px solid var(--bd); border-radius:10px;
@@ -1011,6 +1013,9 @@
       관리자 계정은 항상 사용할 수 있습니다. 입력창을 클릭하거나 검색어를 입력하면
       등록된 계정 목록이 아래에 필터링되어 표시됩니다.</div>
     <div id="ai-access-list" class="fav-list"></div>
+    <div class="hint" style="margin-top:14px"><b>AI 사용 요청</b> ·
+      허가하면 해당 계정이 AI 평가를 사용할 수 있습니다.</div>
+    <div id="ai-req-list" class="fav-list"></div>
     <div class="hint" style="margin-top:14px"><b>비밀번호 리셋 요청</b> ·
       리셋하면 해당 계정의 공유 키가 0000 으로 초기화됩니다.</div>
     <div id="pw-reset-list" class="fav-list"></div>
@@ -14295,6 +14300,17 @@ _AI_ADMIN = {"is": False}
 _AI_ACCOUNTS = {"list": []}
 _AI_ALLOWED = {"list": []}
 
+# 관리자가 처리해야 할 대기 요청 수(비밀번호 리셋 / AI 사용). 0 보다 크면 계정 버튼을 빨간 테두리로 표시한다.
+_AI_PENDING = {"reset": 0, "ai": 0}
+
+
+def _update_acct_alert():
+    btn = document.querySelector("#acctBtn")
+    if btn is None:
+        return
+    pending = _is_ai_admin() and (_AI_PENDING["reset"] + _AI_PENDING["ai"]) > 0
+    btn.classList.toggle("has-req", bool(pending))
+
 
 def _gemini_base():
     """CORS 프록시 접두어에서 Worker 주소를 뽑아 /gemini 엔드포인트를 만든다."""
@@ -14447,13 +14463,76 @@ def render_pw_reset_requests(reqs):
             % (_esc(a), _esc(when_txt), _esc(a), _esc(a)))
     if not rows:
         box.innerHTML = '<div class="hint" style="margin-top:6px">대기 중인 요청이 없습니다.</div>'
+        _AI_PENDING["reset"] = 0
+        _update_acct_alert()
         return
+    _AI_PENDING["reset"] = len(rows)
+    _update_acct_alert()
     box.innerHTML = "".join(rows)
     for cls, approve in (("pw-reset-ok", True), ("pw-reset-no", False)):
         els = document.querySelectorAll("#pw-reset-list ." + cls)
         for i in range(els.length):
             el = els.item(i)
             _bind(el, "click", _make_pw_reset_handler(el.getAttribute("data-account"), approve))
+
+
+def _make_ai_req_handler(target, approve):
+    async def _do():
+        _set_ai_admin_status("처리 중...")
+        if approve:
+            data, err = await _ai_access_api("POST", body=json.dumps({"target": target}))
+        else:
+            data, err = await _ai_access_api(
+                "DELETE", extra_query="&ai_req=%s" % js.encodeURIComponent(target))
+        if err:
+            _set_ai_admin_status("실패: %s" % err)
+            window.alert("처리 실패: %s" % err)
+            return
+        if data.get("allowed") is not None:
+            render_ai_access(data.get("allowed") or [])
+        render_ai_requests(data.get("aiRequests") or [])
+        _set_ai_admin_status(("허가됨 · %s" if approve else "거절됨 · %s") % target)
+
+    def handler(evt):
+        evt.preventDefault()
+        evt.stopPropagation()
+        msg = ("'%s' 계정의 AI 사용을 허가할까요?" if approve
+               else "'%s' 계정의 AI 사용 요청을 거절할까요?") % target
+        if window.confirm(msg):
+            asyncio.ensure_future(_do())
+    return handler
+
+
+def render_ai_requests(reqs):
+    """AI 사용 요청 목록을 허가/거절 버튼과 함께 렌더링한다."""
+    box = document.querySelector("#ai-req-list")
+    if box is None:
+        return
+    rows = []
+    for r in reqs or []:
+        a = r.get("account") or ""
+        if not a:
+            continue
+        when_txt = ""
+        if isinstance(r.get("at"), (int, float)):
+            when_txt = str(js.Date.new(r["at"]).toLocaleString("ko-KR"))
+        rows.append(
+            '<div style="display:flex;gap:8px;align-items:center;margin-top:6px">'
+            '<b>%s</b><span class="hint">%s</span>'
+            '<button type="button" class="ai-req-ok" data-account="%s">허가</button>'
+            '<button type="button" class="ai-req-no" data-account="%s">거절</button></div>'
+            % (_esc(a), _esc(when_txt), _esc(a), _esc(a)))
+    _AI_PENDING["ai"] = len(rows)
+    _update_acct_alert()
+    if not rows:
+        box.innerHTML = '<div class="hint" style="margin-top:6px">대기 중인 요청이 없습니다.</div>'
+        return
+    box.innerHTML = "".join(rows)
+    for cls, approve in (("ai-req-ok", True), ("ai-req-no", False)):
+        els = document.querySelectorAll("#ai-req-list ." + cls)
+        for i in range(els.length):
+            el = els.item(i)
+            _bind(el, "click", _make_ai_req_handler(el.getAttribute("data-account"), approve))
 
 
 def _render_grant_suggest():
@@ -14530,6 +14609,7 @@ async def _load_ai_access():
     _AI_ACCOUNTS["list"] = data.get("accounts") or []
     render_ai_access(data.get("allowed") or [])
     render_pw_reset_requests(data.get("resetRequests") or [])
+    render_ai_requests(data.get("aiRequests") or [])
     _set_ai_admin_status("")
 
 
@@ -14544,6 +14624,7 @@ async def _refresh_ai_admin():
         return
     if not _fav_logged_in():
         _AI_ADMIN["is"] = False
+        _update_acct_alert()
         btn.style.display = "none"
         _close_ai_admin_pop()
         _update_macrodoc_admin_ui()
@@ -14553,6 +14634,7 @@ async def _refresh_ai_admin():
     delete_btn = document.querySelector("#favDeleteBtn")
     if err:
         _AI_ADMIN["is"] = False
+        _update_acct_alert()
         btn.style.display = "none"
         _close_ai_admin_pop()
         # 관리자가 아니면(그리고 로그인 상태면) 계정 삭제 버튼을 다시 노출한다.
@@ -14568,6 +14650,7 @@ async def _refresh_ai_admin():
     _AI_ACCOUNTS["list"] = data.get("accounts") or []
     render_ai_access(data.get("allowed") or [])
     render_pw_reset_requests(data.get("resetRequests") or [])
+    render_ai_requests(data.get("aiRequests") or [])
     _set_ai_admin_status("")
     _update_macrodoc_admin_ui()
 
@@ -14698,7 +14781,13 @@ async def _run_ai_eval():
         return
     if resp.status >= 400 or data.get("error"):
         msg = data.get("error") or ("HTTP %s" % resp.status)
-        box.innerHTML = ('<div class="ai-error">%s</div>' % _esc(msg))
+        if data.get("needAccess") and not data.get("requested"):
+            box.innerHTML = ('<div class="ai-error">%s<div style="margin-top:8px">'
+                             '<button type="button" id="aiRequestBtn">AI 사용 요청</button>'
+                             '</div></div>' % _esc(msg))
+            _bind(document.querySelector("#aiRequestBtn"), "click", _on_ai_request)
+        else:
+            box.innerHTML = ('<div class="ai-error">%s</div>' % _esc(msg))
         _set_ai_status("")
     else:
         content = _render_markdown(data.get("text") or "")
@@ -14722,6 +14811,28 @@ async def _run_ai_eval():
         _set_ai_status("완료")
     _AI_BUSY["on"] = False
     document.querySelector("#aiEvalBtn").disabled = False
+
+
+def _on_ai_request(evt):
+    evt.preventDefault()
+
+    async def _do():
+        btn = document.querySelector("#aiRequestBtn")
+        if btn is not None:
+            btn.disabled = True
+        data, err = await _ai_access_api("POST", extra_query="&op=request", body="{}")
+        box = document.querySelector("#ai-result")
+        if err:
+            if btn is not None:
+                btn.disabled = False
+            window.alert("AI 사용 요청 실패: %s" % err)
+            return
+        if data.get("allowed"):
+            box.innerHTML = '<div class="ai-card"><div class="ai-body">이미 AI 사용이 허가된 계정입니다. 다시 평가를 실행하세요.</div></div>'
+        else:
+            box.innerHTML = '<div class="ai-error">AI 사용 요청이 접수되었습니다. 관리자 승인 후 사용할 수 있습니다.</div>'
+        _set_ai_status("요청됨")
+    asyncio.ensure_future(_do())
 
 
 # ===================== 이벤트 =====================
@@ -14826,6 +14937,7 @@ async def on_ai_grant(event):
         return
     document.querySelector("#aiGrantAccount").value = ""
     render_ai_access(data.get("allowed") or [])
+    render_ai_requests(data.get("aiRequests") or [])
     _set_ai_admin_status("허가됨 · %s" % target)
     _hide_grant_suggest()
 
