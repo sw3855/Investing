@@ -455,6 +455,40 @@
     align-items:center; gap:5px; cursor:pointer; white-space:nowrap; }
   .stock-qtr-toggle input { cursor:pointer; margin:0; }
   .stock-qtr-metric { height:28px; }
+  .stockcmp-bar { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin:0 0 8px; }
+  .stockcmp-add { display:inline-flex; gap:6px; flex-wrap:nowrap; }
+  .stockcmp-add input { height:28px; width:130px; max-width:40vw; text-transform:uppercase; }
+  #stockCmpFolder { height:28px; max-width:30vw; }
+  #stockCmpFav { height:28px; max-width:44vw; }
+  .stockcmp-add button { height:28px; padding:0 10px; white-space:nowrap; }
+  .stockcmp-chip { display:inline-flex; align-items:center; gap:5px; height:26px; padding:0 4px 0 9px;
+    border:1px solid var(--bd); border-radius:999px; font-size:12px; font-weight:600; }
+  .stockcmp-chip i { width:9px; height:9px; border-radius:2px; display:inline-block; }
+  .stockcmp-chip button { border:0; background:none; padding:0 4px; height:20px; cursor:pointer;
+    color:var(--mut); font-size:14px; line-height:1; }
+  .stockcmp-msg { font-size:12px; color:var(--mut); }
+  .stockcmp-host { position:relative; }
+  .stockcmp-host svg { width:100%; height:auto; display:block; touch-action:pan-y; }
+  .stockcmp-tip { position:absolute; top:6px; right:8px; display:none; flex-direction:column; gap:2px;
+    padding:6px 9px; border:1px solid var(--bd); border-radius:6px; background:rgba(255,255,255,.95);
+    font-size:12px; pointer-events:none; min-width:130px; }
+  .stockcmp-tip .d { color:var(--mut); }
+  .stockcmp-tip .r { display:flex; justify-content:space-between; gap:10px; }
+  .stockcmp-tip .r b { display:inline-flex; align-items:center; gap:4px; }
+  .stockcmp-tip .r i { width:8px; height:8px; border-radius:2px; display:inline-block; }
+  .stockcmp-tbl-wrap { overflow-x:auto; margin-top:8px; }
+  .stockcmp-table { width:100%; border-collapse:collapse; font-size:13px; white-space:nowrap; }
+  .stockcmp-table th, .stockcmp-table td { padding:6px 8px; border-bottom:1px solid var(--bd); text-align:right; }
+  .stockcmp-table th { color:var(--mut); font-weight:600; }
+  .stockcmp-table th:nth-child(2), .stockcmp-table td:nth-child(2) { text-align:left; }
+  .stockcmp-table td:first-child { width:14px; padding-right:0; }
+  .stockcmp-table td:first-child i { width:10px; height:10px; border-radius:2px; display:inline-block; }
+  .stockcmp-table .sym { font-weight:700; }
+  .stockcmp-table .nm { color:var(--mut); font-size:11px; }
+  .stockcmp-table button { border:0; background:none; cursor:pointer; color:var(--mut); font-size:15px; }
+  @media (prefers-color-scheme: dark) {
+    .stockcmp-tip { background:rgba(22,28,36,.95); color:#e6e8eb; }
+  }
   .dca-head { display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; margin:4px 0 10px; }
   .dca-pill { display:inline-block; padding:6px 20px; border-radius:999px; font-weight:800;
     font-size:20px; letter-spacing:.5px; color:#fff; white-space:nowrap; }
@@ -497,7 +531,7 @@
   .trend-tools { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:0 0 6px; }
   .trend-tools .trend-btn { height:26px; padding:0 10px; font-size:12px; }
   .trend-tools .trend-btn.on { background:var(--pri); color:#fff; border-color:var(--pri); }
-  .trend-tools .zoom-first { margin-left:auto; }
+  .trend-tools .zoom-group { display:inline-flex; gap:6px; flex-wrap:nowrap; margin-left:auto; }
   :where(#compare-section, #idxchart-result, #rrg-result, #multpl-result,
          #liq-result, #macro-chart, #result) svg { touch-action:pan-y; }
   .chart-svg.candle-svg { touch-action:none; user-select:none; -webkit-user-select:none; }
@@ -7178,12 +7212,13 @@ def _trend_select(prefix, li):
 
 
 def _trend_toolbar_html(prefix, key):
-    zoom = ('<button type="button" class="trend-btn zoom-first" data-trend="zoomin" '
+    zoom = ('<span class="zoom-group">'
+            '<button type="button" class="trend-btn" data-trend="zoomin" '
             'title="확대 (Ctrl+마우스 휠 위)">＋ 확대</button>'
             '<button type="button" class="trend-btn" data-trend="zoomout" '
             'title="축소 (Ctrl+마우스 휠 아래)">－ 축소</button>'
             '<button type="button" class="trend-btn" data-trend="zoomreset" '
-            'title="차트 위치·줌 초기화">⟲ 초기화</button>')
+            'title="차트 위치·줌 초기화">⟲ 초기화</button></span>')
     if not key:
         return '<div class="trend-tools" data-prefix="%s">%s</div>' % (prefix, zoom)
     on = bool(_TREND_MODE.get(prefix))
@@ -7633,7 +7668,7 @@ document.addEventListener("pointerdown", create_proxy(_on_trend_doc_pointerdown)
 # ── 캔들 차트 좌우 이동(팬) ──────────────────────────────────
 # 선택 기간보다 긴 이력을 받아 두고, 보이는 창(count 봉)의 끝 위치를 드래그로 옮긴다.
 _PAN_FETCH_RANGE = {"1mo": "1y", "3mo": "2y", "6mo": "2y", "1y": "5y",
-                    "5y": "10y", "10y": "max"}
+                    "5y": "10y", "10y": "max", "ytd": "2y"}
 _PAN_SPAN_DAYS = {"1mo": 30, "3mo": 91, "6mo": 182, "1y": 365, "5y": 1826,
                   "10y": 3652}
 _PAN_WARMUP = 260       # 창 앞쪽 지표(MA200·회복점수 등) 계산용 선행 봉 수
@@ -7650,6 +7685,9 @@ def _pan_init(prefix, rows, rng):
     if span and n:
         cut = rows[-1][0] - span * 86400
         count = min(n, max(2, sum(1 for r in rows if r[0] > cut)))
+    elif rng == "ytd" and n:
+        cut = _ytd_start_ts(rows[-1][0])
+        count = min(n, max(2, sum(1 for r in rows if r[0] >= cut)))
     _PAN_VIEW[prefix] = {"n": n, "count": count, "end": n, "count0": count,
                          "blank": max(5, count // 2),   # 최신 봉 오른쪽 빈 칸 최대 수
                          "yoff": 0.0}   # 상하 이동량(자동 가격범위 대비 비율, +면 위쪽 가격대)
@@ -9395,7 +9433,8 @@ _YF_SUFFIX = {
 }
 
 _STOCKCHART_STATE = {"symbol": None, "name": None, "range": "6mo", "interval": "1d",
-                     "rows": None, "overlay": False, "overlay_metric": "revenue"}
+                     "rows": None, "overlay": False, "overlay_metric": "revenue",
+                     "cmp": []}   # cmp: [{"symbol", "label", "name", "rows"}]
 _STOCKCHART_HOVER = {"pts": [], "W": 0.0, "H": 0.0, "y1": 0.0, "y2": 0.0}
 _STOCKCHART_RANGES = [("1mo", "1개월"), ("3mo", "3개월"),
                       ("6mo", "6개월"), ("1y", "1년"), ("5y", "5년"),
@@ -9539,10 +9578,13 @@ async def _fetch_history_any(cands, rng, interval="1d"):
 
 def _stockchart_range_html():
     cur = _STOCKCHART_STATE["range"]
+    ranges = list(_STOCKCHART_RANGES)
+    if _STOCKCHART_STATE.get("cmp"):
+        ranges.insert(0, ("ytd", "YTD"))
     btns = "".join(
         '<button type="button" data-srange="%s" class="%s">%s</button>'
         % (rv, "on" if rv == cur else "", _esc(lbl))
-        for rv, lbl in _STOCKCHART_RANGES)
+        for rv, lbl in ranges)
     interval = _STOCKCHART_STATE.get("interval", "1d")
     long_range = cur in ("1y", "5y", "10y")
     interval_html = ('<select id="stockChartInterval" title="차트 주기">'
@@ -9562,10 +9604,12 @@ def _render_stock_chart(name, rows):
     _STOCKCHART_STATE["rows"] = rows
     _STOCKCHART_STATE["name"] = name
     fin = _stockchart_financials()
-    qtr_ctrl = _stockchart_qtr_controls_html(bool(fin))
-    top = ('<div class="stock-chart-top"><h3 style="margin:0">일봉 차트</h3>'
-           '%s</div>' % qtr_ctrl)
-    controls = '<div class="fin-controls">%s</div>' % _stockchart_range_html()
+    cmp_on = bool(_STOCKCHART_STATE.get("cmp")) and bool(rows)
+    qtr_ctrl = "" if cmp_on else _stockchart_qtr_controls_html(bool(fin))
+    top = ('<div class="stock-chart-top"><h3 style="margin:0">%s</h3>'
+           '%s</div>' % ("비교 차트" if cmp_on else "일봉 차트", qtr_ctrl))
+    controls = ('<div class="fin-controls">%s</div>%s'
+                % (_stockchart_range_html(), _stockcmp_bar_html()))
     if not rows:
         box.innerHTML = ('<div class="card"><div class="sec">%s%s'
                          '<div class="hint">차트 데이터를 불러오지 못했습니다. '
@@ -9575,6 +9619,14 @@ def _render_stock_chart(name, rows):
         return
     dec = 2 if rows[-1][4] < 1000 else 0
     head = _chart_head_html("stockchart", name, rows, dec)
+    if cmp_on:
+        # 비교 모드는 선형 차트만 표시(팬/줌/추세선 비활성)
+        _PAN_BODY.pop("stockchart", None)
+        box.innerHTML = ('<div class="card"><div class="sec">%s%s%s'
+                         '<div class="fin-chart">%s</div></div></div>'
+                         % (top, controls, head, _stockcmp_body_html(rows)))
+        _bind_stockchart_controls()
+        return
     overlay_fn = None
     if fin and _STOCKCHART_STATE.get("overlay"):
         annual = _STOCKCHART_STATE.get("range") == "10y"
@@ -9642,6 +9694,7 @@ def _bind_stockchart_controls():
     msel = document.querySelector("#stockQtrMetric")
     if msel is not None:
         _bind(msel, "change", _on_stock_qtr_metric)
+    _bind_stockcmp_controls()
 
 
 def _on_stockchart_interval(evt):
@@ -9659,6 +9712,8 @@ async def load_stock_chart(full_symbol, name):
     box = document.querySelector("#stock-chart")
     if box is None:
         return
+    if _STOCKCHART_STATE.get("symbol") != full_symbol:
+        _STOCKCHART_STATE["cmp"] = []
     _STOCKCHART_STATE["symbol"] = full_symbol
     _STOCKCHART_STATE["name"] = name or full_symbol
     cands = _yf_symbol_candidates(full_symbol)
@@ -9694,9 +9749,402 @@ async def load_stock_chart(full_symbol, name):
         vol = await _recov_volume_aligned(rows, win_sym, fetch_rng, interval)
     _STOCKCHART_STATE["bench"] = bench
     _STOCKCHART_STATE["vol"] = vol
+    if rows and _STOCKCHART_STATE.get("cmp"):
+        await asyncio.gather(*[_stockcmp_fetch(c) for c in _STOCKCHART_STATE["cmp"]])
     if rows:
         _pan_init("stockchart", rows, rng)
     _render_stock_chart(name or full_symbol, rows)
+
+
+# ===================== 종목 비교 차트 (선형 · 기간 수익률 %) =====================
+
+_STOCKCMP_COLORS = ["#ff9800", "#2962ff", "#089981", "#9c27b0", "#e91e63", "#00acc1"]
+_STOCKCMP_MAX = 5
+_STOCKCMP_HOVER = {}
+
+
+def _stockcmp_label(sym):
+    return sym.split(":", 1)[-1] if sym else ""
+
+
+def _stockcmp_bar_html():
+    """비교 종목 입력칸 + 즐겨찾기 폴더 선택."""
+    seen = {_STOCKCHART_STATE.get("symbol")}
+    seen.update(c["symbol"] for c in _STOCKCHART_STATE.get("cmp") or [])
+    favs = (_FAV_LAST.get("list") or []) if _FAV_CREDS.get("account") else []
+    groups = {}
+    for f in favs:
+        folder = (f.get("folder") or "Default").strip() or "Default"
+        groups.setdefault(folder, []).append(f)
+    folders = ["Default"] if "Default" in groups else []
+    folders += [n for n in _FAV_FOLDERS if n in groups and n not in folders]
+    folders += sorted((n for n in groups if n not in folders), key=str.lower)
+    cur_folder = _STOCKCHART_STATE.get("cmp_folder")
+    if cur_folder not in groups:
+        cur_folder = folders[0] if folders else None
+        _STOCKCHART_STATE["cmp_folder"] = cur_folder
+    opts = []
+    for f in groups.get(cur_folder) or []:
+        sym = f.get("symbol")
+        if not sym or sym in seen:
+            continue
+        nm = f.get("name") or ""
+        opts.append('<option value="%s">%s</option>'
+                    % (_esc(sym), _esc(_stockcmp_label(sym) + (" · " + nm if nm else ""))))
+    full = len(_STOCKCHART_STATE.get("cmp") or []) >= _STOCKCMP_MAX
+    dis = " disabled" if full else ""
+    fav_sel = ""
+    if folders:
+        fav_sel = ('<span class="stockcmp-add"><select id="stockCmpFolder" title="즐겨찾기 폴더">%s</select>'
+                   '<select id="stockCmpFav" title="폴더에서 비교 종목 선택"%s>'
+                   '<option value="">%s</option>%s</select></span>'
+                   % ("".join('<option value="%s"%s>%s</option>'
+                              % (_esc(n), " selected" if n == cur_folder else "", _esc(n))
+                              for n in folders),
+                      dis if opts else " disabled",
+                      "종목 선택" if opts else "추가할 종목 없음", "".join(opts)))
+    return ('<div class="stockcmp-bar"><span class="stockcmp-add">'
+            '<input id="stockCmpInput" autocomplete="off" autocapitalize="characters" '
+            'spellcheck="false" placeholder="비교 티커 (예: NVDA)"%s>'
+            '<button type="button" id="stockCmpAdd"%s>+ 비교</button></span>%s'
+            '<span class="stockcmp-msg" id="stockCmpMsg"></span></div>'
+            % (dis, dis, fav_sel))
+
+
+def _stockcmp_refresh_bar():
+    """로그인/즐겨찾기 변경 시 비교 입력 줄만 다시 그린다."""
+    bar = document.querySelector("#stock-chart .stockcmp-bar")
+    if bar is None:
+        return
+    bar.outerHTML = _stockcmp_bar_html()
+    _bind_stockcmp_controls(bar_only=True)
+
+
+async def _stockcmp_fetch(c):
+    """비교 종목 시계열을 현재 기간·주기로 다시 받는다(실패 시 rows=None)."""
+    rng = _STOCKCHART_STATE["range"]
+    if rng == "ytd":
+        rng = "1y"     # 전년 말 종가를 기준점으로 쓰기 위해 1년치를 받는다
+    try:
+        c["rows"], _ = await _fetch_history_any(
+            _yf_symbol_candidates(c["symbol"]), rng, _STOCKCHART_STATE["interval"])
+    except Exception as exc:
+        _warn("stockcmp", exc)
+        c["rows"] = None
+
+
+def _ytd_start_ts(ts):
+    y = datetime.fromtimestamp(ts, timezone.utc).year
+    return datetime(y, 1, 1, tzinfo=timezone.utc).timestamp()
+
+
+def _stockcmp_window(rows):
+    if _STOCKCHART_STATE.get("range") == "ytd" and rows:
+        cut = _ytd_start_ts(rows[-1][0])
+        i = next((k for k, r in enumerate(rows) if r[0] >= cut), len(rows))
+        w = rows[max(i - 1, 0):]   # 전년 마지막 거래일 종가가 기준점
+        return w if len(w) >= 2 else list(rows)
+    span = _PAN_SPAN_DAYS.get(_STOCKCHART_STATE.get("range"))
+    if not rows or not span:
+        return list(rows or [])
+    cut = rows[-1][0] - span * 86400
+    w = [r for r in rows if r[0] > cut]
+    return w if len(w) >= 2 else list(rows)
+
+
+def _stockcmp_align(base_rows, rows):
+    """base_rows 각 날짜(UTC)에 대해 그 날짜까지의 마지막 종가(없으면 None)."""
+    out, j, last = [], 0, None
+    rows = rows or []
+    for r in base_rows:
+        d = datetime.fromtimestamp(r[0], timezone.utc).date()
+        while j < len(rows) and datetime.fromtimestamp(rows[j][0], timezone.utc).date() <= d:
+            last = rows[j][4]
+            j += 1
+        out.append(last)
+    return out
+
+
+def _stockcmp_items(rows):
+    w = _stockcmp_window(rows)
+    sym = _STOCKCHART_STATE.get("symbol") or ""
+    items = [{"symbol": sym, "label": _stockcmp_label(sym), "name": _STOCKCHART_STATE.get("name"),
+              "closes": [r[4] for r in w], "main": True}]
+    for c in _STOCKCHART_STATE.get("cmp") or []:
+        items.append({"symbol": c["symbol"], "label": c["label"], "name": c.get("name"),
+                      "closes": _stockcmp_align(w, c.get("rows")), "main": False})
+    for i, it in enumerate(items):
+        it["color"] = _STOCKCMP_COLORS[i % len(_STOCKCMP_COLORS)]
+        base = next((v for v in it["closes"] if v), None)
+        it["base"] = base
+        it["pct"] = [None if (v is None or not base) else (v / base - 1.0) * 100.0
+                     for v in it["closes"]]
+    return w, items
+
+
+def _stockcmp_svg(w, items):
+    import math
+    W, H, pl, pr, pt, pb = 820.0, 300.0, 52.0, 70.0, 12.0, 26.0
+    n = len(w)
+    pw, ph = W - pl - pr, H - pt - pb
+    vals = [v for it in items for v in it["pct"] if v is not None] + [0.0]
+    lo, hi = min(vals), max(vals)
+    if hi - lo < 1e-9:
+        lo, hi = lo - 1.0, hi + 1.0
+    pad = (hi - lo) * 0.06
+    lo, hi = lo - pad, hi + pad
+
+    def X(i):
+        return pl + (pw * i / (n - 1) if n > 1 else pw / 2)
+
+    def Y(v):
+        return pt + (hi - v) / (hi - lo) * ph
+
+    raw = (hi - lo) / 5.0
+    mag = 10 ** math.floor(math.log10(raw))
+    step = next(m * mag for m in (1, 2, 2.5, 5, 10) if m * mag >= raw)
+    parts = []
+    t = math.ceil(lo / step) * step
+    while t <= hi:
+        y = Y(t)
+        parts.append('<line x1="%g" x2="%g" y1="%.1f" y2="%.1f" stroke="currentColor" '
+                     'stroke-opacity=".12"/><text x="%g" y="%.1f" font-size="11" text-anchor="end" '
+                     'fill="currentColor" fill-opacity=".6">%s%%</text>'
+                     % (pl, W - pr, y, y, pl - 6, y + 4, ("%.0f" if step >= 1 else "%.1f") % t))
+        t += step
+    parts.append('<line x1="%g" x2="%g" y1="%.1f" y2="%.1f" stroke="currentColor" '
+                 'stroke-opacity=".45" stroke-dasharray="2 3"/>' % (pl, W - pr, Y(0), Y(0)))
+    span_days = (w[-1][0] - w[0][0]) / 86400 if n > 1 else 0
+    fmt = "%Y-%m" if span_days > 200 else "%m/%d"
+    nlab = min(6, n)
+    for k in range(nlab):
+        i = int(round(k * (n - 1) / max(nlab - 1, 1)))
+        anchor = "start" if k == 0 else ("end" if k == nlab - 1 else "middle")
+        parts.append('<text x="%.1f" y="%g" font-size="11" text-anchor="%s" fill="currentColor" '
+                     'fill-opacity=".6">%s</text>'
+                     % (X(i), H - 8, anchor,
+                        datetime.fromtimestamp(w[i][0], timezone.utc).strftime(fmt)))
+    ends = []
+    for it in reversed(items):
+        d, pen = [], False
+        for i, v in enumerate(it["pct"]):
+            if v is None:
+                pen = False
+                continue
+            d.append("%s%.1f %.1f" % ("L" if pen else "M", X(i), Y(v)))
+            pen = True
+        if d:
+            parts.append('<path d="%s" fill="none" stroke="%s" stroke-width="%s" '
+                         'stroke-linejoin="round"/>' % (" ".join(d), it["color"],
+                                                       "2" if it["main"] else "1.6"))
+        last = next((v for v in reversed(it["pct"]) if v is not None), None)
+        if last is not None:
+            ends.append([Y(last), last, it["color"]])
+    # 우측 끝 수익률 라벨은 겹치지 않게 아래로 밀어낸다
+    ends.sort(key=lambda e: e[0])
+    prev = -1e9
+    for e in ends:
+        ly = max(e[0], prev + 16)
+        prev = ly
+        parts.append('<circle cx="%.1f" cy="%.1f" r="3" fill="%s"/>'
+                     '<rect x="%g" y="%.1f" width="62" height="15" rx="3" fill="%s"/>'
+                     '<text x="%g" y="%.1f" font-size="11" font-weight="700" fill="#fff" '
+                     'text-anchor="middle">%+.2f%%</text>'
+                     % (W - pr, e[0], e[2], W - pr + 5, ly - 7.5, e[2], W - pr + 36, ly + 4, e[1]))
+    dots = "".join('<circle id="stockcmp-dot-%d" r="3.5" fill="%s" stroke="#fff" stroke-width="1" '
+                   'style="display:none"/>' % (i, it["color"]) for i, it in enumerate(items))
+    _STOCKCMP_HOVER.update({"W": W, "H": H, "pl": pl, "pw": pw, "n": n, "lo": lo, "hi": hi,
+                            "pt": pt, "ph": ph, "ts": [r[0] for r in w], "items": items})
+    return ('<svg id="stockcmp-svg" viewBox="0 0 %g %g" preserveAspectRatio="xMidYMid meet">%s'
+            '<line id="stockcmp-guide" y1="%g" y2="%g" stroke="currentColor" stroke-opacity=".4" '
+            'style="display:none"/>%s</svg>' % (W, H, "".join(parts), pt, pt + ph, dots))
+
+
+def _stockcmp_body_html(rows):
+    w, items = _stockcmp_items(rows)
+    trs = []
+    for it in items:
+        closes = [v for v in it["closes"] if v is not None]
+        last = closes[-1] if closes else None
+        base = it["base"]
+        dec = 2 if (last or 0) < 1000 else 0
+        if last is None or not base:
+            cells = '<td>-</td><td>-</td><td>-</td><td>-</td>'
+        else:
+            chg = last - base
+            cls = "up" if chg >= 0 else "down"
+            cells = ('<td>%s</td><td class="%s">%+.*f</td><td class="%s">%+.2f%%</td><td>%s</td>'
+                     % (fmt_num(last, dec), cls, dec, chg, cls, chg / base * 100.0, fmt_num(base, dec)))
+        rm = ('' if it["main"] else '<button type="button" data-cmpdel="%s" title="비교 제거">×</button>'
+              % _esc(it["symbol"]))
+        nm = it.get("name") or ""
+        trs.append('<tr><td><i style="background:%s"></i></td><td><div class="sym">%s</div>%s</td>'
+                   '%s<td>%s</td></tr>'
+                   % (it["color"], _esc(it["label"]),
+                      '<div class="nm">%s</div>' % _esc(nm) if nm and nm != it["label"] else "",
+                      cells, rm))
+    return ('<div class="stockcmp-host">%s<div class="stockcmp-tip" id="stockcmp-tip"></div></div>'
+            '<div class="stockcmp-tbl-wrap"><table class="stockcmp-table"><thead><tr><th></th>'
+            '<th>종목</th><th>가격</th><th>변동</th><th>변동률</th><th>기간 시작가</th><th></th>'
+            '</tr></thead><tbody>%s</tbody></table></div>'
+            % (_stockcmp_svg(w, items), "".join(trs)))
+
+
+def _stockcmp_move(evt):
+    h = _STOCKCMP_HOVER
+    svg = document.querySelector("#stockcmp-svg")
+    tip = document.querySelector("#stockcmp-tip")
+    if svg is None or tip is None or not h.get("n"):
+        return
+    rect = svg.getBoundingClientRect()
+    if not rect.width:
+        return
+    sx, _sy, _ = _svg_client_to_user(svg, evt.clientX, evt.clientY, rect, h["W"], h["H"])
+    n = h["n"]
+    i = int(round((sx - h["pl"]) / h["pw"] * (n - 1))) if n > 1 else 0
+    i = min(max(i, 0), n - 1)
+    x = h["pl"] + (h["pw"] * i / (n - 1) if n > 1 else h["pw"] / 2)
+    guide = document.querySelector("#stockcmp-guide")
+    if guide is not None:
+        guide.setAttribute("x1", "%.1f" % x)
+        guide.setAttribute("x2", "%.1f" % x)
+        guide.style.display = ""
+    lines = ['<span class="d">%s</span>'
+             % datetime.fromtimestamp(h["ts"][i], timezone.utc).strftime("%Y-%m-%d")]
+    for k, it in enumerate(h["items"]):
+        dot = document.querySelector("#stockcmp-dot-%d" % k)
+        v = it["pct"][i]
+        if dot is not None:
+            if v is None:
+                dot.style.display = "none"
+            else:
+                dot.setAttribute("cx", "%.1f" % x)
+                dot.setAttribute("cy", "%.1f" % (h["pt"] + (h["hi"] - v) / (h["hi"] - h["lo"]) * h["ph"]))
+                dot.style.display = ""
+        c = it["closes"][i]
+        lines.append('<span class="r"><b><i style="background:%s"></i>%s</b><span class="%s">%s</span>'
+                     '</span>' % (it["color"], _esc(it["label"]),
+                                  "" if v is None else ("up" if v >= 0 else "down"),
+                                  "-" if v is None else "%s · %+.2f%%" % (
+                                      fmt_num(c, 2 if c < 1000 else 0), v)))
+    tip.innerHTML = "".join(lines)
+    tip.style.display = "flex"
+
+
+def _stockcmp_leave(evt):
+    for sel in ("#stockcmp-tip", "#stockcmp-guide"):
+        el = document.querySelector(sel)
+        if el is not None:
+            el.style.display = "none"
+    for k in range(len(_STOCKCMP_HOVER.get("items") or [])):
+        el = document.querySelector("#stockcmp-dot-%d" % k)
+        if el is not None:
+            el.style.display = "none"
+
+
+def _stockcmp_set_msg(msg):
+    el = document.querySelector("#stockCmpMsg")
+    if el is not None:
+        el.innerHTML = _status_html(msg) if msg else ""
+
+
+async def _stockcmp_add(query):
+    q = (query or "").strip()
+    main = _STOCKCHART_STATE.get("symbol")
+    cmp = _STOCKCHART_STATE.setdefault("cmp", [])
+    if not q or not main or not _STOCKCHART_STATE.get("rows"):
+        return
+    if len(cmp) >= _STOCKCMP_MAX:
+        _stockcmp_set_msg("최대 %d개까지 비교할 수 있습니다." % _STOCKCMP_MAX)
+        return
+    _stockcmp_set_msg("비교 종목 조회 중...")
+    try:
+        sym = await resolve_symbol(q, lang="ko" if _has_hangul(q) else "en")
+    except Exception as exc:
+        _warn("stockcmp-resolve", exc)
+        sym = None
+    if not sym:
+        _stockcmp_set_msg("종목을 찾지 못했습니다: %s" % q)
+        return
+    if sym == main or any(c["symbol"] == sym for c in cmp):
+        _stockcmp_set_msg("이미 차트에 있는 종목입니다.")
+        return
+    label = _stockcmp_label(sym)
+    name = next((f.get("name") for f in _FAV_LAST.get("list") or [] if f.get("symbol") == sym), None)
+    if sym.upper().startswith("KRX:"):
+        try:
+            name = await _naver_kr_name(label) or name
+        except Exception:
+            pass
+    c = {"symbol": sym, "label": label, "name": name or (q if q.upper() != label else None),
+         "rows": None}
+    await _stockcmp_fetch(c)
+    if not c["rows"]:
+        _stockcmp_set_msg("차트 데이터가 없습니다: %s" % sym)
+        return
+    if _STOCKCHART_STATE.get("symbol") != main:
+        return
+    cmp.append(c)
+    _rerender_stock_chart()
+
+
+def _on_stockcmp_add(evt):
+    inp = document.querySelector("#stockCmpInput")
+    if inp is not None:
+        asyncio.ensure_future(_stockcmp_add(inp.value))
+
+
+def _on_stockcmp_key(evt):
+    if evt.key == "Enter" and not evt.isComposing:
+        evt.preventDefault()
+        asyncio.ensure_future(_stockcmp_add(evt.target.value))
+
+
+def _on_stockcmp_folder(evt):
+    _STOCKCHART_STATE["cmp_folder"] = evt.target.value
+    _stockcmp_refresh_bar()
+
+
+def _on_stockcmp_fav(evt):
+    v = evt.target.value
+    if v:
+        asyncio.ensure_future(_stockcmp_add(v))
+
+
+def _on_stockcmp_del(evt):
+    sym = evt.currentTarget.getAttribute("data-cmpdel")
+    _STOCKCHART_STATE["cmp"] = [c for c in _STOCKCHART_STATE.get("cmp") or []
+                                if c["symbol"] != sym]
+    if not _STOCKCHART_STATE["cmp"] and _STOCKCHART_STATE.get("range") == "ytd":
+        _STOCKCHART_STATE["range"] = "6mo"
+        asyncio.ensure_future(load_stock_chart(_STOCKCHART_STATE.get("symbol"),
+                                               _STOCKCHART_STATE.get("name")))
+        return
+    _rerender_stock_chart()
+
+
+def _bind_stockcmp_controls(bar_only=False):
+    btn = document.querySelector("#stockCmpAdd")
+    if btn is not None:
+        _bind(btn, "click", _on_stockcmp_add)
+    inp = document.querySelector("#stockCmpInput")
+    if inp is not None:
+        _bind(inp, "keydown", _on_stockcmp_key)
+    fsel = document.querySelector("#stockCmpFav")
+    if fsel is not None:
+        _bind(fsel, "change", _on_stockcmp_fav)
+    dsel = document.querySelector("#stockCmpFolder")
+    if dsel is not None:
+        _bind(dsel, "change", _on_stockcmp_folder)
+    dels = document.querySelectorAll("#stock-chart [data-cmpdel]")
+    for i in range(dels.length if not bar_only else 0):
+        _bind(dels.item(i), "click", _on_stockcmp_del)
+    if bar_only:
+        return
+    svg = document.querySelector("#stockcmp-svg")
+    if svg is not None:
+        _bind(svg, "pointermove", _stockcmp_move)
+        _bind(svg, "pointerleave", _stockcmp_leave)
 
 
 # ===================== DCA Optimizer (주봉 · 복합 점수 기반 적립 배수) =====================
@@ -11951,6 +12399,7 @@ def _fav_set_creds(acct, key):
             window.sessionStorage.removeItem(_FAV_SESSION_KEY)
     except Exception:
         pass
+    _stockcmp_refresh_bar()
 
 
 async def _restore_fav_session():
@@ -12158,6 +12607,7 @@ def render_favorites(favs):
     if box is None:
         return
     _FAV_LAST["list"] = list(favs or [])
+    _stockcmp_refresh_bar()
     if _earncal_active():
         asyncio.ensure_future(_load_earncal())
     _update_folder_datalist(favs)
